@@ -1,0 +1,25 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Express 15 for Windows Desktop
+VisualStudioVersion = 15.0.35116.124
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SheetRenderer", "SheetRenderer\SheetRenderer.csproj", "{2B7059F6-773A-4DDA-93FD-5502A82C1DEB}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{2B7059F6-773A-4DDA-93FD-5502A82C1DEB}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2B7059F6-773A-4DDA-93FD-5502A82C1DEB}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2B7059F6-773A-4DDA-93FD-5502A82C1DEB}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2B7059F6-773A-4DDA-93FD-5502A82C1DEB}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {B4DD24CD-6C26-4EA7-9692-08E6AD7FBEA0}
+	EndGlobalSection
+EndGlobal
