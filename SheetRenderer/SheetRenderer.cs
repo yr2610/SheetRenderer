@@ -24,7 +24,6 @@ using Office = Microsoft.Office.Core;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 
-
 namespace ExcelDnaTest
 {
     //public static class Class1
@@ -145,6 +144,47 @@ namespace ExcelDnaTest
             }
         }
 
+        static void InsertRowsAndCopyFormulas(Excel.Worksheet worksheet, int startRow, int rowCount)
+        {
+            // 行を挿入
+            Excel.Range insertRange = worksheet.Rows[startRow].Resize[rowCount];
+            insertRange.Insert(Excel.XlInsertShiftDirection.xlShiftDown);
+
+            // 挿入した行の上の行から数式をコピー
+            Excel.Range sourceRange = worksheet.Rows[startRow - 1];
+            Excel.Range destinationRange = worksheet.Rows[startRow].Resize[rowCount];
+            sourceRange.Copy(destinationRange);
+        }
+
+        static void DeleteRows(Excel.Worksheet worksheet, int startRow, int rowCount)
+        {
+            Excel.Range rows = worksheet.Rows[startRow].Resize[rowCount];
+            rows.Delete();
+        }
+
+        // JsonNode から指定した名前のオブジェクトの直下のプロパティをすべて Dictionary<string, string> として返却する
+        static Dictionary<string, string> GetPropertiesFromJsonNode(JsonNode jsonNode, string objectName)
+        {
+            JsonNode objectNode = jsonNode[objectName];
+
+            if (objectNode != null && objectNode is JsonObject jsonObject)
+            {
+                Dictionary<string, string> result = new Dictionary<string, string>();
+
+                foreach (var property in jsonObject)
+                {
+                    if (property.Value is JsonValue value && value.TryGetValue(out string stringValue))
+                    {
+                        result[property.Key] = stringValue;
+                    }
+                }
+
+                return result;
+            }
+
+            return null;
+        }
+
         public void OnRenderButtonPressed(IRibbonControl control)
         {
             if (JsonFilePath == null)
@@ -161,8 +201,7 @@ namespace ExcelDnaTest
             string newFilePath = GetFilePathWithoutExtension(JsonFilePath);
             Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
 
-            string currentDirectory = Directory.GetCurrentDirectory();
-            string templateFilePath = Path.Combine(currentDirectory, templateFileName);
+            string templateFilePath = FilePathHelper.GetAbsolutePathFromExecutingDirectory(templateFileName);
 
             Excel.Workbook workbook = CreateCopiedWorkbook(excelApp, templateFilePath, newFilePath);
 
@@ -173,6 +212,7 @@ namespace ExcelDnaTest
             const string indexSheetName = "表紙";
             const string templateSheetName = "単列チェック結果format";
 
+            var confData = GetPropertiesFromJsonNode(jsonObject, "variables");
 
             // 特定のプロパティ（items）を配列としてアクセス
             JsonArray items = jsonObject["children"].AsArray();
@@ -189,19 +229,39 @@ namespace ExcelDnaTest
                 Excel.Worksheet newSheet = workbook.Sheets[workbook.Sheets.Count];
                 newSheet.Name = newSheetName;
 
-                RenderSheet(sheetNode, newSheet);
+                RenderSheet(sheetNode, confData, newSheet);
 
                 sheetNames.Add(newSheetName);
             }
 
-            // index sheet にシート名を入力して幅をautofit
+            // index sheet にシート名を入力
             Excel.Worksheet indexSheet = workbook.Sheets[indexSheetName];
             int indexStartRow = 16;
             int indexEndRow = 35;
             int indexStartColumn = 2;
             int indexRowCount = indexEndRow - indexStartRow + 1;
+
+            // 行が足りなければ挿入
+            if (sheetNames.Count > indexRowCount)
+            {
+                int numberOfRows = sheetNames.Count - indexRowCount;
+
+                InsertRowsAndCopyFormulas(indexSheet, indexEndRow, numberOfRows);
+            }
+            // 多ければ削除
+            else if (sheetNames.Count < indexRowCount)
+            {
+                int numberOfRowsToDelete = indexRowCount - sheetNames.Count;
+
+                DeleteRows(indexSheet, indexStartRow, numberOfRowsToDelete);
+            }
+
             SetValueInSheetAsColumn(indexSheet, indexStartRow, indexStartColumn, sheetNames);
+
+            // 幅をautofit
             indexSheet.Cells[indexStartRow, indexStartColumn].Resize(indexRowCount).Columns.AutoFit();
+
+            // 最後にindexシートを選択状態にしておく
             indexSheet.Select();
 
             excelApp.ScreenUpdating = true;
@@ -338,7 +398,7 @@ namespace ExcelDnaTest
             return result;
         }
 
-        static void RenderSheet(JsonNode sheetNode, Excel.Worksheet sheet)
+        static void RenderSheet(JsonNode sheetNode, Dictionary<string, string> confData, Excel.Worksheet sheet)
         {
             int leafCount;
             int maxDepth;
@@ -361,6 +421,9 @@ namespace ExcelDnaTest
             int endRow = 102;
             int rowHeight = endRow - startRow + 1;
 
+            int initialDateColumn = 13;
+            int initialResultColumn = 7;
+
             if (maxDepth > columnWidth)
             {
                 int numberOfColumns = maxDepth - columnWidth;
@@ -373,10 +436,14 @@ namespace ExcelDnaTest
             if (leafCount > rowHeight)
             {
                 int numberOfRows = leafCount - rowHeight;
-                Excel.Range startRowRange = sheet.Rows[endRow];
 
-                // Insert rows
-                startRowRange.Resize[numberOfRows].EntireRow.Insert(Excel.XlInsertShiftDirection.xlShiftDown);
+                InsertRowsAndCopyFormulas(sheet, endRow, numberOfRows);
+            }
+            else if (leafCount < rowHeight)
+            {
+                int numberOfRowsToDelete = rowHeight - leafCount;
+
+                DeleteRows(sheet, startRow, numberOfRowsToDelete);
             }
 
             // XXX: 深度が列より少ない場合は今のテンプレに合わせていろいろやる…
@@ -393,6 +460,15 @@ namespace ExcelDnaTest
             }
 
             SetValueInSheet(sheet, startRow, startColumn, arrayResult);
+
+            // 「チェック予定日」の列に無条件で START_DATE を入れる
+            int dateColumn = startColumn + maxDepth + (initialDateColumn - initialResultColumn);
+            string dateString = confData["START_DATE"];
+            // 文字列をDateTimeに変換
+            if (DateTime.TryParse(dateString, out DateTime dateValue))
+            {
+                SetRangeValue(sheet, startRow, dateColumn, leafCount, 1, dateValue);
+            }
 
             // XXX: 先頭が【*】なセルの対応
             int resultColumn = startColumn + maxDepth;
@@ -426,9 +502,23 @@ namespace ExcelDnaTest
                     // 結果欄に - を入力
                     var resultCell = sheet.Cells[startRow + i, resultColumn];
                     resultCell.Value = "-";
+
+                    // チェック予定日欄を空欄にする
+                    var dateCell = sheet.Cells[startRow + i, dateColumn];
+                    dateCell.Value = null;
+
                     break;
                 }
             }
+        }
+
+        // 指定した範囲のセルに同じ値を代入します
+        static void SetRangeValue<T>(Excel.Worksheet sheet, int startRow, int startColumn, int rowCount, int columnCount, T value)
+        {
+            Excel.Range startCell = (Excel.Range)sheet.Cells[startRow, startColumn];
+            Excel.Range range = startCell.Resize[rowCount, columnCount];
+
+            range.Value = value;
         }
 
         static void SetValueInSheet<T>(Excel.Worksheet sheet, int startRow, int startColumn, T[,] array)
@@ -476,6 +566,20 @@ namespace ExcelDnaTest
             SetValueInSheet(sheet, startRow, startColumn, list, false);
         }
 
+        class FilePathHelper
+        {
+            public static string GetAbsolutePathFromExecutingDirectory(string fileName)
+            {
+                // 実行ディレクトリを取得
+                string executingDirectory = AppContext.BaseDirectory;
+
+                // ファイル名を実行ディレクトリに結合して絶対パスを取得
+                string absolutePath = Path.Combine(executingDirectory, fileName);
+
+                return absolutePath;
+            }
+        }
+
         static Excel.Workbook CreateCopiedWorkbook(Excel.Application excelApp, string filePath, string newFilePath)
         {
             // Read-onlyでファイルを開く
@@ -504,9 +608,6 @@ namespace ExcelDnaTest
             return workbook;
         }
 
-
-
     }
-
 
 }
