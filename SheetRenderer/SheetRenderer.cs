@@ -15,6 +15,8 @@ using System.Text.Json.Nodes;
 
 using System.Drawing;
 
+using System.Reflection;
+
 using ExcelDna.Integration;
 
 using System.Runtime.InteropServices;
@@ -49,11 +51,12 @@ namespace ExcelDnaTest
 
         public override string GetCustomUI(string RibbonID)
         {
-            return @"
+            string projectName = Assembly.GetExecutingAssembly().GetName().Name;
+            return $@"
       <customUI xmlns='http://schemas.microsoft.com/office/2006/01/customui' onLoad='OnLoad'>
       <ribbon>
         <tabs>
-          <tab id='tab1' label='Sheet Renderer'>
+          <tab id='tab1' label='{projectName}'>
             <group id='group1' label='Render'>
               <button id='button1' label='JSONファイル選択' size='large' imageMso='FileSave' onAction='OnSelectJsonFileButtonPressed'/>
               <button id='button2' label='Render' size='large' imageMso='TableDrawTable' onAction='OnRenderButtonPressed'/>
