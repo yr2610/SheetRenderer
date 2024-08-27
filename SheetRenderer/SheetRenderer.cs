@@ -13,6 +13,8 @@ using System.Windows.Forms;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
+using System.Drawing;
+
 using ExcelDna.Integration;
 
 using System.Runtime.InteropServices;
@@ -201,7 +203,7 @@ namespace ExcelDnaTest
             string newFilePath = GetFilePathWithoutExtension(JsonFilePath);
             Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
 
-            string templateFilePath = FilePathHelper.GetAbsolutePathFromExecutingDirectory(templateFileName);
+            string templateFilePath = GetAbsolutePathFromExecutingDirectory(templateFileName);
 
             Excel.Workbook workbook = CreateCopiedWorkbook(excelApp, templateFilePath, newFilePath);
 
@@ -288,13 +290,25 @@ namespace ExcelDnaTest
             }
         }
 
-        static void TraverseTree(JsonNode node, List<List<string>> result, List<string> currentPath, int currentDepth, ref int maxDepth, ref int leafCount)
+        class NodeData
+        {
+            public string kind { get; set; }
+            public int group { get; set; }
+            public int depthInGroup { get; set; }
+            public string id { get; set; }
+            public string text { get; set; }
+            public string comment { get; set; }
+            public string imageFilePath { get; set; }
+            public Dictionary<string, object> initialValues { get; set; }
+        };
+
+        static void TraverseTree(JsonNode node, List<List<NodeData>> result, List<NodeData> currentPath, int currentDepth, ref int maxDepth, ref int leafCount)
         {
             if (node == null) return;
 
-            string text = node["text"]?.ToString();
-            currentPath.Add(text);
-            var nullifiedPath = Enumerable.Repeat<string>(null, currentPath.Count).ToList();
+            NodeData nodeData = node.Deserialize<NodeData>();
+            currentPath.Add(nodeData);
+            var nullifiedPath = Enumerable.Repeat<NodeData>(null, currentPath.Count).ToList();
 
             JsonArray children = node["children"] as JsonArray;
             if (children != null && children.Count > 0)
@@ -302,14 +316,14 @@ namespace ExcelDnaTest
                 for (int i = 0; i < children.Count; i++)
                 {
                     JsonNode child = children[i];
-                    var currentOrNullifiedPath = new List<string>(i == 0 ? currentPath : nullifiedPath);
+                    var currentOrNullifiedPath = new List<NodeData>(i == 0 ? currentPath : nullifiedPath);
                     TraverseTree(child, result, currentOrNullifiedPath, currentDepth + 1, ref maxDepth, ref leafCount);
                 }
             }
             else
             {
                 // 現在のパスを結果に追加
-                result.Add(new List<string>(currentPath));
+                result.Add(new List<NodeData>(currentPath));
                 leafCount++;
             }
 
@@ -320,28 +334,28 @@ namespace ExcelDnaTest
             }
         }
 
-        static List<List<string>> TraverseTreeFromRoot(JsonNode rootNode, out int leafCount, out int maxDepth)
+        static List<List<NodeData>> TraverseTreeFromRoot(JsonNode rootNode, out int leafCount, out int maxDepth)
         {
-            List<List<string>> result = new List<List<string>>();
+            List<List<NodeData>> result = new List<List<NodeData>>();
             maxDepth = 0;
             leafCount = 0;
 
-            TraverseTree(rootNode, result, new List<string>(), 1, ref maxDepth, ref leafCount);
+            TraverseTree(rootNode, result, new List<NodeData>(), 1, ref maxDepth, ref leafCount);
 
             return result;
         }
 
-        static T[,] ConvertTo2DArray<T>(List<List<T>> list)
+        static TOutput[,] ConvertTo2DArray<TInput, TOutput>(List<List<TInput>> list, Func<TInput, TOutput> selector)
         {
             int rows = list.Count;
             int cols = rows > 0 ? list.Max(subList => subList.Count) : 0;
-            T[,] array = new T[rows, cols];
+            TOutput[,] array = new TOutput[rows, cols];
 
             for (int i = 0; i < rows; i++)
             {
                 for (int j = 0; j < list[i].Count; j++)
                 {
-                    array[i, j] = list[i][j];
+                    array[i, j] = selector(list[i][j]);
                 }
             }
 
@@ -367,12 +381,12 @@ namespace ExcelDnaTest
             }
         }
 
-        static string[,] RemoveFirstColumn(string[,] array)
+        static T[,] RemoveFirstColumn<T>(T[,] array)
         {
             int rows = array.GetLength(0);
             int cols = array.GetLength(1);
 
-            string[,] result = new string[rows, cols - 1];
+            T[,] result = new T[rows, cols - 1];
 
             for (int i = 0; i < rows; i++)
             {
@@ -385,31 +399,31 @@ namespace ExcelDnaTest
             return result;
         }
 
-        static List<List<string>> RemoveFirstColumn(List<List<string>> list)
+        static List<List<T>> RemoveFirstColumn<T>(List<List<T>> list)
         {
-            List<List<string>> result = new List<List<string>>();
+            List<List<T>> result = new List<List<T>>();
 
             foreach (var row in list)
             {
-                List<string> newRow = new List<string>(row.Skip(1));
+                List<T> newRow = new List<T>(row.Skip(1));
                 result.Add(newRow);
             }
 
             return result;
         }
 
-        static void RenderSheet(JsonNode sheetNode, Dictionary<string, string> confData, Excel.Worksheet sheet)
+        void RenderSheet(JsonNode sheetNode, Dictionary<string, string> confData, Excel.Worksheet sheet)
         {
             int leafCount;
             int maxDepth;
-            List<List<string>> result = TraverseTreeFromRoot(sheetNode, out leafCount, out maxDepth);
+            List<List<NodeData>> result = TraverseTreeFromRoot(sheetNode, out leafCount, out maxDepth);
 
             // 左端はシート名なので削除
             result = RemoveFirstColumn(result);
             maxDepth--;
 
             // 2次元配列に変換
-            string[,] arrayResult = ConvertTo2DArray(result);
+            string[,] arrayResult = ConvertTo2DArray(result, x => x?.text);
 
             // 右端にダミー文字追加
             ReplaceTrailingNullsInLastColumn(arrayResult, "---");
@@ -476,13 +490,14 @@ namespace ExcelDnaTest
             {
                 for (int j = 0; j < result[i].Count; j++)
                 {
-                    string text = result[i][j];
+                    NodeData node = result[i][j];
 
-                    if (text == null)
+                    if (node == null)
                     {
                         continue;
                     }
 
+                    string text = node.text;
                     const string pattern = @"^【.*】";
                     bool isMatch = Regex.IsMatch(text, pattern);
 
@@ -510,6 +525,54 @@ namespace ExcelDnaTest
                     break;
                 }
             }
+
+            // 画像を貼る
+            for (int i = 0; i < result.Count; i++)
+            {
+                for (int j = 0; j < result[i].Count; j++)
+                {
+                    NodeData node = result[i][j];
+
+                    if (node == null)
+                    {
+                        continue;
+                    }
+
+                    if (node.imageFilePath != null)
+                    {
+                        string path = GetAbsolutePathFromBasePath(JsonFilePath, node.imageFilePath);
+                        var cell = sheet.Cells[startRow + i, startColumn + j];
+
+                        AddPictureAsComment(cell, path);
+                    }
+                }
+            }
+
+        }
+
+        static void AddPictureAsComment(Excel.Range cell, string path)
+        {
+            const string noImageFilePath = "images/no_image.jpg";
+
+            // ファイルが存在するか確認
+            if (!File.Exists(path))
+            {
+                // ファイルが存在しない場合の処理
+                path = GetAbsolutePathFromExecutingDirectory(noImageFilePath);
+            }
+
+            // 画像のサイズを取得
+            System.Drawing.Image image = System.Drawing.Image.FromFile(path);
+            float imageWidth = image.Width;
+            float imageHeight = image.Height;
+            image.Dispose();
+
+            // コメントを追加し、画像を背景に設定
+            var comment = cell.AddComment(" ");
+            comment.Visible = false;
+            comment.Shape.Fill.UserPicture(path);
+            comment.Shape.Height = imageHeight;
+            comment.Shape.Width = imageWidth;
         }
 
         // 指定した範囲のセルに同じ値を代入します
@@ -528,9 +591,9 @@ namespace ExcelDnaTest
             range.Value = array;
         }
 
-        static void SetValueInSheet<T>(Excel.Worksheet sheet, int startRow, int startColumn, List<List<T>> list)
+        static void SetValueInSheet<T, TOutput>(Excel.Worksheet sheet, int startRow, int startColumn, List<List<T>> list, Func<T, TOutput> selector)
         {
-            T[,] array = ConvertTo2DArray(list);
+            TOutput[,] array = ConvertTo2DArray(list, selector);
             SetValueInSheet(sheet, startRow, startColumn, array);
         }
 
@@ -566,18 +629,27 @@ namespace ExcelDnaTest
             SetValueInSheet(sheet, startRow, startColumn, list, false);
         }
 
-        class FilePathHelper
+        static string GetAbsolutePathFromExecutingDirectory(string relativePath)
         {
-            public static string GetAbsolutePathFromExecutingDirectory(string fileName)
+            // 実行ディレクトリを取得
+            string executingDirectory = AppContext.BaseDirectory;
+
+            // GetAbsolutePathFromBasePath メソッドを呼び出して絶対パスを取得
+            return GetAbsolutePathFromBasePath(executingDirectory, relativePath);
+        }
+
+        static string GetAbsolutePathFromBasePath(string basePath, string relativePath)
+        {
+            // basePath がファイルパスの場合、そのディレクトリを取得
+            if (File.Exists(basePath))
             {
-                // 実行ディレクトリを取得
-                string executingDirectory = AppContext.BaseDirectory;
-
-                // ファイル名を実行ディレクトリに結合して絶対パスを取得
-                string absolutePath = Path.Combine(executingDirectory, fileName);
-
-                return absolutePath;
+                basePath = Path.GetDirectoryName(basePath);
             }
+
+            // 絶対パス基準の相対パスを絶対パスに変換
+            string absolutePath = Path.Combine(basePath, relativePath);
+
+            return absolutePath;
         }
 
         static Excel.Workbook CreateCopiedWorkbook(Excel.Application excelApp, string filePath, string newFilePath)
