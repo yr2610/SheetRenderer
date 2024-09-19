@@ -28,6 +28,113 @@ using Office = Microsoft.Office.Core;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 
+
+public class ProgressBarForm : Form
+{
+    private ProgressBar progressBar;
+    private Label progressLabel;
+    private Label sheetNameLabel;
+    private int totalSheets;
+    private int completedSheets;
+
+    public ProgressBarForm(int totalSheets)
+    {
+        this.totalSheets = totalSheets;
+        this.completedSheets = 0;
+
+        // フォームのサイズを設定
+        this.Width = 500;
+        this.Height = 180;
+
+        // フォームのスタイルを設定
+        this.FormBorderStyle = FormBorderStyle.FixedSingle;
+        this.ControlBox = false;
+        this.Text = string.Empty;
+
+        // プログレスバーを作成
+        progressBar = new ProgressBar();
+        progressBar.Width = 450;
+        progressBar.Height = 20;
+        progressBar.Top = 30;
+        progressBar.Left = 25;
+        Controls.Add(progressBar);
+
+        // 進行状況を表示するラベルを作成
+        progressLabel = new Label();
+        progressLabel.Width = 450;
+        progressLabel.Top = 60;
+        progressLabel.Left = 25;
+        progressLabel.TextAlign = System.Drawing.ContentAlignment.MiddleCenter;
+        Controls.Add(progressLabel);
+
+        // シート名を表示するラベルを作成
+        sheetNameLabel = new Label();
+        sheetNameLabel.Width = 450;
+        sheetNameLabel.Top = 90;
+        sheetNameLabel.Left = 25;
+        sheetNameLabel.TextAlign = System.Drawing.ContentAlignment.MiddleCenter;
+        Controls.Add(sheetNameLabel);
+
+        // フォームの閉じる操作を無効にする
+        this.FormClosing += new FormClosingEventHandler(ProgressBarForm_FormClosing);
+    }
+
+    private void ProgressBarForm_FormClosing(object sender, FormClosingEventArgs e)
+    {
+        // フォームの閉じる操作をキャンセル
+        e.Cancel = true;
+    }
+
+    public void UpdateSheetName(string sheetName)
+    {
+        if (InvokeRequired)
+        {
+            Invoke(new Action<string>(UpdateSheetName), sheetName);
+        }
+        else
+        {
+            sheetNameLabel.Text = $"作成中のシート: {sheetName}";
+            completedSheets++;
+            progressBar.Value = (int)((double)completedSheets / totalSheets * 100);
+            progressLabel.Text = $"進行状況: {completedSheets} / {totalSheets}";
+        }
+    }
+
+    public void CloseForm()
+    {
+        if (InvokeRequired)
+        {
+            Invoke(new Action(CloseForm));
+        }
+        else
+        {
+            // FormClosingイベントハンドラーを一時的に無効にする
+            this.FormClosing -= ProgressBarForm_FormClosing;
+            this.Close();
+        }
+    }
+
+    protected override void WndProc(ref Message m)
+    {
+        const int WM_NCHITTEST = 0x84;
+        const int HTCLIENT = 0x1;
+        const int HTCAPTION = 0x2;
+
+        if (m.Msg == WM_NCHITTEST)
+        {
+            base.WndProc(ref m);
+            if ((int)m.Result == HTCLIENT)
+            {
+                m.Result = (IntPtr)HTCAPTION;
+                return;
+            }
+        }
+        base.WndProc(ref m);
+    }
+
+}
+
+
 namespace ExcelDnaTest
 {
     //public static class Class1
@@ -43,6 +150,7 @@ namespace ExcelDnaTest
     public class RibbonController : ExcelRibbon
     {
         private IRibbonUI ribbon;
+        private ProgressBarForm progressBarForm;
 
         public void OnLoad(IRibbonUI ribbonUI)
         {
@@ -190,7 +298,75 @@ namespace ExcelDnaTest
             return null;
         }
 
-        public void OnRenderButtonPressed(IRibbonControl control)
+        // セル内の {{*}} を置き換える
+        public static void ReplaceValues(Excel.Worksheet sheet, Dictionary<string, string> replacements)
+        {
+            Excel.Range usedRange = sheet.UsedRange;
+
+            int rowCount = usedRange.Rows.Count;
+            int colCount = usedRange.Columns.Count;
+
+            object[,] values = usedRange.Value2;
+            bool[,] modified = new bool[rowCount + 1, colCount + 1];
+
+            Regex regex = new Regex(@"\{\{([_A-Za-z]\w*)\}\}");
+            Regex urlRegex = new Regex(@"https?://[^\s/$.?#].[^\s]*");
+
+            // まず全セルの値を配列に取り込む
+            for (int row = 1; row <= rowCount; row++)
+            {
+                for (int col = 1; col <= colCount; col++)
+                {
+                    if (!(values[row, col] is string))
+                    {
+                        continue;
+                    }
+
+                    string cellValue = (string)values[row, col];
+
+                    Match match = regex.Match(cellValue);
+                    if (match.Success)
+                    {
+                        string key = match.Groups[1].Value;
+                        if (replacements.ContainsKey(key))
+                        {
+                            values[row, col] = regex.Replace(cellValue, replacements[key]);
+                            modified[row, col] = true;
+                        }
+                        else
+                        {
+                            values[row, col] = regex.Replace(cellValue, "");
+                            modified[row, col] = true;
+                        }
+                    }
+                    else
+                    {
+                        values[row, col] = null;
+                    }
+                }
+            }
+
+            // 必要なセルのみ HasFormula をチェックして書き戻す
+            for (int row = 1; row <= rowCount; row++)
+            {
+                for (int col = 1; col <= colCount; col++)
+                {
+                    if (modified[row, col] && !usedRange.Cells[row, col].HasFormula)
+                    {
+                        string newValue = values[row, col] as string;
+                        if (urlRegex.IsMatch(newValue))
+                        {
+                            // 新しいリンクを設定
+                            sheet.Hyperlinks.Add(usedRange.Cells[row, col], newValue);
+                        }
+                        // セルの値を設定
+                        usedRange.Cells[row, col].Value2 = newValue;
+                    }
+                }
+            }
+        }
+
+        public async void OnRenderButtonPressed(IRibbonControl control)
         {
             if (JsonFilePath == null)
             {
@@ -208,9 +384,10 @@ namespace ExcelDnaTest
 
             string templateFilePath = GetAbsolutePathFromExecutingDirectory(templateFileName);
 
+            MacroControl.DisableMacros();
+
             Excel.Workbook workbook = CreateCopiedWorkbook(excelApp, templateFilePath, newFilePath);
 
-            MacroControl.DisableMacros();
             excelApp.DisplayAlerts = false;
             excelApp.ScreenUpdating = false;
 
@@ -225,49 +402,71 @@ namespace ExcelDnaTest
             List<string> sheetNames = new List<string>();
             Excel.Worksheet sheet = workbook.Sheets[templateSheetName];
 
-            foreach (JsonNode sheetNode in items)
+            // +1 は index シート
+            progressBarForm = new ProgressBarForm(items.Count + 1);
+            progressBarForm.Show();
+
+            await Task.Run(() =>
             {
-                string newSheetName = sheetNode["text"].ToString();
+                foreach (JsonNode sheetNode in items)
+                {
+                    string newSheetName = sheetNode["text"].ToString();
 
-                // シートをコピーしてリネーム
-                sheet.Copy(After: workbook.Sheets[workbook.Sheets.Count]);
-                Excel.Worksheet newSheet = workbook.Sheets[workbook.Sheets.Count];
-                newSheet.Name = newSheetName;
+                    // プログレスバーを更新
+                    progressBarForm.Invoke(new Action<string>(progressBarForm.UpdateSheetName), newSheetName);
 
-                RenderSheet(sheetNode, confData, newSheet);
+                    // シートをコピーしてリネーム
+                    sheet.Copy(After: workbook.Sheets[workbook.Sheets.Count]);
+                    Excel.Worksheet newSheet = workbook.Sheets[workbook.Sheets.Count];
+                    newSheet.Name = newSheetName;
 
-                sheetNames.Add(newSheetName);
-            }
+                    RenderSheet(sheetNode, confData, newSheet);
 
-            // index sheet にシート名を入力
-            Excel.Worksheet indexSheet = workbook.Sheets[indexSheetName];
-            int indexStartRow = 16;
-            int indexEndRow = 35;
-            int indexStartColumn = 2;
-            int indexRowCount = indexEndRow - indexStartRow + 1;
+                    sheetNames.Add(newSheetName);
 
-            // 行が足りなければ挿入
-            if (sheetNames.Count > indexRowCount)
-            {
-                int numberOfRows = sheetNames.Count - indexRowCount;
+                }
 
-                InsertRowsAndCopyFormulas(indexSheet, indexEndRow, numberOfRows);
-            }
-            // 多ければ削除
-            else if (sheetNames.Count < indexRowCount)
-            {
-                int numberOfRowsToDelete = indexRowCount - sheetNames.Count;
+                // プログレスバーを更新
+                progressBarForm.Invoke(new Action<string>(progressBarForm.UpdateSheetName), indexSheetName);
 
-                DeleteRows(indexSheet, indexStartRow, numberOfRowsToDelete);
-            }
+                // index sheet にシート名を入力
+                Excel.Worksheet indexSheet = workbook.Sheets[indexSheetName];
+                int indexStartRow = 16;
+                int indexEndRow = 35;
+                int indexStartColumn = 2;
+                int indexRowCount = indexEndRow - indexStartRow + 1;
 
-            SetValueInSheetAsColumn(indexSheet, indexStartRow, indexStartColumn, sheetNames);
+                // 行が足りなければ挿入
+                if (sheetNames.Count > indexRowCount)
+                {
+                    int numberOfRows = sheetNames.Count - indexRowCount;
 
-            // 幅をautofit
-            indexSheet.Cells[indexStartRow, indexStartColumn].Resize(indexRowCount).Columns.AutoFit();
+                    InsertRowsAndCopyFormulas(indexSheet, indexEndRow, numberOfRows);
+                }
+                // 多ければ削除
+                else if (sheetNames.Count < indexRowCount)
+                {
+                    int numberOfRowsToDelete = indexRowCount - sheetNames.Count;
 
-            // 最後にindexシートを選択状態にしておく
-            indexSheet.Select();
+                    DeleteRows(indexSheet, indexStartRow, numberOfRowsToDelete);
+                }
+
+                SetValueInSheetAsColumn(indexSheet, indexStartRow, indexStartColumn, sheetNames);
+
+                // テンプレ処理
+                ReplaceValues(indexSheet, confData);
+
+                // 幅をautofit
+                indexSheet.Cells[indexStartRow, indexStartColumn].Resize(indexRowCount).Columns.AutoFit();
+
+                // 最後にindexシートを選択状態にしておく
+                indexSheet.Select();
+
+                // 処理が完了したらフォームを閉じる
+                progressBarForm.Invoke(new Action(progressBarForm.CloseForm));
+            });
+
+            progressBarForm.Close();
 
             excelApp.ScreenUpdating = true;
             excelApp.DisplayAlerts = true;
@@ -276,8 +475,12 @@ namespace ExcelDnaTest
             workbook.Save();
         }
 
+        void RenderSheets()
+        {
+
+        }
+
         // マクロを一時的に黙らせたい
-        // XXX: うまく動いてない様子
         public class MacroControl
         {
             public static void DisableMacros()
@@ -305,7 +508,7 @@ namespace ExcelDnaTest
             public Dictionary<string, object> initialValues { get; set; }
         };
 
-        static void TraverseTree(JsonNode node, List<List<NodeData>> result, List<NodeData> currentPath, int currentDepth, ref int maxDepth, ref int leafCount)
+        static void TraverseTree(JsonNode node, List<List<NodeData>> result, List<NodeData> currentPath, int currentDepth, ref int maxDepth, List<JsonNode> leafNodes)
         {
             if (node == null) return;
 
@@ -320,14 +523,14 @@ namespace ExcelDnaTest
                 {
                     JsonNode child = children[i];
                     var currentOrNullifiedPath = new List<NodeData>(i == 0 ? currentPath : nullifiedPath);
-                    TraverseTree(child, result, currentOrNullifiedPath, currentDepth + 1, ref maxDepth, ref leafCount);
+                    TraverseTree(child, result, currentOrNullifiedPath, currentDepth + 1, ref maxDepth, leafNodes);
                 }
             }
             else
             {
                 // 現在のパスを結果に追加
                 result.Add(new List<NodeData>(currentPath));
-                leafCount++;
+                leafNodes.Add(node);
             }
 
             // 最大深度を更新
@@ -337,13 +540,13 @@ namespace ExcelDnaTest
             }
         }
 
-        static List<List<NodeData>> TraverseTreeFromRoot(JsonNode rootNode, out int leafCount, out int maxDepth)
+        static List<List<NodeData>> TraverseTreeFromRoot(JsonNode rootNode, out List<JsonNode> leafNodes, out int maxDepth)
         {
             List<List<NodeData>> result = new List<List<NodeData>>();
             maxDepth = 0;
-            leafCount = 0;
+            leafNodes = new List<JsonNode>();
 
-            TraverseTree(rootNode, result, new List<NodeData>(), 1, ref maxDepth, ref leafCount);
+            TraverseTree(rootNode, result, new List<NodeData>(), 1, ref maxDepth, leafNodes);
 
             return result;
         }
@@ -417,9 +620,10 @@ namespace ExcelDnaTest
 
         void RenderSheet(JsonNode sheetNode, Dictionary<string, string> confData, Excel.Worksheet sheet)
         {
-            int leafCount;
+            List<JsonNode> leafNodes;
             int maxDepth;
-            List<List<NodeData>> result = TraverseTreeFromRoot(sheetNode, out leafCount, out maxDepth);
+            List<List<NodeData>> result = TraverseTreeFromRoot(sheetNode, out leafNodes, out maxDepth);
+            int leafCount = leafNodes.Count;
 
             // 左端はシート名なので削除
             result = RemoveFirstColumn(result);
@@ -486,6 +690,8 @@ namespace ExcelDnaTest
             {
                 SetRangeValue(sheet, startRow, dateColumn, leafCount, 1, dateValue);
             }
+
+            // TODO: 「計画時間(分)」に node の initialValues.estimated_time を入れる
 
             // XXX: 先頭が【*】なセルの対応
             int resultColumn = startColumn + maxDepth;
