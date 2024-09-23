@@ -618,6 +618,26 @@ namespace ExcelDnaTest
             return result;
         }
 
+        static List<string> ExtractPropertyValuesFromInitialValues(List<JsonNode> leafNodes, string propertyName)
+        {
+            List<string> propertyValues = new List<string>();
+
+            foreach (var node in leafNodes)
+            {
+                var initialValuesNode = node["initialValues"];
+                if (initialValuesNode != null && initialValuesNode[propertyName] != null)
+                {
+                    propertyValues.Add(initialValuesNode[propertyName].ToString());
+                }
+                else
+                {
+                    propertyValues.Add(null);
+                }
+            }
+
+            return propertyValues;
+        }
+
         void RenderSheet(JsonNode sheetNode, Dictionary<string, string> confData, Excel.Worksheet sheet)
         {
             List<JsonNode> leafNodes;
@@ -643,6 +663,7 @@ namespace ExcelDnaTest
             int rowHeight = endRow - startRow + 1;
 
             int initialDateColumn = 13;
+            int initialPlanColumn = 11;
             int initialResultColumn = 7;
 
             if (maxDepth > columnWidth)
@@ -691,7 +712,10 @@ namespace ExcelDnaTest
                 SetRangeValue(sheet, startRow, dateColumn, leafCount, 1, dateValue);
             }
 
-            // TODO: 「計画時間(分)」に node の initialValues.estimated_time を入れる
+            // 「計画時間(分)」に node の initialValues.estimated_time を入れる
+            int planColumn = startColumn + maxDepth + (initialPlanColumn - initialResultColumn);
+            var estimatedTimes = ExtractPropertyValuesFromInitialValues(leafNodes, "estimated_time");
+            SetValueInSheet(sheet, startRow, planColumn, estimatedTimes, false);
 
             // XXX: 先頭が【*】なセルの対応
             int resultColumn = startColumn + maxDepth;
