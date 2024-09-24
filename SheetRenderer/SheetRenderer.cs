@@ -618,16 +618,41 @@ namespace ExcelDnaTest
             return result;
         }
 
-        static List<string> ExtractPropertyValuesFromInitialValues(List<JsonNode> leafNodes, string propertyName)
+        static object GetJsonValue(JsonValue jsonValue)
         {
-            List<string> propertyValues = new List<string>();
+            if (jsonValue.TryGetValue(out int intValue))
+            {
+                return intValue;
+            }
+            else if (jsonValue.TryGetValue(out double doubleValue))
+            {
+                return doubleValue;
+            }
+            else if (jsonValue.TryGetValue(out bool boolValue))
+            {
+                return boolValue;
+            }
+            else if (jsonValue.TryGetValue(out string stringValue))
+            {
+                return stringValue;
+            }
+            else
+            {
+                return jsonValue.ToString();
+            }
+        }
+
+        static List<object> ExtractPropertyValuesFromInitialValues(List<JsonNode> leafNodes, string propertyName)
+        {
+            List<object> propertyValues = new List<object>();
 
             foreach (var node in leafNodes)
             {
                 var initialValuesNode = node["initialValues"];
                 if (initialValuesNode != null && initialValuesNode[propertyName] != null)
                 {
-                    propertyValues.Add(initialValuesNode[propertyName].ToString());
+                    var val = GetJsonValue(initialValuesNode[propertyName].AsValue());
+                    propertyValues.Add(val);
                 }
                 else
                 {
@@ -703,8 +728,9 @@ namespace ExcelDnaTest
 
             SetValueInSheet(sheet, startRow, startColumn, arrayResult);
 
-            // 「チェック予定日」の列に無条件で START_DATE を入れる
-            int dateColumn = startColumn + maxDepth + (initialDateColumn - initialResultColumn);
+            // 「チェック予定日」列に無条件で START_DATE を入れる
+            int dateColumnOffset = initialDateColumn - initialResultColumn;
+            int dateColumn = startColumn + maxDepth + dateColumnOffset;
             string dateString = confData["START_DATE"];
             // 文字列をDateTimeに変換
             if (DateTime.TryParse(dateString, out DateTime dateValue))
@@ -712,13 +738,19 @@ namespace ExcelDnaTest
                 SetRangeValue(sheet, startRow, dateColumn, leafCount, 1, dateValue);
             }
 
-            // 「計画時間(分)」に node の initialValues.estimated_time を入れる
-            int planColumn = startColumn + maxDepth + (initialPlanColumn - initialResultColumn);
+            // 「チェック結果」列に node の initialValues.result を入れる
+            int resultColumnOffset = initialResultColumn - initialResultColumn;
+            int resultColumn = startColumn + maxDepth + resultColumnOffset;
+            var results = ExtractPropertyValuesFromInitialValues(leafNodes, "result");
+            SetValueInSheet(sheet, startRow, resultColumn, results, false);
+
+            // 「計画時間(分)」列に node の initialValues.estimated_time を入れる
+            int planColumnOffset = initialPlanColumn - initialResultColumn;
+            int planColumn = startColumn + maxDepth + planColumnOffset;
             var estimatedTimes = ExtractPropertyValuesFromInitialValues(leafNodes, "estimated_time");
             SetValueInSheet(sheet, startRow, planColumn, estimatedTimes, false);
 
-            // XXX: 先頭が【*】なセルの対応
-            int resultColumn = startColumn + maxDepth;
+            // XXX: コメント系セルの対応
             for (int i = 0; i < result.Count; i++)
             {
                 for (int j = 0; j < result[i].Count; j++)
@@ -730,32 +762,43 @@ namespace ExcelDnaTest
                         continue;
                     }
 
-                    string text = node.text;
-                    const string pattern = @"^【.*】";
-                    bool isMatch = Regex.IsMatch(text, pattern);
-
-                    if (!isMatch)
+                    bool InitializeCommentCell(string text_, string pattern, int cellColorIndex, int fontColorIndex)
                     {
-                        continue;
+                        if (!Regex.IsMatch(text_, pattern))
+                        {
+                            return false;
+                        }
+
+                        // ここより右のセルの色を変える
+                        var cells = sheet.Cells[startRow + i, startColumn + j];
+                        cells = cells.Resize(1, maxDepth - j);
+                        cells.Interior.ColorIndex = cellColorIndex;
+                        cells.Font.ColorIndex = fontColorIndex;
+
+                        // チェック予定日欄を空欄にする
+                        var dateCell = sheet.Cells[startRow + i, dateColumn];
+                        dateCell.Value = null;
+
+                        return true;
                     }
 
-                    // ここより右のセルの色を変える
-                    const int cellThemeColorId = 5;   // 水色っぽい色
-                    const int fontColorIndex = 2;   // 白
-                    var cells = sheet.Cells[startRow + i, startColumn + j];
-                    cells = cells.Resize(1, maxDepth - j);
-                    cells.Interior.ThemeColor = cellThemeColorId;
-                    cells.Font.ColorIndex = fontColorIndex;
+                    string text = node.text;
 
-                    // 結果欄に - を入力
-                    var resultCell = sheet.Cells[startRow + i, resultColumn];
-                    resultCell.Value = "-";
+                    const string descPattern = @"^【.*】";
+                    const int descCellColorIndex = 37;   // 水色っぽい色
+                    const int descFontColorIndex = 1;   // 黒
+                    if (InitializeCommentCell(text, descPattern, descCellColorIndex, descFontColorIndex))
+                    {
+                        break;
+                    }
 
-                    // チェック予定日欄を空欄にする
-                    var dateCell = sheet.Cells[startRow + i, dateColumn];
-                    dateCell.Value = null;
-
-                    break;
+                    const string warningPattern = @"^※※";
+                    const int warningCellThemeColorId = 22;
+                    const int warningFontColorIndex = 9;
+                    if (InitializeCommentCell(text, warningPattern, warningCellThemeColorId, warningFontColorIndex))
+                    {
+                        break;
+                    }
                 }
             }
 
