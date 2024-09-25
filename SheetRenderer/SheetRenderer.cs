@@ -663,6 +663,41 @@ namespace ExcelDnaTest
             return propertyValues;
         }
 
+        static Excel.Range GetRange(Excel.Worksheet sheet, int startRow, int startColumn, int rowCount, int columnCount)
+        {
+            Excel.Range startCell = (Excel.Range)sheet.Cells[startRow, startColumn];
+            Excel.Range endCell = (Excel.Range)sheet.Cells[startRow + rowCount - 1, startColumn + columnCount - 1];
+            Excel.Range range = sheet.Range[startCell, endCell];
+            return range;
+        }
+
+        static void AutoFitColumnsIfNarrower(Excel.Range range)
+        {
+            Excel.Worksheet sheet = range.Worksheet;
+
+            // 各列の元の幅を保存
+            double[] originalWidths = new double[range.Columns.Count];
+            int index = 0;
+            foreach (Excel.Range column in range.Columns)
+            {
+                originalWidths[index++] = column.ColumnWidth;
+            }
+
+            // 一度にAutoFitを適用
+            range.Columns.AutoFit();
+
+            // 各列の幅をチェックして、元の幅よりも広くなった場合は元に戻す
+            index = 0;
+            foreach (Excel.Range column in range.Columns)
+            {
+                if (column.ColumnWidth > originalWidths[index])
+                {
+                    column.ColumnWidth = originalWidths[index];
+                }
+                index++;
+            }
+        }
+
         void RenderSheet(JsonNode sheetNode, Dictionary<string, string> confData, Excel.Worksheet sheet)
         {
             List<JsonNode> leafNodes;
@@ -727,6 +762,8 @@ namespace ExcelDnaTest
             }
 
             SetValueInSheet(sheet, startRow, startColumn, arrayResult);
+
+            AutoFitColumnsIfNarrower(GetRange(sheet, startRow, startColumn, leafCount, maxDepth));
 
             // 「チェック予定日」列に無条件で START_DATE を入れる
             int dateColumnOffset = initialDateColumn - initialResultColumn;
