@@ -651,7 +651,7 @@ namespace ExcelDnaTest
             return GetJsonValue(jsonNode.AsValue());
         }
 
-        static List<object> ExtractPropertyValuesFromInitialValues(List<JsonNode> leafNodes, string propertyName)
+        static IEnumerable<object> ExtractPropertyValuesFromInitialValues(IEnumerable<JsonNode> leafNodes, string propertyName)
         {
             List<object> propertyValues = new List<object>();
 
@@ -672,9 +672,9 @@ namespace ExcelDnaTest
             return propertyValues;
         }
 
-        static List<object> ExtractPropertyValues(List<JsonNode> leafNodes, string propertyName)
+        static IEnumerable<object> ExtractPropertyValues(IEnumerable<JsonNode> leafNodes, string propertyName)
         {
-            return leafNodes.Select(node => GetJsonValue(node[propertyName])).ToList();
+            return leafNodes.Select(node => GetJsonValue(node[propertyName]));
         }
 
         static Excel.Range GetRange(Excel.Worksheet sheet, int startRow, int startColumn, int rowCount, int columnCount)
@@ -944,36 +944,38 @@ namespace ExcelDnaTest
             SetValueInSheet(sheet, startRow, startColumn, array);
         }
 
-        static void SetValueInSheet<T>(Excel.Worksheet sheet, int startRow, int startColumn, List<T> list, bool isRow = true)
+        static void SetValueInSheet<T>(Excel.Worksheet sheet, int startRow, int startColumn, IEnumerable<T> source, bool isRow = true)
         {
-            int length = list.Count;
+            int length = source.Count();
             T[,] array = new T[isRow ? 1 : length, isRow ? length : 1];
+            int index = 0;
 
-            for (int i = 0; i < length; i++)
+            foreach (var item in source)
             {
                 if (isRow)
                 {
-                    array[0, i] = list[i];
+                    array[0, index] = item;
                 }
                 else
                 {
-                    array[i, 0] = list[i];
+                    array[index, 0] = item;
                 }
+                index++;
             }
 
             SetValueInSheet(sheet, startRow, startColumn, array);
         }
 
         // リストの値を行として貼り付けます
-        static void SetValueInSheetAsRow<T>(Excel.Worksheet sheet, int startRow, int startColumn, List<T> list)
+        static void SetValueInSheetAsRow<T>(Excel.Worksheet sheet, int startRow, int startColumn, IEnumerable<T> source)
         {
-            SetValueInSheet(sheet, startRow, startColumn, list, true);
+            SetValueInSheet(sheet, startRow, startColumn, source, true);
         }
 
         // リストの値を列として貼り付けます
-        static void SetValueInSheetAsColumn<T>(Excel.Worksheet sheet, int startRow, int startColumn, List<T> list)
+        static void SetValueInSheetAsColumn<T>(Excel.Worksheet sheet, int startRow, int startColumn, IEnumerable<T> source)
         {
-            SetValueInSheet(sheet, startRow, startColumn, list, false);
+            SetValueInSheet(sheet, startRow, startColumn, source, false);
         }
 
         static string GetAbsolutePathFromExecutingDirectory(string relativePath)
