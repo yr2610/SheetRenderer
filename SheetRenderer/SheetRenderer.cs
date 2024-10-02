@@ -644,11 +644,7 @@ namespace ExcelDnaTest
 
         static object GetJsonValue(JsonNode jsonNode)
         {
-            if (jsonNode == null)
-            {
-                return null;
-            }
-            return GetJsonValue(jsonNode.AsValue());
+            return (jsonNode != null) ? GetJsonValue(jsonNode.AsValue()) : null;
         }
 
         static IEnumerable<object> ExtractPropertyValuesFromInitialValues(IEnumerable<JsonNode> leafNodes, string propertyName)
@@ -658,15 +654,9 @@ namespace ExcelDnaTest
             foreach (var node in leafNodes)
             {
                 var initialValuesNode = node["initialValues"];
-                if (initialValuesNode != null && initialValuesNode[propertyName] != null)
-                {
-                    var val = GetJsonValue(initialValuesNode[propertyName].AsValue());
-                    propertyValues.Add(val);
-                }
-                else
-                {
-                    propertyValues.Add(null);
-                }
+                var val = (initialValuesNode != null) ? GetJsonValue(initialValuesNode[propertyName]) : null;
+
+                propertyValues.Add(val);
             }
 
             return propertyValues;
