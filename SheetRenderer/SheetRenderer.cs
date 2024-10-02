@@ -649,17 +649,11 @@ namespace ExcelDnaTest
 
         static IEnumerable<object> ExtractPropertyValuesFromInitialValues(IEnumerable<JsonNode> leafNodes, string propertyName)
         {
-            List<object> propertyValues = new List<object>();
-
-            foreach (var node in leafNodes)
+            return leafNodes.Select(node =>
             {
                 var initialValuesNode = node["initialValues"];
-                var val = (initialValuesNode != null) ? GetJsonValue(initialValuesNode[propertyName]) : null;
-
-                propertyValues.Add(val);
-            }
-
-            return propertyValues;
+                return (initialValuesNode != null) ? GetJsonValue(initialValuesNode[propertyName]) : null;
+            });
         }
 
         static IEnumerable<object> ExtractPropertyValues(IEnumerable<JsonNode> leafNodes, string propertyName)
