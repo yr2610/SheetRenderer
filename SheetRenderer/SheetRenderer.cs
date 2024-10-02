@@ -642,6 +642,15 @@ namespace ExcelDnaTest
             }
         }
 
+        static object GetJsonValue(JsonNode jsonNode)
+        {
+            if (jsonNode == null)
+            {
+                return null;
+            }
+            return GetJsonValue(jsonNode.AsValue());
+        }
+
         static List<object> ExtractPropertyValuesFromInitialValues(List<JsonNode> leafNodes, string propertyName)
         {
             List<object> propertyValues = new List<object>();
@@ -661,6 +670,11 @@ namespace ExcelDnaTest
             }
 
             return propertyValues;
+        }
+
+        static List<object> ExtractPropertyValues(List<JsonNode> leafNodes, string propertyName)
+        {
+            return leafNodes.Select(node => GetJsonValue(node[propertyName])).ToList();
         }
 
         static Excel.Range GetRange(Excel.Worksheet sheet, int startRow, int startColumn, int rowCount, int columnCount)
@@ -716,15 +730,19 @@ namespace ExcelDnaTest
             ReplaceTrailingNullsInLastColumn(arrayResult, "---");
 
             int startColumn = 3;
-            int endColumn = 6;
+            const int endColumn = 6;
             int columnWidth = endColumn - startColumn + 1;
-            int startRow = 25;
-            int endRow = 102;
+            const int startRow = 25;
+            const int endRow = 102;
             int rowHeight = endRow - startRow + 1;
 
-            int initialDateColumn = 13;
-            int initialPlanColumn = 11;
-            int initialResultColumn = 7;
+            const int initialDateColumn = 13;
+            const int initialPlanColumn = 11;
+            const int initialActualTimeColumn = 12;
+            const int initialResultColumn = 7;
+
+            // 左端だと階層浅い時に非表示にできないC,D列になるので右端で
+            int initialIdColumn = 14;
 
             if (maxDepth > columnWidth)
             {
@@ -775,6 +793,14 @@ namespace ExcelDnaTest
                 SetRangeValue(sheet, startRow, dateColumn, leafCount, 1, dateValue);
             }
 
+            // 「チェック予定日」の右隣の列に ID を入れて非表示にする
+            int idColumnOffset = initialIdColumn - initialResultColumn;
+            int idColumn = startColumn + maxDepth + idColumnOffset;
+            var ids = ExtractPropertyValues(leafNodes, "id");
+            SetValueInSheet(sheet, startRow, idColumn, ids, false);
+            Excel.Range idColumnRange = sheet.Columns[idColumn];
+            idColumnRange.EntireColumn.Hidden = true;
+
             // 「チェック結果」列に node の initialValues.result を入れる
             int resultColumnOffset = initialResultColumn - initialResultColumn;
             int resultColumn = startColumn + maxDepth + resultColumnOffset;
@@ -786,6 +812,8 @@ namespace ExcelDnaTest
             int planColumn = startColumn + maxDepth + planColumnOffset;
             var estimatedTimes = ExtractPropertyValuesFromInitialValues(leafNodes, "estimated_time");
             SetValueInSheet(sheet, startRow, planColumn, estimatedTimes, false);
+
+            int actualTimeColumnOffset = initialActualTimeColumn - initialResultColumn;
 
             // XXX: コメント系セルの対応
             for (int i = 0; i < result.Count; i++)
@@ -838,6 +866,12 @@ namespace ExcelDnaTest
                     }
                 }
             }
+
+            // 名前付き範囲として追加
+            const string sheetRangeName = "SS_SHEET";
+            var rangeforNamedRange = GetRange(sheet, resultColumn, resultColumn, leafCount, 1 + actualTimeColumnOffset);
+            var namedRange = sheet.Names.Add(Name: sheetRangeName, RefersTo: rangeforNamedRange);
+            namedRange.Comment = $"idColumnOffset: {idColumnOffset}";
 
             // 画像を貼る
             for (int i = 0; i < result.Count; i++)
