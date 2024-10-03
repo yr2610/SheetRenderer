@@ -853,7 +853,7 @@ namespace ExcelDnaTest
 
             // 名前付き範囲として追加
             const string sheetRangeName = "SS_SHEET";
-            var rangeforNamedRange = GetRange(sheet, resultColumn, resultColumn, leafCount, 1 + actualTimeColumnOffset);
+            var rangeforNamedRange = GetRange(sheet, startRow, resultColumn, leafCount, 1 + actualTimeColumnOffset);
             var namedRange = sheet.Names.Add(Name: sheetRangeName, RefersTo: rangeforNamedRange);
             namedRange.Comment = $"idColumnOffset: {idColumnOffset}";
 
