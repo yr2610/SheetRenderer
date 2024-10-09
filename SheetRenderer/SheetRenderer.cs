@@ -696,6 +696,12 @@ namespace ExcelDnaTest
             }
         }
 
+        class RangeInfo
+        {
+            public int? IdColumnOffset { get; set; }
+            public HashSet<int> IgnoreColumnOffsets { get; set; }
+        }
+
         void RenderSheet(JsonNode sheetNode, Dictionary<string, string> confData, Excel.Worksheet sheet)
         {
             List<JsonNode> leafNodes;
@@ -855,8 +861,17 @@ namespace ExcelDnaTest
             const string sheetRangeName = "SS_SHEET";
             var rangeforNamedRange = GetRange(sheet, startRow, resultColumn, leafCount, 1 + actualTimeColumnOffset);
             var namedRange = sheet.Names.Add(Name: sheetRangeName, RefersTo: rangeforNamedRange);
-            namedRange.Comment = $"idColumnOffset: {idColumnOffset}";
+            RangeInfo rangeInfo = new RangeInfo
+            {
+                IdColumnOffset = idColumnOffset,
+                IgnoreColumnOffsets = new HashSet<int> { planColumnOffset },
+            };
+            var serializer = new SerializerBuilder()
+                .WithNamingConvention(CamelCaseNamingConvention.Instance)
+                .Build();
 
+            namedRange.Comment = serializer.Serialize(rangeInfo);
+            
             // 画像を貼る
             for (int i = 0; i < result.Count; i++)
             {
