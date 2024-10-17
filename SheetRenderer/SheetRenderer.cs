@@ -491,13 +491,20 @@ namespace ExcelDnaTest
 
         static void ShowMissingImageFilesDialog(IEnumerable<string> missingFiles)
         {
-            Form form = new Form();
-            form.Text = "Missing Files";
+            Form form = new Form
+            {
+                Text = "Missing Files",
+                Width = 400,
+                Height = 300,
+                TopMost = true // topmostに設定
+            };
 
-            Label label = new Label();
-            label.Text = "以下の画像ファイルが見つかりませんでした。";
-            label.Dock = DockStyle.Top;
-            label.AutoSize = true;
+            Label label = new Label
+            {
+                Text = "以下の画像ファイルが見つかりませんでした。",
+                Dock = DockStyle.Top,
+                AutoSize = true,
+            };
             label.Font = new Font(label.Font.FontFamily, label.Font.Size * 2); // フォントサイズを2倍に設定
 
             // ラベルのテキスト幅に基づいてフォームの幅を設定
@@ -506,13 +513,14 @@ namespace ExcelDnaTest
                 SizeF size = g.MeasureString(label.Text, label.Font);
                 form.Width = (int)size.Width + 40; // 余白を追加
             }
-            form.Height = 300;
 
-            TextBox textBox = new TextBox();
-            textBox.Multiline = true;
-            textBox.Dock = DockStyle.Fill;
-            textBox.ScrollBars = ScrollBars.Vertical;
-            textBox.ReadOnly = true;
+            TextBox textBox = new TextBox
+            {
+                Multiline = true,
+                Dock = DockStyle.Fill,
+                ScrollBars = ScrollBars.Vertical,
+                ReadOnly = true,
+            };
             textBox.Font = new Font(textBox.Font.FontFamily, textBox.Font.Size * 2); // フォントサイズを2倍に設定
 
             missingFiles = missingFiles.Distinct();
