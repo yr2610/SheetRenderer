@@ -390,6 +390,8 @@ namespace ExcelDnaTest
 
             excelApp.DisplayAlerts = false;
             excelApp.ScreenUpdating = false;
+            excelApp.Calculation = Excel.XlCalculation.xlCalculationManual;
+            excelApp.EnableEvents = false;
 
             const string indexSheetName = "表紙";
             const string templateSheetName = "単列チェック結果format";
@@ -401,6 +403,8 @@ namespace ExcelDnaTest
 
             List<string> sheetNames = new List<string>();
             Excel.Worksheet sheet = workbook.Sheets[templateSheetName];
+
+            List<string> missingImagePaths = new List<string>();
 
             // +1 は index シート
             progressBarForm = new ProgressBarForm(items.Count + 1);
@@ -420,7 +424,9 @@ namespace ExcelDnaTest
                     Excel.Worksheet newSheet = workbook.Sheets[workbook.Sheets.Count];
                     newSheet.Name = newSheetName;
 
-                    RenderSheet(sheetNode, confData, newSheet);
+                    var missingImagePathsInSheet = RenderSheet(sheetNode, confData, newSheet);
+
+                    missingImagePaths.AddRange(missingImagePathsInSheet);
 
                     sheetNames.Add(newSheetName);
 
@@ -468,16 +474,57 @@ namespace ExcelDnaTest
 
             progressBarForm.Close();
 
+            excelApp.EnableEvents = true;
+            excelApp.Calculation = Excel.XlCalculation.xlCalculationAutomatic;
             excelApp.ScreenUpdating = true;
             excelApp.DisplayAlerts = true;
+
             MacroControl.EnableMacros();
+
+            if (missingImagePaths.Any())
+            {
+                ShowMissingImageFilesDialog(missingImagePaths);
+            }
 
             workbook.Save();
         }
 
-        void RenderSheets()
+        static void ShowMissingImageFilesDialog(IEnumerable<string> missingFiles)
         {
+            Form form = new Form();
+            form.Text = "Missing Files";
 
+            Label label = new Label();
+            label.Text = "以下の画像ファイルが見つかりませんでした。";
+            label.Dock = DockStyle.Top;
+            label.AutoSize = true;
+            label.Font = new Font(label.Font.FontFamily, label.Font.Size * 2); // フォントサイズを2倍に設定
+
+            // ラベルのテキスト幅に基づいてフォームの幅を設定
+            using (Graphics g = label.CreateGraphics())
+            {
+                SizeF size = g.MeasureString(label.Text, label.Font);
+                form.Width = (int)size.Width + 40; // 余白を追加
+            }
+            form.Height = 300;
+
+            TextBox textBox = new TextBox();
+            textBox.Multiline = true;
+            textBox.Dock = DockStyle.Fill;
+            textBox.ScrollBars = ScrollBars.Vertical;
+            textBox.ReadOnly = true;
+            textBox.Font = new Font(textBox.Font.FontFamily, textBox.Font.Size * 2); // フォントサイズを2倍に設定
+
+            missingFiles = missingFiles.Distinct();
+            foreach (var file in missingFiles)
+            {
+                textBox.AppendText(file + Environment.NewLine);
+            }
+
+            form.Controls.Add(textBox);
+            form.Controls.Add(label);
+
+            form.Show(); // モードレスウィンドウとして表示
         }
 
         // マクロを一時的に黙らせたい
@@ -702,12 +749,13 @@ namespace ExcelDnaTest
             public HashSet<int> IgnoreColumnOffsets { get; set; }
         }
 
-        void RenderSheet(JsonNode sheetNode, Dictionary<string, string> confData, Excel.Worksheet sheet)
+        IEnumerable<string> RenderSheet(JsonNode sheetNode, Dictionary<string, string> confData, Excel.Worksheet sheet)
         {
             List<JsonNode> leafNodes;
             int maxDepth;
             List<List<NodeData>> result = TraverseTreeFromRoot(sheetNode, out leafNodes, out maxDepth);
             int leafCount = leafNodes.Count;
+            List<string> missingImagePaths = new List<string>();
 
             // 左端はシート名なので削除
             result = RemoveFirstColumn(result);
@@ -886,27 +934,27 @@ namespace ExcelDnaTest
 
                     if (node.imageFilePath != null)
                     {
+                        const string noImageFilePath = "images/no_image.jpg";
                         string path = GetAbsolutePathFromBasePath(JsonFilePath, node.imageFilePath);
                         var cell = sheet.Cells[startRow + i, startColumn + j];
+
+                        if (!File.Exists(path))
+                        {
+                            // XXX: 毎回パス構築はムダ
+                            path = GetAbsolutePathFromExecutingDirectory(noImageFilePath);
+                            missingImagePaths.Add(node.imageFilePath);
+                        }
 
                         AddPictureAsComment(cell, path);
                     }
                 }
             }
 
+            return missingImagePaths;
         }
 
         static void AddPictureAsComment(Excel.Range cell, string path)
         {
-            const string noImageFilePath = "images/no_image.jpg";
-
-            // ファイルが存在するか確認
-            if (!File.Exists(path))
-            {
-                // ファイルが存在しない場合の処理
-                path = GetAbsolutePathFromExecutingDirectory(noImageFilePath);
-            }
-
             // 画像のサイズを取得
             System.Drawing.Image image = System.Drawing.Image.FromFile(path);
             float imageWidth = image.Width;
@@ -998,6 +1046,22 @@ namespace ExcelDnaTest
             string absolutePath = Path.Combine(basePath, relativePath);
 
             return absolutePath;
+        }
+
+        static string GetRelativePathFromExecutingDirectory(string absolutePath)
+        {
+            // 実行ディレクトリを取得
+            string executingDirectory = AppContext.BaseDirectory;
+
+            return GetRelativePathFromBasePath(executingDirectory, absolutePath);
+        }
+
+        static string GetRelativePathFromBasePath(string basePath, string absolutePath)
+        {
+            Uri baseUri = new Uri(basePath);
+            Uri absoluteUri = new Uri(absolutePath);
+            Uri relativeUri = baseUri.MakeRelativeUri(absoluteUri);
+            return Uri.UnescapeDataString(relativeUri.ToString().Replace('/', Path.DirectorySeparatorChar));
         }
 
         static Excel.Workbook CreateCopiedWorkbook(Excel.Application excelApp, string filePath, string newFilePath)
