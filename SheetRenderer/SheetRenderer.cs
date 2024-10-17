@@ -404,7 +404,7 @@ namespace ExcelDnaTest
             List<string> sheetNames = new List<string>();
             Excel.Worksheet sheet = workbook.Sheets[templateSheetName];
 
-            List<string> missingImagePaths = new List<string>();
+            List<(string filePath, string sheetName, string address)> missingImagePaths = new List<(string filePath, string sheetName, string address)>();
 
             // +1 は index シート
             progressBarForm = new ProgressBarForm(items.Count + 1);
@@ -489,7 +489,7 @@ namespace ExcelDnaTest
             workbook.Save();
         }
 
-        static void ShowMissingImageFilesDialog(IEnumerable<string> missingFiles)
+        static void ShowMissingImageFilesDialog(IEnumerable<(string filePath, string sheetName, string address)> missingFiles)
         {
             Form form = new Form
             {
@@ -520,11 +520,26 @@ namespace ExcelDnaTest
             };
             listBox.Font = new Font(listBox.Font.FontFamily, listBox.Font.Size * 2); // フォントサイズを2倍に設定
 
-            missingFiles = missingFiles.Distinct();
+            //missingFiles = missingFiles.Distinct();
             foreach (var file in missingFiles)
             {
-                listBox.Items.Add(file);
+                listBox.Items.Add(file.filePath);
             }
+
+            listBox.Click += (sender, e) =>
+            {
+                if (listBox.SelectedItem != null)
+                {
+                    var selectedCell = missingFiles.ElementAtOrDefault(listBox.SelectedIndex);
+                    var sheetName = selectedCell.sheetName;
+                    var cellAddress = selectedCell.address;
+                    var excelApp = (Excel.Application)ExcelDnaUtil.Application;
+                    var sheet = (Excel.Worksheet)excelApp.Sheets[sheetName];
+                    var range = sheet.Range[cellAddress];
+                    sheet.Activate();
+                    range.Select();
+                }
+            };
 
             form.Controls.Add(listBox);
             form.Controls.Add(label);
@@ -754,14 +769,14 @@ namespace ExcelDnaTest
             public HashSet<int> IgnoreColumnOffsets { get; set; }
         }
 
-        IEnumerable<string> RenderSheet(JsonNode sheetNode, Dictionary<string, string> confData, Excel.Worksheet sheet)
+        IEnumerable<(string filePath, string sheetName, string address)> RenderSheet(JsonNode sheetNode, Dictionary<string, string> confData, Excel.Worksheet sheet)
         {
             List<JsonNode> leafNodes;
             int maxDepth;
             List<List<NodeData>> result = TraverseTreeFromRoot(sheetNode, out leafNodes, out maxDepth);
             int leafCount = leafNodes.Count;
-            List<string> missingImagePaths = new List<string>();
-
+            List<(string filePath, string sheetName, string address)> missingImagePaths = new List<(string filePath, string sheetName, string address)>();
+            
             // 左端はシート名なので削除
             result = RemoveFirstColumn(result);
             maxDepth--;
@@ -947,7 +962,7 @@ namespace ExcelDnaTest
                         {
                             // XXX: 毎回パス構築はムダ
                             path = GetAbsolutePathFromExecutingDirectory(noImageFilePath);
-                            missingImagePaths.Add(node.imageFilePath);
+                            missingImagePaths.Add((filePath: node.imageFilePath, sheetName: sheet.Name, address: cell.Address));
                         }
 
                         AddPictureAsComment(cell, path);
