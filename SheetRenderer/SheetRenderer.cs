@@ -514,22 +514,19 @@ namespace ExcelDnaTest
                 form.Width = (int)size.Width + 40; // 余白を追加
             }
 
-            TextBox textBox = new TextBox
+            ListBox listBox = new ListBox
             {
-                Multiline = true,
                 Dock = DockStyle.Fill,
-                ScrollBars = ScrollBars.Vertical,
-                ReadOnly = true,
             };
-            textBox.Font = new Font(textBox.Font.FontFamily, textBox.Font.Size * 2); // フォントサイズを2倍に設定
+            listBox.Font = new Font(listBox.Font.FontFamily, listBox.Font.Size * 2); // フォントサイズを2倍に設定
 
             missingFiles = missingFiles.Distinct();
             foreach (var file in missingFiles)
             {
-                textBox.AppendText(file + Environment.NewLine);
+                listBox.Items.Add(file);
             }
 
-            form.Controls.Add(textBox);
+            form.Controls.Add(listBox);
             form.Controls.Add(label);
 
             form.Show(); // モードレスウィンドウとして表示
