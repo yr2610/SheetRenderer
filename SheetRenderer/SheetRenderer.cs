@@ -161,22 +161,29 @@ namespace ExcelDnaTest
         {
             string projectName = Assembly.GetExecutingAssembly().GetName().Name;
             return $@"
-      <customUI xmlns='http://schemas.microsoft.com/office/2006/01/customui' onLoad='OnLoad'>
-      <ribbon>
-        <tabs>
-          <tab id='tab1' label='{projectName}'>
-            <group id='group1' label='Render'>
-              <button id='button1' label='JSONファイル選択' size='large' imageMso='FileSave' onAction='OnSelectJsonFileButtonPressed'/>
-              <button id='button2' label='Render' size='large' imageMso='TableDrawTable' onAction='OnRenderButtonPressed'/>
-              <editBox id='fileNameBox' label='JSONファイル' sizeString='hoge\\20XX-XX-XX\\index' getText='GetFileName' onChange='OnTextChanged' />
-            </group>
-          </tab>
-        </tabs>
-      </ribbon>
-    </customUI>";
+              <customUI xmlns='http://schemas.microsoft.com/office/2006/01/customui' onLoad='OnLoad'>
+              <ribbon>
+                <tabs>
+                  <tab id='tab1' label='{projectName}'>
+                    <group id='group1' label='Render'>
+                      <button id='button1' label='JSONファイル選択' size='large' imageMso='FileSave' onAction='OnSelectJsonFileButtonPressed'/>
+                      <button id='button2' label='Render' size='large' imageMso='TableDrawTable' onAction='OnRenderButtonPressed'/>
+                      <button id='button3' label='Update Sheet' size='large' imageMso='TableSharePointListsRefreshList' onAction='OnUpdateCurrentSheetButtonPressed'/>
+                      <editBox id='fileNameBox' label='JSONファイル' sizeString='hoge\\20XX-XX-XX\\index' getText='GetFileName' onChange='OnTextChanged' />
+                    </group>
+                  </tab>
+                </tabs>
+              </ribbon>
+            </customUI>";
         }
 
         string JsonFilePath { get; set; }
+
+        public class RenderLog
+        {
+            public string SourceFilePath { get; set; }
+            public string User { get; set; }
+        }
 
         static string GetFilePathWithoutExtension(string path)
         {
@@ -366,6 +373,11 @@ namespace ExcelDnaTest
             }
         }
 
+        public async void OnUpdateCurrentSheetButtonPressed(IRibbonControl control)
+        {
+
+        }
+
         public async void OnRenderButtonPressed(IRibbonControl control)
         {
             if (JsonFilePath == null)
@@ -388,13 +400,26 @@ namespace ExcelDnaTest
 
             Excel.Workbook workbook = CreateCopiedWorkbook(excelApp, templateFilePath, newFilePath);
 
+            const string indexSheetNameCustomPropertyName = "IndexSheetName";
+            const string templateSheetNameCustomPropertyName = "TemplateSheetName";
+
+            string indexSheetName = GetCustomProperty(workbook, indexSheetNameCustomPropertyName);
+            string templateSheetName = GetCustomProperty(workbook, templateSheetNameCustomPropertyName);
+            if (indexSheetName == null)
+            {
+                MessageBox.Show($"{templateFileName} のカスタムプロパティに {indexSheetNameCustomPropertyName} が設定されていません。");
+                return;
+            }
+            if (templateSheetName == null)
+            {
+                MessageBox.Show($"{templateFileName} のカスタムプロパティに {templateSheetNameCustomPropertyName} が設定されていません。");
+                return;
+            }
+
             excelApp.DisplayAlerts = false;
             excelApp.ScreenUpdating = false;
             excelApp.Calculation = Excel.XlCalculation.xlCalculationManual;
             excelApp.EnableEvents = false;
-
-            const string indexSheetName = "表紙";
-            const string templateSheetName = "単列チェック結果format";
 
             var confData = GetPropertiesFromJsonNode(jsonObject, "variables");
 
@@ -485,6 +510,15 @@ namespace ExcelDnaTest
             {
                 ShowMissingImageFilesDialog(missingImagePaths);
             }
+
+            RenderLog renderLog = new RenderLog
+            {
+                SourceFilePath = JsonFilePath,
+                User = Environment.UserName
+            };
+            SetCustomProperty(workbook, "RenderLog", renderLog);
+
+            //var lastRenderLog = GetCustomProperty<RenderLog>(workbook, "RenderLog");
 
             workbook.Save();
         }
@@ -1110,6 +1144,61 @@ namespace ExcelDnaTest
             excelApp.Visible = true;
 
             return workbook;
+        }
+
+        static dynamic GetCustomPropertyObject(Excel.Workbook workbook, string propertyName)
+        {
+            dynamic properties = workbook.CustomDocumentProperties;
+            foreach (dynamic prop in properties)
+            {
+                if (prop.Name == propertyName)
+                {
+                    return prop;
+                }
+            }
+            return null;
+        }
+
+        static void SetCustomProperty(Excel.Workbook workbook, string propertyName, string propertyValue)
+        {
+            dynamic prop = GetCustomPropertyObject(workbook, propertyName);
+            if (prop != null)
+            {
+                prop.Value = propertyValue;
+            }
+            else
+            {
+                workbook.CustomDocumentProperties.Add(propertyName, false, Office.MsoDocProperties.msoPropertyTypeString, propertyValue);
+            }
+        }
+
+        static void SetCustomProperty<T>(Excel.Workbook workbook, string propertyName, T propertyValue)
+        {
+            var serializer = new SerializerBuilder()
+                .WithNamingConvention(CamelCaseNamingConvention.Instance)
+                .Build();
+            string yaml = serializer.Serialize(propertyValue);
+
+            SetCustomProperty(workbook, propertyName, yaml);
+        }
+
+        static string GetCustomProperty(Excel.Workbook workbook, string propertyName)
+        {
+            dynamic prop = GetCustomPropertyObject(workbook, propertyName);
+            return prop != null ? prop.Value : null;
+        }
+
+        static T GetCustomProperty<T>(Excel.Workbook workbook, string propertyName)
+        {
+            string yaml = GetCustomProperty(workbook, propertyName);
+            if (yaml != null)
+            {
+                var deserializer = new DeserializerBuilder()
+                    .WithNamingConvention(CamelCaseNamingConvention.Instance)
+                    .Build();
+                return deserializer.Deserialize<T>(yaml);
+            }
+            return default(T);
         }
 
     }
