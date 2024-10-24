@@ -17,6 +17,8 @@ using System.Drawing;
 
 using System.Reflection;
 
+using System.Diagnostics;
+
 using ExcelDna.Integration;
 
 using System.Runtime.InteropServices;
@@ -405,13 +407,18 @@ namespace ExcelDnaTest
 
             string indexSheetName = GetCustomProperty(workbook, indexSheetNameCustomPropertyName);
             string templateSheetName = GetCustomProperty(workbook, templateSheetNameCustomPropertyName);
+            //Debug.Assert(false, "assert test");
             if (indexSheetName == null)
             {
+                // ブックを保存せずに閉じる
+                workbook.Close(false);
                 MessageBox.Show($"{templateFileName} のカスタムプロパティに {indexSheetNameCustomPropertyName} が設定されていません。");
                 return;
             }
             if (templateSheetName == null)
             {
+                // ブックを保存せずに閉じる
+                workbook.Close(false);
                 MessageBox.Show($"{templateFileName} のカスタムプロパティに {templateSheetNameCustomPropertyName} が設定されていません。");
                 return;
             }
