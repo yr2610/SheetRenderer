@@ -469,33 +469,8 @@ namespace ExcelDnaTest
 
                 // index sheet にシート名を入力
                 Excel.Worksheet indexSheet = workbook.Sheets[indexSheetName];
-                int indexStartRow = 16;
-                int indexEndRow = 35;
-                int indexStartColumn = 2;
-                int indexRowCount = indexEndRow - indexStartRow + 1;
 
-                // 行が足りなければ挿入
-                if (sheetNames.Count > indexRowCount)
-                {
-                    int numberOfRows = sheetNames.Count - indexRowCount;
-
-                    InsertRowsAndCopyFormulas(indexSheet, indexEndRow, numberOfRows);
-                }
-                // 多ければ削除
-                else if (sheetNames.Count < indexRowCount)
-                {
-                    int numberOfRowsToDelete = indexRowCount - sheetNames.Count;
-
-                    DeleteRows(indexSheet, indexStartRow, numberOfRowsToDelete);
-                }
-
-                SetValueInSheetAsColumn(indexSheet, indexStartRow, indexStartColumn, sheetNames);
-
-                // テンプレ処理
-                ReplaceValues(indexSheet, confData);
-
-                // 幅をautofit
-                indexSheet.Cells[indexStartRow, indexStartColumn].Resize(indexRowCount).Columns.AutoFit();
+                RenderIndexSheet(items, confData, indexSheet);
 
                 // 最後にindexシートを選択状態にしておく
                 indexSheet.Select();
@@ -528,6 +503,48 @@ namespace ExcelDnaTest
             //var lastRenderLog = GetCustomProperty<RenderLog>(workbook, "RenderLog");
 
             workbook.Save();
+        }
+
+        static void RenderIndexSheet(IEnumerable<JsonNode> sheetNodes, Dictionary<string, string> confData, Excel.Worksheet indexSheet)
+        {
+            int indexStartRow = 16;
+            int indexEndRow = 35;
+            int indexStartColumn = 2;
+            int indexRowCount = indexEndRow - indexStartRow + 1;
+            int idColumn = 8;
+
+            var sheetNames = ExtractPropertyValues(sheetNodes, "text");
+            var sheetNamesCount = sheetNames.Count();
+
+            // 行が足りなければ挿入
+            if (sheetNamesCount > indexRowCount)
+            {
+                int numberOfRows = sheetNamesCount - indexRowCount;
+
+                InsertRowsAndCopyFormulas(indexSheet, indexEndRow, numberOfRows);
+            }
+            // 多ければ削除
+            else if (sheetNamesCount < indexRowCount)
+            {
+                int numberOfRowsToDelete = indexRowCount - sheetNamesCount;
+
+                DeleteRows(indexSheet, indexStartRow, numberOfRowsToDelete);
+            }
+
+            SetValueInSheetAsColumn(indexSheet, indexStartRow, indexStartColumn, sheetNames);
+
+            // テンプレ処理
+            ReplaceValues(indexSheet, confData);
+
+            // 幅をautofit
+            indexSheet.Cells[indexStartRow, indexStartColumn].Resize(indexRowCount).Columns.AutoFit();
+
+            // 最後の列に ID を入れて非表示にする
+            var ids = ExtractPropertyValues(sheetNodes, "id");
+            SetValueInSheet(indexSheet, indexStartRow, idColumn, ids, false);
+            Excel.Range idColumnRange = indexSheet.Columns[idColumn];
+            idColumnRange.EntireColumn.Hidden = true;
+
         }
 
         static void ShowMissingImageFilesDialog(IEnumerable<(string filePath, string sheetName, string address)> missingFiles)
