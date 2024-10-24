@@ -511,7 +511,11 @@ namespace ExcelDnaTest
             int indexEndRow = 35;
             int indexStartColumn = 2;
             int indexRowCount = indexEndRow - indexStartRow + 1;
-            int idColumn = 8;
+            int idColumn = 12;
+
+            int syncStartColumn = 5;
+            int syncStartColumnCount = 3;
+            int[] syncIgnoreColumnOffsets = { 1 };
 
             var sheetNames = ExtractPropertyValues(sheetNodes, "text");
             var sheetNamesCount = sheetNames.Count();
@@ -544,6 +548,22 @@ namespace ExcelDnaTest
             SetValueInSheet(indexSheet, indexStartRow, idColumn, ids, false);
             Excel.Range idColumnRange = indexSheet.Columns[idColumn];
             idColumnRange.EntireColumn.Hidden = true;
+
+
+            // 名前付き範囲として追加
+            const string sheetRangeName = "SS_SHEET";
+            var rangeforNamedRange = GetRange(indexSheet, indexStartRow, syncStartColumn, sheetNamesCount, syncStartColumnCount);
+            var namedRange = indexSheet.Names.Add(Name: sheetRangeName, RefersTo: rangeforNamedRange);
+            RangeInfo rangeInfo = new RangeInfo
+            {
+                IdColumnOffset = idColumn - syncStartColumn,
+                IgnoreColumnOffsets = new HashSet<int>(syncIgnoreColumnOffsets),
+            };
+            var serializer = new SerializerBuilder()
+                .WithNamingConvention(CamelCaseNamingConvention.Instance)
+                .Build();
+
+            namedRange.Comment = serializer.Serialize(rangeInfo);
 
         }
 
