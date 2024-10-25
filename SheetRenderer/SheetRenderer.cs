@@ -505,17 +505,26 @@ namespace ExcelDnaTest
             workbook.Save();
         }
 
+        // 指定されたワークシートオブジェクトと列アドレスから列インデックスを取得する
+        static int ColumnAddressToIndex(Excel.Worksheet worksheet, string columnAddress)
+        {
+            Excel.Range range = worksheet.Range[columnAddress + "1"];
+            return range.Column;
+        }
+
         static void RenderIndexSheet(IEnumerable<JsonNode> sheetNodes, Dictionary<string, string> confData, Excel.Worksheet indexSheet)
         {
             int indexStartRow = 16;
             int indexEndRow = 35;
             int indexStartColumn = 2;
             int indexRowCount = indexEndRow - indexStartRow + 1;
-            int idColumn = 12;
+            string idColumnAddress = "BW";
+            int idColumn = ColumnAddressToIndex(indexSheet, idColumnAddress);
 
-            int syncStartColumn = 5;
-            int syncStartColumnCount = 3;
-            int[] syncIgnoreColumnOffsets = { 1 };
+            string syncStartColumnAddress = "Q";
+            int syncStartColumn = ColumnAddressToIndex(indexSheet, syncStartColumnAddress);
+            int syncStartColumnCount = 1;
+            int[] syncIgnoreColumnOffsets = { };
 
             var sheetNames = ExtractPropertyValues(sheetNodes, "text");
             var sheetNamesCount = sheetNames.Count();
@@ -548,7 +557,6 @@ namespace ExcelDnaTest
             SetValueInSheet(indexSheet, indexStartRow, idColumn, ids, false);
             Excel.Range idColumnRange = indexSheet.Columns[idColumn];
             idColumnRange.EntireColumn.Hidden = true;
-
 
             // 名前付き範囲として追加
             const string sheetRangeName = "SS_SHEET";
