@@ -357,8 +357,21 @@ namespace ExcelDnaTest
             }
         }
 
+        const string ssProjectIdCustomPropertyName = "SSProjectId";
+
         public async void OnUpdateCurrentSheetButtonPressed(IRibbonControl control)
         {
+            Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
+            Excel.Workbook workbook = excelApp.ActiveWorkbook;
+            if (workbook == null)
+            {
+                return;
+            }
+            string projectId = workbook.GetCustomProperty(ssProjectIdCustomPropertyName);
+            if (projectId == null)
+            {
+                return;
+            }
 
         }
 
@@ -481,6 +494,9 @@ namespace ExcelDnaTest
                 User = Environment.UserName
             };
             workbook.SetCustomProperty("RenderLog", renderLog);
+
+            string projectId = confData["project"];
+            workbook.SetCustomProperty(ssProjectIdCustomPropertyName, projectId);
 
             //var lastRenderLog = workbook.GetCustomProperty<RenderLog>("RenderLog");
 
