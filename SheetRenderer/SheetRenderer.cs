@@ -266,24 +266,6 @@ namespace ExcelDnaTest
             }
         }
 
-        static void InsertRowsAndCopyFormulas(Excel.Worksheet worksheet, int startRow, int rowCount)
-        {
-            // 行を挿入
-            Excel.Range insertRange = worksheet.Rows[startRow].Resize[rowCount];
-            insertRange.Insert(Excel.XlInsertShiftDirection.xlShiftDown);
-
-            // 挿入した行の上の行から数式をコピー
-            Excel.Range sourceRange = worksheet.Rows[startRow - 1];
-            Excel.Range destinationRange = worksheet.Rows[startRow].Resize[rowCount];
-            sourceRange.Copy(destinationRange);
-        }
-
-        static void DeleteRows(Excel.Worksheet worksheet, int startRow, int rowCount)
-        {
-            Excel.Range rows = worksheet.Rows[startRow].Resize[rowCount];
-            rows.Delete();
-        }
-
         // JsonNode から指定した名前のオブジェクトの直下のプロパティをすべて Dictionary<string, string> として返却する
         static Dictionary<string, string> GetPropertiesFromJsonNode(JsonNode jsonNode, string objectName)
         {
@@ -405,8 +387,8 @@ namespace ExcelDnaTest
             const string indexSheetNameCustomPropertyName = "IndexSheetName";
             const string templateSheetNameCustomPropertyName = "TemplateSheetName";
 
-            string indexSheetName = GetCustomProperty(workbook, indexSheetNameCustomPropertyName);
-            string templateSheetName = GetCustomProperty(workbook, templateSheetNameCustomPropertyName);
+            string indexSheetName = workbook.GetCustomProperty(indexSheetNameCustomPropertyName);
+            string templateSheetName = workbook.GetCustomProperty(templateSheetNameCustomPropertyName);
             //Debug.Assert(false, "assert test");
             if (indexSheetName == null)
             {
@@ -498,18 +480,11 @@ namespace ExcelDnaTest
                 SourceFilePath = JsonFilePath,
                 User = Environment.UserName
             };
-            SetCustomProperty(workbook, "RenderLog", renderLog);
+            workbook.SetCustomProperty("RenderLog", renderLog);
 
-            //var lastRenderLog = GetCustomProperty<RenderLog>(workbook, "RenderLog");
+            //var lastRenderLog = workbook.GetCustomProperty<RenderLog>("RenderLog");
 
             workbook.Save();
-        }
-
-        // 指定されたワークシートオブジェクトと列アドレスから列インデックスを取得する
-        static int ColumnAddressToIndex(Excel.Worksheet worksheet, string columnAddress)
-        {
-            Excel.Range range = worksheet.Range[columnAddress + "1"];
-            return range.Column;
         }
 
         static void RenderIndexSheet(IEnumerable<JsonNode> sheetNodes, Dictionary<string, string> confData, Excel.Worksheet indexSheet)
@@ -519,10 +494,10 @@ namespace ExcelDnaTest
             int indexStartColumn = 2;
             int indexRowCount = indexEndRow - indexStartRow + 1;
             string idColumnAddress = "BW";
-            int idColumn = ColumnAddressToIndex(indexSheet, idColumnAddress);
+            int idColumn = indexSheet.ColumnAddressToIndex(idColumnAddress);
 
             string syncStartColumnAddress = "Q";
-            int syncStartColumn = ColumnAddressToIndex(indexSheet, syncStartColumnAddress);
+            int syncStartColumn = indexSheet.ColumnAddressToIndex(syncStartColumnAddress);
             int syncStartColumnCount = 1;
             int[] syncIgnoreColumnOffsets = { };
 
@@ -534,17 +509,17 @@ namespace ExcelDnaTest
             {
                 int numberOfRows = sheetNamesCount - indexRowCount;
 
-                InsertRowsAndCopyFormulas(indexSheet, indexEndRow, numberOfRows);
+                indexSheet.InsertRowsAndCopyFormulas(indexEndRow, numberOfRows);
             }
             // 多ければ削除
             else if (sheetNamesCount < indexRowCount)
             {
                 int numberOfRowsToDelete = indexRowCount - sheetNamesCount;
 
-                DeleteRows(indexSheet, indexStartRow, numberOfRowsToDelete);
+                indexSheet.DeleteRows(indexStartRow, numberOfRowsToDelete);
             }
 
-            SetValueInSheetAsColumn(indexSheet, indexStartRow, indexStartColumn, sheetNames);
+            indexSheet.SetValueInSheetAsColumn(indexStartRow, indexStartColumn, sheetNames);
 
             // テンプレ処理
             ReplaceValues(indexSheet, confData);
@@ -554,13 +529,13 @@ namespace ExcelDnaTest
 
             // 最後の列に ID を入れて非表示にする
             var ids = ExtractPropertyValues(sheetNodes, "id");
-            SetValueInSheet(indexSheet, indexStartRow, idColumn, ids, false);
+            indexSheet.SetValueInSheet(indexStartRow, idColumn, ids, false);
             Excel.Range idColumnRange = indexSheet.Columns[idColumn];
             idColumnRange.EntireColumn.Hidden = true;
 
             // 名前付き範囲として追加
             const string sheetRangeName = "SS_SHEET";
-            var rangeforNamedRange = GetRange(indexSheet, indexStartRow, syncStartColumn, sheetNamesCount, syncStartColumnCount);
+            var rangeforNamedRange = indexSheet.GetRange(indexStartRow, syncStartColumn, sheetNamesCount, syncStartColumnCount);
             var namedRange = indexSheet.Names.Add(Name: sheetRangeName, RefersTo: rangeforNamedRange);
             RangeInfo rangeInfo = new RangeInfo
             {
@@ -721,6 +696,12 @@ namespace ExcelDnaTest
             return array;
         }
 
+        static void SetValueInSheet<T, TOutput>(Excel.Worksheet sheet, int startRow, int startColumn, List<List<T>> list, Func<T, TOutput> selector)
+        {
+            TOutput[,] array = ConvertTo2DArray(list, selector);
+            sheet.SetValueInSheet(startRow, startColumn, array);
+        }
+
         static void ReplaceTrailingNullsInLastColumn(string[,] array, string replacement)
         {
             int numRows = array.GetLength(0);
@@ -814,41 +795,6 @@ namespace ExcelDnaTest
             return leafNodes.Select(node => GetJsonValue(node[propertyName]));
         }
 
-        static Excel.Range GetRange(Excel.Worksheet sheet, int startRow, int startColumn, int rowCount, int columnCount)
-        {
-            Excel.Range startCell = (Excel.Range)sheet.Cells[startRow, startColumn];
-            Excel.Range endCell = (Excel.Range)sheet.Cells[startRow + rowCount - 1, startColumn + columnCount - 1];
-            Excel.Range range = sheet.Range[startCell, endCell];
-            return range;
-        }
-
-        static void AutoFitColumnsIfNarrower(Excel.Range range)
-        {
-            Excel.Worksheet sheet = range.Worksheet;
-
-            // 各列の元の幅を保存
-            double[] originalWidths = new double[range.Columns.Count];
-            int index = 0;
-            foreach (Excel.Range column in range.Columns)
-            {
-                originalWidths[index++] = column.ColumnWidth;
-            }
-
-            // 一度にAutoFitを適用
-            range.Columns.AutoFit();
-
-            // 各列の幅をチェックして、元の幅よりも広くなった場合は元に戻す
-            index = 0;
-            foreach (Excel.Range column in range.Columns)
-            {
-                if (column.ColumnWidth > originalWidths[index])
-                {
-                    column.ColumnWidth = originalWidths[index];
-                }
-                index++;
-            }
-        }
-
         class RangeInfo
         {
             public int? IdColumnOffset { get; set; }
@@ -901,13 +847,13 @@ namespace ExcelDnaTest
             {
                 int numberOfRows = leafCount - rowHeight;
 
-                InsertRowsAndCopyFormulas(sheet, endRow, numberOfRows);
+                sheet.InsertRowsAndCopyFormulas(endRow, numberOfRows);
             }
             else if (leafCount < rowHeight)
             {
                 int numberOfRowsToDelete = rowHeight - leafCount;
 
-                DeleteRows(sheet, startRow, numberOfRowsToDelete);
+                sheet.DeleteRows(startRow, numberOfRowsToDelete);
             }
 
             // XXX: 深度が列より少ない場合は今のテンプレに合わせていろいろやる…
@@ -923,9 +869,9 @@ namespace ExcelDnaTest
                 startColumn += columnWidth - maxDepth;
             }
 
-            SetValueInSheet(sheet, startRow, startColumn, arrayResult);
+            sheet.SetValueInSheet(startRow, startColumn, arrayResult);
 
-            AutoFitColumnsIfNarrower(GetRange(sheet, startRow, startColumn, leafCount, maxDepth));
+            sheet.GetRange(startRow, startColumn, leafCount, maxDepth).AutoFitColumnsIfNarrower();
 
             // 「チェック予定日」列に無条件で START_DATE を入れる
             int dateColumnOffset = initialDateColumn - initialResultColumn;
@@ -934,14 +880,14 @@ namespace ExcelDnaTest
             // 文字列をDateTimeに変換
             if (DateTime.TryParse(dateString, out DateTime dateValue))
             {
-                SetRangeValue(sheet, startRow, dateColumn, leafCount, 1, dateValue);
+                sheet.SetRangeValue(startRow, dateColumn, leafCount, 1, dateValue);
             }
 
             // 「チェック予定日」の右隣の列に ID を入れて非表示にする
             int idColumnOffset = initialIdColumn - initialResultColumn;
             int idColumn = startColumn + maxDepth + idColumnOffset;
             var ids = ExtractPropertyValues(leafNodes, "id");
-            SetValueInSheet(sheet, startRow, idColumn, ids, false);
+            sheet.SetValueInSheet(startRow, idColumn, ids, false);
             Excel.Range idColumnRange = sheet.Columns[idColumn];
             idColumnRange.EntireColumn.Hidden = true;
 
@@ -949,13 +895,13 @@ namespace ExcelDnaTest
             int resultColumnOffset = initialResultColumn - initialResultColumn;
             int resultColumn = startColumn + maxDepth + resultColumnOffset;
             var results = ExtractPropertyValuesFromInitialValues(leafNodes, "result");
-            SetValueInSheet(sheet, startRow, resultColumn, results, false);
+            sheet.SetValueInSheet(startRow, resultColumn, results, false);
 
             // 「計画時間(分)」列に node の initialValues.estimated_time を入れる
             int planColumnOffset = initialPlanColumn - initialResultColumn;
             int planColumn = startColumn + maxDepth + planColumnOffset;
             var estimatedTimes = ExtractPropertyValuesFromInitialValues(leafNodes, "estimated_time");
-            SetValueInSheet(sheet, startRow, planColumn, estimatedTimes, false);
+            sheet.SetValueInSheet(startRow, planColumn, estimatedTimes, false);
 
             int actualTimeColumnOffset = initialActualTimeColumn - initialResultColumn;
 
@@ -1013,7 +959,7 @@ namespace ExcelDnaTest
 
             // 名前付き範囲として追加
             const string sheetRangeName = "SS_SHEET";
-            var rangeforNamedRange = GetRange(sheet, startRow, resultColumn, leafCount, 1 + actualTimeColumnOffset);
+            var rangeforNamedRange = sheet.GetRange(startRow, resultColumn, leafCount, 1 + actualTimeColumnOffset);
             var namedRange = sheet.Names.Add(Name: sheetRangeName, RefersTo: rangeforNamedRange);
             RangeInfo rangeInfo = new RangeInfo
             {
@@ -1059,10 +1005,10 @@ namespace ExcelDnaTest
             return missingImagePaths;
         }
 
-        static void AddPictureAsComment(Excel.Range cell, string path)
+        static void AddPictureAsComment(Excel.Range cell, string imageFilePath)
         {
             // 画像のサイズを取得
-            System.Drawing.Image image = System.Drawing.Image.FromFile(path);
+            System.Drawing.Image image = System.Drawing.Image.FromFile(imageFilePath);
             float imageWidth = image.Width;
             float imageHeight = image.Height;
             image.Dispose();
@@ -1070,65 +1016,9 @@ namespace ExcelDnaTest
             // コメントを追加し、画像を背景に設定
             var comment = cell.AddComment(" ");
             comment.Visible = false;
-            comment.Shape.Fill.UserPicture(path);
+            comment.Shape.Fill.UserPicture(imageFilePath);
             comment.Shape.Height = imageHeight;
             comment.Shape.Width = imageWidth;
-        }
-
-        // 指定した範囲のセルに同じ値を代入します
-        static void SetRangeValue<T>(Excel.Worksheet sheet, int startRow, int startColumn, int rowCount, int columnCount, T value)
-        {
-            Excel.Range startCell = (Excel.Range)sheet.Cells[startRow, startColumn];
-            Excel.Range range = startCell.Resize[rowCount, columnCount];
-
-            range.Value = value;
-        }
-
-        static void SetValueInSheet<T>(Excel.Worksheet sheet, int startRow, int startColumn, T[,] array)
-        {
-            Excel.Range range = sheet.Cells[startRow, startColumn] as Excel.Range;
-            range = range.Resize[array.GetLength(0), array.GetLength(1)];
-            range.Value = array;
-        }
-
-        static void SetValueInSheet<T, TOutput>(Excel.Worksheet sheet, int startRow, int startColumn, List<List<T>> list, Func<T, TOutput> selector)
-        {
-            TOutput[,] array = ConvertTo2DArray(list, selector);
-            SetValueInSheet(sheet, startRow, startColumn, array);
-        }
-
-        static void SetValueInSheet<T>(Excel.Worksheet sheet, int startRow, int startColumn, IEnumerable<T> source, bool isRow = true)
-        {
-            int length = source.Count();
-            T[,] array = new T[isRow ? 1 : length, isRow ? length : 1];
-            int index = 0;
-
-            foreach (var item in source)
-            {
-                if (isRow)
-                {
-                    array[0, index] = item;
-                }
-                else
-                {
-                    array[index, 0] = item;
-                }
-                index++;
-            }
-
-            SetValueInSheet(sheet, startRow, startColumn, array);
-        }
-
-        // リストの値を行として貼り付けます
-        static void SetValueInSheetAsRow<T>(Excel.Worksheet sheet, int startRow, int startColumn, IEnumerable<T> source)
-        {
-            SetValueInSheet(sheet, startRow, startColumn, source, true);
-        }
-
-        // リストの値を列として貼り付けます
-        static void SetValueInSheetAsColumn<T>(Excel.Worksheet sheet, int startRow, int startColumn, IEnumerable<T> source)
-        {
-            SetValueInSheet(sheet, startRow, startColumn, source, false);
         }
 
         static string GetAbsolutePathFromExecutingDirectory(string relativePath)
@@ -1196,61 +1086,6 @@ namespace ExcelDnaTest
             excelApp.Visible = true;
 
             return workbook;
-        }
-
-        static dynamic GetCustomPropertyObject(Excel.Workbook workbook, string propertyName)
-        {
-            dynamic properties = workbook.CustomDocumentProperties;
-            foreach (dynamic prop in properties)
-            {
-                if (prop.Name == propertyName)
-                {
-                    return prop;
-                }
-            }
-            return null;
-        }
-
-        static void SetCustomProperty(Excel.Workbook workbook, string propertyName, string propertyValue)
-        {
-            dynamic prop = GetCustomPropertyObject(workbook, propertyName);
-            if (prop != null)
-            {
-                prop.Value = propertyValue;
-            }
-            else
-            {
-                workbook.CustomDocumentProperties.Add(propertyName, false, Office.MsoDocProperties.msoPropertyTypeString, propertyValue);
-            }
-        }
-
-        static void SetCustomProperty<T>(Excel.Workbook workbook, string propertyName, T propertyValue)
-        {
-            var serializer = new SerializerBuilder()
-                .WithNamingConvention(CamelCaseNamingConvention.Instance)
-                .Build();
-            string yaml = serializer.Serialize(propertyValue);
-
-            SetCustomProperty(workbook, propertyName, yaml);
-        }
-
-        static string GetCustomProperty(Excel.Workbook workbook, string propertyName)
-        {
-            dynamic prop = GetCustomPropertyObject(workbook, propertyName);
-            return prop != null ? prop.Value : null;
-        }
-
-        static T GetCustomProperty<T>(Excel.Workbook workbook, string propertyName)
-        {
-            string yaml = GetCustomProperty(workbook, propertyName);
-            if (yaml != null)
-            {
-                var deserializer = new DeserializerBuilder()
-                    .WithNamingConvention(CamelCaseNamingConvention.Instance)
-                    .Build();
-                return deserializer.Deserialize<T>(yaml);
-            }
-            return default(T);
         }
 
     }
