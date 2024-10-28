@@ -170,7 +170,7 @@ namespace ExcelDnaTest
                     <group id='group1' label='Render'>
                       <button id='button1' label='JSONファイル選択' size='large' imageMso='FileSave' onAction='OnSelectJsonFileButtonPressed'/>
                       <button id='button2' label='Render' size='large' imageMso='TableDrawTable' onAction='OnRenderButtonPressed'/>
-                      <button id='button3' label='Update Sheet' size='large' imageMso='TableSharePointListsRefreshList' onAction='OnUpdateCurrentSheetButtonPressed'/>
+                      <button id='button3' label='Update Sheet' size='large' imageMso='TableSharePointListsRefreshList' onAction='OnUpdateCurrentSheetButtonPressed' getEnabled='GetUpdateCurrentSheetButtonEnabled'/>
                       <editBox id='fileNameBox' label='JSONファイル' sizeString='hoge\\20XX-XX-XX\\index' getText='GetFileName' onChange='OnTextChanged' />
                     </group>
                   </tab>
@@ -357,7 +357,16 @@ namespace ExcelDnaTest
             }
         }
 
+        const string indexSheetNameCustomPropertyName = "IndexSheetName";
+        const string templateSheetNameCustomPropertyName = "TemplateSheetName";
         const string ssProjectIdCustomPropertyName = "SSProjectId";
+
+        bool UpdateCurrentSheetButtonEnabled { get; set; } = true;
+
+        public bool GetUpdateCurrentSheetButtonEnabled(IRibbonControl control)
+        {
+            return UpdateCurrentSheetButtonEnabled;
+        }
 
         public async void OnUpdateCurrentSheetButtonPressed(IRibbonControl control)
         {
@@ -370,8 +379,55 @@ namespace ExcelDnaTest
             string projectId = workbook.GetCustomProperty(ssProjectIdCustomPropertyName);
             if (projectId == null)
             {
+                string projectName = Assembly.GetExecutingAssembly().GetName().Name;
+                MessageBox.Show($"{projectName} で生成されたブックではありません。");
                 return;
             }
+
+            // projectId があるなら他のもあるという前提
+            string indexSheetName = workbook.GetCustomProperty(indexSheetNameCustomPropertyName);
+            string templateSheetName = workbook.GetCustomProperty(templateSheetNameCustomPropertyName);
+            var lastRenderLog = workbook.GetCustomProperty<RenderLog>("RenderLog");
+            Debug.Assert(indexSheetName != null, "indexSheetName != null");
+            Debug.Assert(templateSheetName != null, "templateSheetName != null");
+            Debug.Assert(lastRenderLog != null, "lastRenderLog != null");
+
+            string jsonFilePath;
+
+            // lastRenderLog.User が今のユーザーと異なる、もしくは lastRenderLog.SourceFilePath が見つからない場合、前回生成時の環境と異なるとみなしてファイル選択させる
+            if (lastRenderLog.User != Environment.UserName || !File.Exists(lastRenderLog.SourceFilePath))
+            {
+                MessageBox.Show($"Project ID が「{projectId}」のソースファイルを選択してください。");
+                jsonFilePath = OpenFile();
+                // キャンセルされたら何もしない
+                if (jsonFilePath == null)
+                {
+                    return;
+                }
+            }
+            else
+            {
+                jsonFilePath = lastRenderLog.SourceFilePath;
+            }
+
+            string jsonString = File.ReadAllText(JsonFilePath);
+            JsonNode jsonObject = JsonNode.Parse(jsonString);
+            var confData = GetPropertiesFromJsonNode(jsonObject, "variables");
+
+            if (confData["project"] != projectId)
+            {
+                MessageBox.Show($"Project ID({projectId})が異なります。");
+                return;
+            }
+
+            // 選択中の json を更新
+            JsonFilePath = jsonFilePath;
+
+            // TODO: 今開いているシートの id を index sheet から取得
+            // TODO: jsonObject から同じ id の node を取得。なければありませんと表示して終了
+            // TODO: node, 画像ファイルの比較はせず、無条件で render?無条件でないならbook内の全シート更新で良い。逆に無条件renderがないと都合が悪いケースってある？
+            // TODO: シート名が変わっていたら index sheet にも反映
+            // TODO: RenderLog とかを書き出す
 
         }
 
@@ -396,9 +452,6 @@ namespace ExcelDnaTest
             MacroControl.DisableMacros();
 
             Excel.Workbook workbook = CreateCopiedWorkbook(excelApp, templateFilePath, newFilePath);
-
-            const string indexSheetNameCustomPropertyName = "IndexSheetName";
-            const string templateSheetNameCustomPropertyName = "TemplateSheetName";
 
             string indexSheetName = workbook.GetCustomProperty(indexSheetNameCustomPropertyName);
             string templateSheetName = workbook.GetCustomProperty(templateSheetNameCustomPropertyName);
@@ -495,10 +548,10 @@ namespace ExcelDnaTest
             };
             workbook.SetCustomProperty("RenderLog", renderLog);
 
+            //var lastRenderLog = workbook.GetCustomProperty<RenderLog>("RenderLog");
+
             string projectId = confData["project"];
             workbook.SetCustomProperty(ssProjectIdCustomPropertyName, projectId);
-
-            //var lastRenderLog = workbook.GetCustomProperty<RenderLog>("RenderLog");
 
             workbook.Save();
         }
