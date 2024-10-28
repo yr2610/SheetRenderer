@@ -420,7 +420,7 @@ namespace ExcelDnaTest
                 return;
             }
 
-            // 選択中の json を更新
+            // 選択中の json として設定
             JsonFilePath = jsonFilePath;
 
             // TODO: 今開いているシートの id を index sheet から取得
