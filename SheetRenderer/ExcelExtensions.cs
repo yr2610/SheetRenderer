@@ -128,6 +128,31 @@ public static class ExcelExtensions
         SetValueInSheet(sheet, startRow, startColumn, source, false);
     }
 
+    public static Excel.Worksheet GetSheetIfExists(this Excel.Workbook workbook, string sheetName)
+    {
+        foreach (Excel.Worksheet sheet in workbook.Sheets)
+        {
+            if (sheet.Name == sheetName)
+            {
+                return sheet;
+            }
+        }
+        return null;
+    }
+
+    public static Excel.Name GetNamedRange(this Excel.Worksheet sheet, string name)
+    {
+        try
+        {
+            Excel.Name namedRange = sheet.Names.Item(name);
+            return namedRange;
+        }
+        catch (Exception)
+        {
+            return null; // エラーが発生した場合は null を返します
+        }
+    }
+
     public static dynamic GetCustomPropertyObject(this Excel.Workbook workbook, string propertyName)
     {
         dynamic properties = workbook.CustomDocumentProperties;

@@ -558,11 +558,13 @@ namespace ExcelDnaTest
 
         static void RenderIndexSheet(IEnumerable<JsonNode> sheetNodes, Dictionary<string, string> confData, Excel.Worksheet indexSheet)
         {
-            int indexStartRow = 16;
-            int indexEndRow = 35;
-            int indexStartColumn = 2;
-            int indexRowCount = indexEndRow - indexStartRow + 1;
-            string idColumnAddress = "BW";
+            var sheetNameListRange = indexSheet.GetNamedRange("SS_SHEETNAMELIST").RefersToRange;
+
+            int indexStartRow = sheetNameListRange.Row;
+            int indexRowCount = sheetNameListRange.Rows.Count;
+            int indexEndRow = sheetNameListRange.Rows[indexRowCount].Row;
+            int indexStartColumn = sheetNameListRange.Column;
+            string idColumnAddress = "T";
             int idColumn = indexSheet.ColumnAddressToIndex(idColumnAddress);
 
             string syncStartColumnAddress = "Q";
@@ -596,8 +598,10 @@ namespace ExcelDnaTest
             // 幅をautofit
             indexSheet.Cells[indexStartRow, indexStartColumn].Resize(indexRowCount).Columns.AutoFit();
 
-            // 最後の列に ID を入れて非表示にする
+            // 適当な位置に列挿入して ID を入れて非表示にする
             var ids = ExtractPropertyValues(sheetNodes, "id");
+            Excel.Range column = (Excel.Range)indexSheet.Columns[idColumn];
+            column.Insert(Excel.XlInsertShiftDirection.xlShiftToRight);
             indexSheet.SetValueInSheet(indexStartRow, idColumn, ids, false);
             Excel.Range idColumnRange = indexSheet.Columns[idColumn];
             idColumnRange.EntireColumn.Hidden = true;
