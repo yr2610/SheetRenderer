@@ -148,6 +148,12 @@ namespace ExcelDnaTest
     //    }
     //}
 
+    class RangeInfo
+    {
+        public int? IdColumnOffset { get; set; }
+        public HashSet<int> IgnoreColumnOffsets { get; set; }
+    }
+
     [ComVisible(true)]
     public class RibbonController : ExcelRibbon
     {
@@ -361,6 +367,8 @@ namespace ExcelDnaTest
         const string templateSheetNameCustomPropertyName = "TemplateSheetName";
         const string ssProjectIdCustomPropertyName = "SSProjectId";
 
+        const string ssSheetRangeName = "SS_SHEET";
+
         bool UpdateCurrentSheetButtonEnabled { get; set; } = true;
 
         public bool GetUpdateCurrentSheetButtonEnabled(IRibbonControl control)
@@ -429,9 +437,21 @@ namespace ExcelDnaTest
             // 選択中の json として設定
             JsonFilePath = jsonFilePath;
 
-            var indexSheet = workbook.Sheets[indexSheetName];
+            var indexSheet = workbook.Sheets[indexSheetName] as Excel.Worksheet;
 
+            Excel.Name namedRange = indexSheet.Names.Item(ssSheetRangeName);
+            var ssRange = namedRange.RefersToRange;
 
+            RangeInfo rangeInfo = null;
+
+            // コメントが存在する場合、それを YAML として解析
+            if (namedRange.Comment != null)
+            {
+                var deserializer = new DeserializerBuilder()
+                    .WithNamingConvention(CamelCaseNamingConvention.Instance)
+                    .Build();
+                rangeInfo = deserializer.Deserialize<RangeInfo>(namedRange.Comment);
+            }
 
             // TODO: 今開いているシートの id を index sheet から取得
             // TODO: jsonObject から同じ id の node を取得。なければありませんと表示して終了
@@ -617,9 +637,8 @@ namespace ExcelDnaTest
             idColumnRange.EntireColumn.Hidden = true;
 
             // 名前付き範囲として追加
-            const string sheetRangeName = "SS_SHEET";
             var rangeforNamedRange = indexSheet.GetRange(indexStartRow, syncStartColumn, sheetNamesCount, syncStartColumnCount);
-            var namedRange = indexSheet.Names.Add(Name: sheetRangeName, RefersTo: rangeforNamedRange);
+            var namedRange = indexSheet.Names.Add(Name: ssSheetRangeName, RefersTo: rangeforNamedRange);
             RangeInfo rangeInfo = new RangeInfo
             {
                 IdColumnOffset = idColumn - syncStartColumn,
@@ -1041,9 +1060,8 @@ namespace ExcelDnaTest
             }
 
             // 名前付き範囲として追加
-            const string sheetRangeName = "SS_SHEET";
             var rangeforNamedRange = sheet.GetRange(startRow, resultColumn, leafCount, 1 + actualTimeColumnOffset);
-            var namedRange = sheet.Names.Add(Name: sheetRangeName, RefersTo: rangeforNamedRange);
+            var namedRange = sheet.Names.Add(Name: ssSheetRangeName, RefersTo: rangeforNamedRange);
             RangeInfo rangeInfo = new RangeInfo
             {
                 IdColumnOffset = idColumnOffset,
