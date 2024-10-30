@@ -376,6 +376,12 @@ namespace ExcelDnaTest
             {
                 return;
             }
+            var sheet = workbook.ActiveSheet as Excel.Worksheet;
+            if (sheet == null)
+            {
+                return;
+            }
+
             string projectId = workbook.GetCustomProperty(ssProjectIdCustomPropertyName);
             if (projectId == null)
             {
@@ -422,6 +428,10 @@ namespace ExcelDnaTest
 
             // 選択中の json として設定
             JsonFilePath = jsonFilePath;
+
+            var indexSheet = workbook.Sheets[indexSheetName];
+
+
 
             // TODO: 今開いているシートの id を index sheet から取得
             // TODO: jsonObject から同じ id の node を取得。なければありませんと表示して終了
