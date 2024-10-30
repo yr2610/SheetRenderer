@@ -53,6 +53,36 @@ public static class ExcelExtensions
         return range;
     }
 
+    // column は 1-origin
+    public static IEnumerable<object> GetColumnValues(this Excel.Range range, int columnIndex)
+    {
+        // 指定された列インデックスが範囲外の場合に対応
+        int totalColumns = range.Columns.Count;
+        Excel.Range columnRange;
+
+        if (columnIndex > totalColumns)
+        {
+            // 範囲外の列インデックスの場合、シート全体からのオフセットを使用
+            int offsetColumns = columnIndex - totalColumns;
+            columnRange = range.Offset[0, offsetColumns].EntireColumn;
+        }
+        else
+        {
+            // 指定された列の範囲を取得
+            columnRange = range.Columns[columnIndex];
+        }
+
+        object[,] values = columnRange.Value2 as object[,];
+
+        if (values != null)
+        {
+            for (int i = 1; i <= values.GetLength(0); i++)
+            {
+                yield return values[i, 1];
+            }
+        }
+    }
+
     // 指定されたワークシートオブジェクトと列アドレスから列インデックスを取得する
     public static int ColumnAddressToIndex(this Excel.Worksheet worksheet, string columnAddress)
     {
