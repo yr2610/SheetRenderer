@@ -442,16 +442,19 @@ namespace ExcelDnaTest
             Excel.Name namedRange = indexSheet.Names.Item(ssSheetRangeName);
             var ssRange = namedRange.RefersToRange;
 
-            RangeInfo rangeInfo = null;
+            var deserializer = new DeserializerBuilder()
+                .WithNamingConvention(CamelCaseNamingConvention.Instance)
+                .Build();
+            Debug.Assert(namedRange.Comment != null, "namedRange.Comment != null");
+            RangeInfo rangeInfo = deserializer.Deserialize<RangeInfo>(namedRange.Comment);
 
-            // コメントが存在する場合、それを YAML として解析
-            if (namedRange.Comment != null)
-            {
-                var deserializer = new DeserializerBuilder()
-                    .WithNamingConvention(CamelCaseNamingConvention.Instance)
-                    .Build();
-                rangeInfo = deserializer.Deserialize<RangeInfo>(namedRange.Comment);
-            }
+            var ids = ssRange.GetColumnValues(rangeInfo.IdColumnOffset.Value + 1);
+
+            var sheetNameRange = indexSheet.Range["SS_SHEETNAMELIST"];
+            List<string> sheetNames = sheetNameRange.Columns[1].Cells
+                        .Cast<Excel.Range>()
+                        .Select((Func<Excel.Range, string>)(cell => cell.Value2?.ToString()))
+                        .ToList();
 
             // TODO: 今開いているシートの id を index sheet から取得
             // TODO: jsonObject から同じ id の node を取得。なければありませんと表示して終了
