@@ -451,10 +451,11 @@ namespace ExcelDnaTest
             var ids = ssRange.GetColumnValues(rangeInfo.IdColumnOffset.Value + 1);
 
             var sheetNameRange = indexSheet.Range["SS_SHEETNAMELIST"];
-            List<string> sheetNames = sheetNameRange.Columns[1].Cells
-                        .Cast<Excel.Range>()
-                        .Select((Func<Excel.Range, string>)(cell => cell.Value2?.ToString()))
-                        .ToList();
+            var sheetNames = sheetNameRange.GetColumnValues(1);
+
+            // シート名とIDをペアにして辞書に変換
+            var sheetIdMap = sheetNames.Zip(ids, (sheetName, id) => new { sheetName, id })
+                                       .ToDictionary(x => x.sheetName, x => x.id);
 
             // TODO: 今開いているシートの id を index sheet から取得
             // TODO: jsonObject から同じ id の node を取得。なければありませんと表示して終了
