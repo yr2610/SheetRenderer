@@ -449,10 +449,10 @@ namespace ExcelDnaTest
             Debug.Assert(namedRange.Comment != null, "namedRange.Comment != null");
             RangeInfo rangeInfo = deserializer.Deserialize<RangeInfo>(namedRange.Comment);
 
-            var ids = ssRange.GetColumnValues(rangeInfo.IdColumnOffset.Value + 1);
+            var ids = ssRange.GetColumnValues(rangeInfo.IdColumnOffset.Value);
 
             var sheetNameRange = indexSheet.Range["SS_SHEETNAMELIST"];
-            var sheetNames = sheetNameRange.GetColumnValues(1);
+            var sheetNames = sheetNameRange.GetColumnValues(0);
 
             // シート名とIDをペアにして辞書に変換
             var sheetIdMap = sheetNames.Zip(ids, (sheetName, id) => new { sheetName, id })

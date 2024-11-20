@@ -53,23 +53,23 @@ public static class ExcelExtensions
         return range;
     }
 
-    // column は 1-origin
+    // columnIndex は 0-origin
     public static IEnumerable<object> GetColumnValues(this Excel.Range range, int columnIndex)
     {
         // 指定された列インデックスが範囲外の場合に対応
         int totalColumns = range.Columns.Count;
         Excel.Range columnRange;
 
-        if (columnIndex > totalColumns)
+        if (columnIndex >= totalColumns)
         {
             // 範囲外の列インデックスの場合、シート全体からのオフセットを使用
-            int offsetColumns = columnIndex - totalColumns;
-            columnRange = range.Offset[0, offsetColumns].EntireColumn;
+            int offsetColumns = columnIndex - totalColumns + 1;
+            columnRange = range.Offset[0, offsetColumns].Resize[range.Rows.Count, 1];
         }
         else
         {
             // 指定された列の範囲を取得
-            columnRange = range.Columns[columnIndex];
+            columnRange = range.Columns[columnIndex + 1];
         }
 
         object[,] values = columnRange.Value2 as object[,];
