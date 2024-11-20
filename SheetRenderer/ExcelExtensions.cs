@@ -62,7 +62,7 @@ public static class ExcelExtensions
 
         if (columnIndex >= totalColumns)
         {
-            // 範囲外の列インデックスの場合、シート全体からのオフセットを使用
+            // 範囲外の列インデックスの場合、指定された列を元の範囲の行に合わせて取得
             int offsetColumns = columnIndex - totalColumns + 1;
             columnRange = range.Offset[0, offsetColumns].Resize[range.Rows.Count, 1];
         }
