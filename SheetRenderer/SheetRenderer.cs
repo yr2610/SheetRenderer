@@ -424,7 +424,7 @@ namespace ExcelDnaTest
                 jsonFilePath = lastRenderLog.SourceFilePath;
             }
 
-            string jsonString = File.ReadAllText(JsonFilePath);
+            string jsonString = File.ReadAllText(jsonFilePath);
             JsonNode jsonObject = JsonNode.Parse(jsonString);
             var confData = GetPropertiesFromJsonNode(jsonObject, "variables");
 
@@ -436,6 +436,7 @@ namespace ExcelDnaTest
 
             // 選択中の json として設定
             JsonFilePath = jsonFilePath;
+            ribbon.InvalidateControl("fileNameBox");
 
             var indexSheet = workbook.Sheets[indexSheetName] as Excel.Worksheet;
 
