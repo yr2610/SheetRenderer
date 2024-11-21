@@ -438,6 +438,7 @@ namespace ExcelDnaTest
             JsonFilePath = jsonFilePath;
             ribbon.InvalidateControl("fileNameBox");
 
+            // 今開いているシートの id を index sheet から取得
             var indexSheet = workbook.Sheets[indexSheetName] as Excel.Worksheet;
 
             Excel.Name namedRange = indexSheet.Names.Item(ssSheetRangeName);
@@ -458,8 +459,16 @@ namespace ExcelDnaTest
             var sheetIdMap = sheetNames.Zip(ids, (sheetName, id) => new { sheetName, id })
                                        .ToDictionary(x => x.sheetName, x => x.id);
 
-            // TODO: 今開いているシートの id を index sheet から取得
             // TODO: jsonObject から同じ id の node を取得。なければありませんと表示して終了
+            JsonArray items = jsonObject["children"].AsArray();
+
+            Excel.Worksheet templateSheet = workbook.Sheets[templateSheetName];
+
+            foreach (JsonNode sheetNode in items)
+            {
+                string newSheetName = sheetNode["text"].ToString();
+            }
+
             // TODO: node, 画像ファイルの比較はせず、無条件で render?無条件でないならbook内の全シート更新で良い。逆に無条件renderがないと都合が悪いケースってある？
             // TODO: シート名が変わっていたら index sheet にも反映
             // TODO: RenderLog とかを書き出す
