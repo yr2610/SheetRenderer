@@ -458,19 +458,39 @@ namespace ExcelDnaTest
             // シート名とIDをペアにして辞書に変換
             var sheetIdMap = sheetNames.Zip(ids, (sheetName, id) => new { sheetName, id })
                                        .ToDictionary(x => x.sheetName, x => x.id);
+            string activeSheetId = sheetIdMap[sheet.Name].ToString();
 
-            // TODO: jsonObject から同じ id の node を取得。なければありませんと表示して終了
             JsonArray items = jsonObject["children"].AsArray();
 
             Excel.Worksheet templateSheet = workbook.Sheets[templateSheetName];
 
+            // jsonObject から同じ id の node を取得
+            JsonNode targetSheetNode = null;
             foreach (JsonNode sheetNode in items)
             {
-                string newSheetName = sheetNode["text"].ToString();
+                string sheetId = sheetNode["id"].ToString();
+                if (sheetId == activeSheetId)
+                {
+                    targetSheetNode = sheetNode;
+                    break;
+                }
+            }
+            // 現在のシートと同じIDのノードがなければ終了
+            if (targetSheetNode == null)
+            {
+                MessageBox.Show($"現在のシートと同じIDのノードが存在しません。");
+                return;
             }
 
             // TODO: node, 画像ファイルの比較はせず、無条件で render?無条件でないならbook内の全シート更新で良い。逆に無条件renderがないと都合が悪いケースってある？
+
             // TODO: シート名が変わっていたら index sheet にも反映
+            string newSheetName = targetSheetNode["text"].ToString();
+            if (newSheetName != sheet.Name)
+            {
+
+            }
+
             // TODO: RenderLog とかを書き出す
 
         }
