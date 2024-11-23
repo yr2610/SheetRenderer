@@ -376,7 +376,7 @@ namespace ExcelDnaTest
             return UpdateCurrentSheetButtonEnabled;
         }
 
-        public async void OnUpdateCurrentSheetButtonPressed(IRibbonControl control)
+        public void OnUpdateCurrentSheetButtonPressed(IRibbonControl control)
         {
             Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
             Excel.Workbook workbook = excelApp.ActiveWorkbook;
@@ -482,7 +482,9 @@ namespace ExcelDnaTest
                 return;
             }
 
-            // TODO: node, 画像ファイルの比較はせず、無条件で render?無条件でないならbook内の全シート更新で良い。逆に無条件renderがないと都合が悪いケースってある？
+            // TODO: node, 画像ファイルの比較はせず、無条件で render?
+            // TODO: 無条件でないならbook内の全シート更新で良い
+            // TODO: 逆に無条件renderがないと都合が悪いケースってある？
 
             // TODO: シート名が変わっていたら index sheet にも反映
             string newSheetName = targetSheetNode["text"].ToString();
