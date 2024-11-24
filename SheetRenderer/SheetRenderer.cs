@@ -438,6 +438,116 @@ namespace ExcelDnaTest
             return sheetIds;
         }
 
+        // idValues を key にした行（List<object>）の dictionary を作る
+        static Dictionary<string, List<object>> CreateRowDictionaryWithIDKeys(object[,] values, IEnumerable<object> idValues)
+        {
+#if true
+            var dictionary = new Dictionary<string, List<object>>();
+            int rowIndex = 1;
+
+            foreach (var idValue in idValues)
+            {
+                if (idValue == null)
+                {
+                    rowIndex++;
+                    continue;
+                }
+
+                string id = idValue.ToString();
+                var rowValues = new List<object>();
+
+                for (int j = 1; j <= values.GetLength(1); j++)
+                {
+                    rowValues.Add(values[rowIndex, j]);
+                }
+
+                dictionary[id] = rowValues;
+                rowIndex++;
+            }
+
+            return dictionary;
+#else
+        // LINQ駆使した版
+        return idValues
+            .Zip(Enumerable.Range(1, values.GetLength(0)), (idValue, rowIndex) => (idValue, rowIndex))
+            .Where(pair => pair.idValue != null)
+            .ToDictionary(
+                pair => pair.idValue.ToString(),
+                pair => Enumerable.Range(1, values.GetLength(1))
+                    .Select(colIndex => values[pair.rowIndex, colIndex])
+                    .ToList()
+            );
+#endif
+        }
+
+        static object[,] CopyValuesById(object[,] baseValues, IEnumerable<object> baseIdValues, Dictionary<string, List<object>> valuesDictionary, HashSet<int> ignoreColumnOffsets)
+        {
+            object[,] result = (object[,])baseValues.Clone();
+
+            int rowIndex = 1; // 1-originのため、1から開始
+
+            foreach (var idValue in baseIdValues)
+            {
+                if (idValue == null)
+                {
+                    rowIndex++;
+                    continue;
+                }
+
+                string id = idValue.ToString();
+
+                if (valuesDictionary.TryGetValue(id, out var values))
+                {
+                    int colIndex = 1; // 1-originに変換
+                    foreach (var value in values)
+                    {
+                        if (!ignoreColumnOffsets.Contains(colIndex - 1))
+                        {
+                            result[rowIndex, colIndex] = value;
+                        }
+                        colIndex++;
+                    }
+                }
+                rowIndex++;
+            }
+
+            return result;
+        }
+
+        static Excel.Range GetRange(Excel.Worksheet sheet, SheetAddressInfo sheetAddressInfo)
+        {
+            var rangeAddress = sheetAddressInfo.Address;
+            var range = sheet.Range[rangeAddress];
+
+            return range;
+        }
+
+        static object[,] GetValues(Excel.Worksheet sheet, SheetAddressInfo sheetAddressInfo)
+        {
+            var range = GetRange(sheet, sheetAddressInfo);
+            var values = range.Value2 as object[,];
+
+            return values;
+        }
+
+        static IEnumerable<object> GetIds(Excel.Worksheet sheet, SheetAddressInfo sheetAddressInfo)
+        {
+            var rangeInfo = sheetAddressInfo?.RangeInfo;
+            Debug.Assert(rangeInfo != null, "rangeInfo != null");
+            Debug.Assert(rangeInfo.IdColumnOffset.HasValue, "rangeInfo.IdColumnOffset.HasValue");
+            var idColumnOffset = rangeInfo.IdColumnOffset.Value;
+            var rangeAddress = sheetAddressInfo.Address;
+            var idValues = sheet.GetColumnWithOffset(rangeAddress, idColumnOffset);
+
+            return idValues;
+        }
+
+        static bool AreHashSetsEqual(HashSet<int> set1, HashSet<int> set2)
+        {
+            // 個数を比較し、かつ各値を比較
+            return set1.Count == set2.Count && !set1.Except(set2).Any();
+        }
+
         public void OnUpdateCurrentSheetButtonPressed(IRibbonControl control)
         {
             Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
@@ -451,6 +561,10 @@ namespace ExcelDnaTest
             {
                 return;
             }
+
+            // 作ったシートも元のシートと同じ状態にする
+            var activeCellPosition = excelApp.GetActiveCellPosition();
+            var scrollPosition = excelApp.GetScrollPosition();
 
             string projectId = workbook.GetCustomProperty(ssProjectIdCustomPropertyName);
             if (projectId == null)
@@ -507,6 +621,12 @@ namespace ExcelDnaTest
             var sheetNames = sheetNameRange.GetColumnValues(0);
             int sheetIndex = sheetNames.ToList().IndexOf(sheet.Name);
 
+            if (sheetIndex == -1)
+            {
+                MessageBox.Show($"有効なシートが選択されていません。");
+                return;
+            }
+
             // シート名とIDをペアにして辞書に変換
             //var sheetIdMap = sheetNames.Zip(sheetIds, (sheetName, id) => new { sheetName, id })
             //                           .ToDictionary(x => x.sheetName, x => x.id);
@@ -515,8 +635,6 @@ namespace ExcelDnaTest
             string sheetName2 = sheetNameRange[sheetIndex + 1].value;
 
             JsonArray items = jsonObject["children"].AsArray();
-
-            Excel.Worksheet templateSheet = workbook.Sheets[templateSheetName];
 
             // jsonObject から同じ id の node を取得
             JsonNode targetSheetNode = null;
@@ -536,21 +654,77 @@ namespace ExcelDnaTest
                 return;
             }
 
-            // シートの今の入力内容を取り込む
-
-
-
-            // node, 画像ファイルの比較はしない
-
-            // TODO: シート名が変わっていたら index sheet にも反映
+            string sheetName = sheet.Name;
             string newSheetName = targetSheetNode["text"].ToString();
-            if (newSheetName != sheet.Name)
-            {
 
+            if (newSheetName != sheetName)
+            {
+                // 新しい名前のシートがすでにあったら中止
+                if (workbook.GetSheetIfExists(newSheetName) != null)
+                {
+                    MessageBox.Show($"変更後のシート名と同名のシートがすでに存在します。");
+                    return;
+                }
             }
 
-            // TODO: RenderLog とかを書き出す
+            excelApp.ScreenUpdating = false;
+            excelApp.Calculation = Excel.XlCalculation.xlCalculationManual;
+            excelApp.EnableEvents = false;
 
+            Excel.Worksheet templateSheet = workbook.Sheets[templateSheetName];
+            templateSheet.Copy(After: sheet);
+
+            // コピーされたシートはアクティブシートになるので、それを取得
+            Excel.Worksheet newSheet = (Excel.Worksheet)templateSheet.Application.ActiveSheet;
+
+            // シート作成
+            // node, 画像ファイルの比較はしない
+            var missingImagePathsInSheet = RenderSheet(targetSheetNode, confData, newSheet);
+
+            // シートの今の入力内容を取り込む
+            var sheetAddressInfo = GetSheetAddressInfo(sheet);
+            var sheetValues = GetValues(sheet, sheetAddressInfo);
+            var sheetValueIds = GetIds(sheet, sheetAddressInfo);
+            var newSheetAddressInfo = GetSheetAddressInfo(newSheet);
+            var newSheetRange = GetRange(newSheet, newSheetAddressInfo);
+            var newSheetValueIds = GetIds(newSheet, newSheetAddressInfo);
+
+            var ignoreColumnOffsets = newSheetAddressInfo.RangeInfo.IgnoreColumnOffsets;
+            Debug.Assert(AreHashSetsEqual(ignoreColumnOffsets, sheetAddressInfo.RangeInfo.IgnoreColumnOffsets), "AreHashSetsEqual(ignoreColumnOffsets, sheetAddressInfo.RangeInfo.IgnoreColumnOffsets)");
+
+            // idValues を key にした行（List<object>）の dictionary を作る
+            var valuesDictionary = CreateRowDictionaryWithIDKeys(sheetValues, sheetValueIds);
+
+            // newSheet の Values のコピーを作って、元のシートの Values から id を基に上書きコピーする
+            // idが見つからない行、ignoreColumn は何もしないので、newSheet のものが採用される
+            var result = CopyValuesById(newSheetRange.Value2, newSheetValueIds, valuesDictionary, ignoreColumnOffsets);
+
+            newSheetRange.Value2 = result;
+
+            // 元のシートを削除
+            ExcelDnaUtil.Application.DisplayAlerts = false;
+            sheet.Delete();
+            ExcelDnaUtil.Application.DisplayAlerts = true;
+
+            newSheet.Name = newSheetName;
+
+            // シート名が変わっていたら index sheet にも反映
+            if (newSheetName != sheetName)
+            {
+                sheetNameRange.Cells[1 + sheetIndex].Value2 = newSheetName;
+            }
+
+            // シートを元の状態と同じにする
+            newSheet.Activate();
+            excelApp.SetActiveCellPosition(activeCellPosition);
+            excelApp.SetScrollPosition(scrollPosition);
+
+            excelApp.StatusBar = false;
+            excelApp.ScreenUpdating = true;
+            excelApp.Calculation = Excel.XlCalculation.xlCalculationAutomatic;
+            excelApp.EnableEvents = true;
+
+            // TODO: RenderLog とかを書き出す
         }
 
         public async void OnRenderButtonPressed(IRibbonControl control)
