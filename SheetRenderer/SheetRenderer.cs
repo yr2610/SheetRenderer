@@ -369,11 +369,73 @@ namespace ExcelDnaTest
 
         const string ssSheetRangeName = "SS_SHEET";
 
+        class RangeInfo
+        {
+            public int? IdColumnOffset { get; set; }
+            public HashSet<int> IgnoreColumnOffsets { get; set; }
+        }
+
+        class SheetAddressInfo
+        {
+            public string Address { get; set; }
+            public RangeInfo RangeInfo { get; set; }
+        }
+
+        static SheetAddressInfo GetSheetAddressInfo(Excel.Worksheet sheet)
+        {
+            Excel.Name namedRange = sheet.GetNamedRange(ssSheetRangeName);
+
+            if (namedRange == null)
+            {
+                return null;
+            }
+
+            // 名前付き範囲が存在する場合、その範囲を使用
+            string address = namedRange.RefersToRange.Address;
+            RangeInfo rangeInfo = null;
+
+            // コメントが存在する場合、それを YAML として解析
+            if (namedRange.Comment != null)
+            {
+                var deserializer = new DeserializerBuilder()
+                    .WithNamingConvention(CamelCaseNamingConvention.Instance)
+                    .Build();
+                rangeInfo = deserializer.Deserialize<RangeInfo>(namedRange.Comment);
+            }
+
+            return new SheetAddressInfo
+            {
+                Address = address,
+                RangeInfo = rangeInfo
+            };
+        }
+
         bool UpdateCurrentSheetButtonEnabled { get; set; } = true;
 
         public bool GetUpdateCurrentSheetButtonEnabled(IRibbonControl control)
         {
             return UpdateCurrentSheetButtonEnabled;
+        }
+
+        static Excel.Range GetSheetNamesRangeFromIndexSheet(Excel.Worksheet indexSheet)
+        {
+            return indexSheet.Range["SS_SHEETNAMELIST"];
+        }
+
+        static IEnumerable<object> GetSheetIdsFromIndexSheet(Excel.Worksheet indexSheet)
+        {
+            Excel.Name namedRange = indexSheet.Names.Item(ssSheetRangeName);
+            var ssRange = namedRange.RefersToRange;
+
+            var deserializer = new DeserializerBuilder()
+                .WithNamingConvention(CamelCaseNamingConvention.Instance)
+                .Build();
+            Debug.Assert(namedRange.Comment != null, "namedRange.Comment != null");
+            RangeInfo rangeInfo = deserializer.Deserialize<RangeInfo>(namedRange.Comment);
+
+            var sheetIds = ssRange.GetColumnValues(rangeInfo.IdColumnOffset.Value);
+
+            return sheetIds;
         }
 
         public void OnUpdateCurrentSheetButtonPressed(IRibbonControl control)
@@ -440,25 +502,17 @@ namespace ExcelDnaTest
 
             // 今開いているシートの id を index sheet から取得
             var indexSheet = workbook.Sheets[indexSheetName] as Excel.Worksheet;
-
-            Excel.Name namedRange = indexSheet.Names.Item(ssSheetRangeName);
-            var ssRange = namedRange.RefersToRange;
-
-            var deserializer = new DeserializerBuilder()
-                .WithNamingConvention(CamelCaseNamingConvention.Instance)
-                .Build();
-            Debug.Assert(namedRange.Comment != null, "namedRange.Comment != null");
-            RangeInfo rangeInfo = deserializer.Deserialize<RangeInfo>(namedRange.Comment);
-
-            var ids = ssRange.GetColumnValues(rangeInfo.IdColumnOffset.Value);
-
-            var sheetNameRange = indexSheet.Range["SS_SHEETNAMELIST"];
+            var sheetIds = GetSheetIdsFromIndexSheet(indexSheet);
+            var sheetNameRange = GetSheetNamesRangeFromIndexSheet(indexSheet);
             var sheetNames = sheetNameRange.GetColumnValues(0);
+            int sheetIndex = sheetNames.ToList().IndexOf(sheet.Name);
 
             // シート名とIDをペアにして辞書に変換
-            var sheetIdMap = sheetNames.Zip(ids, (sheetName, id) => new { sheetName, id })
-                                       .ToDictionary(x => x.sheetName, x => x.id);
-            string activeSheetId = sheetIdMap[sheet.Name].ToString();
+            //var sheetIdMap = sheetNames.Zip(sheetIds, (sheetName, id) => new { sheetName, id })
+            //                           .ToDictionary(x => x.sheetName, x => x.id);
+            //string activeSheetId = sheetIdMap[sheet.Name].ToString();
+            string activeSheetId = sheetIds.ElementAt(sheetIndex).ToString();
+            string sheetName2 = sheetNameRange[sheetIndex + 1].value;
 
             JsonArray items = jsonObject["children"].AsArray();
 
@@ -482,9 +536,11 @@ namespace ExcelDnaTest
                 return;
             }
 
-            // TODO: node, 画像ファイルの比較はせず、無条件で render?
-            // TODO: 無条件でないならbook内の全シート更新で良い
-            // TODO: 逆に無条件renderがないと都合が悪いケースってある？
+            // シートの今の入力内容を取り込む
+
+
+
+            // node, 画像ファイルの比較はしない
 
             // TODO: シート名が変わっていたら index sheet にも反映
             string newSheetName = targetSheetNode["text"].ToString();
@@ -931,12 +987,6 @@ namespace ExcelDnaTest
         static IEnumerable<object> ExtractPropertyValues(IEnumerable<JsonNode> leafNodes, string propertyName)
         {
             return leafNodes.Select(node => GetJsonValue(node[propertyName]));
-        }
-
-        class RangeInfo
-        {
-            public int? IdColumnOffset { get; set; }
-            public HashSet<int> IgnoreColumnOffsets { get; set; }
         }
 
         IEnumerable<(string filePath, string sheetName, string address)> RenderSheet(JsonNode sheetNode, Dictionary<string, string> confData, Excel.Worksheet sheet)
