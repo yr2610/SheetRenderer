@@ -702,9 +702,9 @@ namespace ExcelDnaTest
             newSheetRange.Value2 = result;
 
             // 元のシートを削除
-            ExcelDnaUtil.Application.DisplayAlerts = false;
+            excelApp.DisplayAlerts = false;
             sheet.Delete();
-            ExcelDnaUtil.Application.DisplayAlerts = true;
+            excelApp.DisplayAlerts = true;
 
             newSheet.Name = newSheetName;
 
