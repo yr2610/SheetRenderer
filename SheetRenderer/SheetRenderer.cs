@@ -565,6 +565,7 @@ namespace ExcelDnaTest
             // 作ったシートも元のシートと同じ状態にする
             var activeCellPosition = excelApp.GetActiveCellPosition();
             var scrollPosition = excelApp.GetScrollPosition();
+            var activeSheetZoom = excelApp.GetActiveSheetZoom();
 
             string projectId = workbook.GetCustomProperty(ssProjectIdCustomPropertyName);
             if (projectId == null)
@@ -717,6 +718,7 @@ namespace ExcelDnaTest
             // シートを元の状態と同じにする
             newSheet.Activate();
             excelApp.SetActiveCellPosition(activeCellPosition);
+            excelApp.SetActiveSheetZoom(activeSheetZoom);   // scroll より後に zoom をセットすると微妙にずれるっぽい
             excelApp.SetScrollPosition(scrollPosition);
 
             excelApp.StatusBar = false;
