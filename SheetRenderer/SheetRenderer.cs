@@ -178,8 +178,7 @@ namespace ExcelDnaTest
                             <splitButton id='splitButton1' size='large'>
                               <button id='button2' label='Render' imageMso='TableDrawTable' onAction='OnRenderButtonPressed'/>
                               <menu id='menu1'>
-                                <button id='button2a' label='Option 1' onAction='OnOption1ButtonPressed'/>
-                                <button id='button2b' label='Option 2' onAction='OnOption2ButtonPressed'/>
+                                <button id='button2a' label='Rerender' onAction='OnRerenderButtonPressed'/>
                               </menu>
                             </splitButton>
                             <button id='button3' label='Update Sheet' size='large' imageMso='TableSharePointListsRefreshList' onAction='OnUpdateCurrentSheetButtonPressed' getEnabled='GetUpdateCurrentSheetButtonEnabled'/>
@@ -191,13 +190,9 @@ namespace ExcelDnaTest
                   </customUI>";
         }
 
-        public void OnOption1ButtonPressed(IRibbonControl control)
+        public void OnRerenderButtonPressed(IRibbonControl control)
         {
-            MessageBox.Show("OnOption1ButtonPressed");
-        }
-        public void OnOption2ButtonPressed(IRibbonControl control)
-        {
-            MessageBox.Show("OnOption2ButtonPressed");
+            MessageBox.Show("RerenderButtonPressed");
         }
 
         string JsonFilePath { get; set; }
