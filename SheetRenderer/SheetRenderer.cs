@@ -169,20 +169,35 @@ namespace ExcelDnaTest
         {
             string projectName = Assembly.GetExecutingAssembly().GetName().Name;
             return $@"
-              <customUI xmlns='http://schemas.microsoft.com/office/2006/01/customui' onLoad='OnLoad'>
-              <ribbon>
-                <tabs>
-                  <tab id='tab1' label='{projectName}'>
-                    <group id='group1' label='Render'>
-                      <button id='button1' label='JSONファイル選択' size='large' imageMso='FileSave' onAction='OnSelectJsonFileButtonPressed'/>
-                      <button id='button2' label='Render' size='large' imageMso='TableDrawTable' onAction='OnRenderButtonPressed'/>
-                      <button id='button3' label='Update Sheet' size='large' imageMso='TableSharePointListsRefreshList' onAction='OnUpdateCurrentSheetButtonPressed' getEnabled='GetUpdateCurrentSheetButtonEnabled'/>
-                      <editBox id='fileNameBox' label='JSONファイル' sizeString='hoge\\20XX-XX-XX\\index' getText='GetFileName' onChange='OnTextChanged' />
-                    </group>
-                  </tab>
-                </tabs>
-              </ribbon>
-            </customUI>";
+                  <customUI xmlns='http://schemas.microsoft.com/office/2006/01/customui' onLoad='OnLoad'>
+                    <ribbon>
+                      <tabs>
+                        <tab id='tab1' label='{projectName}'>
+                          <group id='group1' label='Render'>
+                            <button id='button1' label='JSONファイル選択' size='large' imageMso='FileSave' onAction='OnSelectJsonFileButtonPressed'/>
+                            <splitButton id='splitButton1' size='large'>
+                              <button id='button2' label='Render' imageMso='TableDrawTable' onAction='OnRenderButtonPressed'/>
+                              <menu id='menu1'>
+                                <button id='button2a' label='Option 1' onAction='OnOption1ButtonPressed'/>
+                                <button id='button2b' label='Option 2' onAction='OnOption2ButtonPressed'/>
+                              </menu>
+                            </splitButton>
+                            <button id='button3' label='Update Sheet' size='large' imageMso='TableSharePointListsRefreshList' onAction='OnUpdateCurrentSheetButtonPressed' getEnabled='GetUpdateCurrentSheetButtonEnabled'/>
+                            <editBox id='fileNameBox' label='JSONファイル' sizeString='hoge\\20XX-XX-XX\\index' getText='GetFileName' onChange='OnTextChanged' />
+                          </group>
+                        </tab>
+                      </tabs>
+                    </ribbon>
+                  </customUI>";
+        }
+
+        public void OnOption1ButtonPressed(IRibbonControl control)
+        {
+            MessageBox.Show("OnOption1ButtonPressed");
+        }
+        public void OnOption2ButtonPressed(IRibbonControl control)
+        {
+            MessageBox.Show("OnOption2ButtonPressed");
         }
 
         string JsonFilePath { get; set; }
