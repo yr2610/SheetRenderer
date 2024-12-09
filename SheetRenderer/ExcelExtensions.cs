@@ -122,14 +122,18 @@ public static class ExcelExtensions
             columnRange = range.Columns[columnIndex + 1];
         }
 
-        object[,] values = columnRange.Value2 as object[,];
-
-        if (values != null)
+        object value = columnRange.Value2;
+        if (value is object[,])
         {
+            object[,] values = (object[,])value;
             for (int i = 1; i <= values.GetLength(0); i++)
             {
                 yield return values[i, 1];
             }
+        }
+        else if (value != null)
+        {
+            yield return value;
         }
     }
 
