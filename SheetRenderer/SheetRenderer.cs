@@ -689,12 +689,6 @@ namespace ExcelDnaTest
                 // シート名が変わっていたら index sheet にも反映
                 sheetNameRange.Cells[1 + sheetIndex].Value2 = newSheetName;
             }
-            else
-            {
-                // 新しく作るシートにこれまでのシート名をセットしたいので、別名にする
-                var tempSheetName = workbook.GenerateTempSheetName();
-                sheet.Name = tempSheetName;
-            }
 
             Excel.Worksheet templateSheet = workbook.Sheets[templateSheetName];
             templateSheet.Copy(After: sheet);
@@ -702,16 +696,23 @@ namespace ExcelDnaTest
             // コピーされたシートはアクティブシートになるので、それを取得
             Excel.Worksheet newSheet = (Excel.Worksheet)templateSheet.Application.ActiveSheet;
 
+            // 元のシートから今の入力内容を取り込む
+            var sheetAddressInfo = GetSheetAddressInfo(sheet);
+            var sheetValues = GetValues(sheet, sheetAddressInfo);
+            var sheetValueIds = GetIds(sheet, sheetAddressInfo);
+
+            // 元のシートを削除
+            excelApp.DisplayAlerts = false;
+            sheet.Delete();
+            excelApp.DisplayAlerts = true;
+
+            // 元のシートと同じ名前でも良いように元シート削除後に名前変更
             newSheet.Name = newSheetName;
 
             // シート作成
             // node, 画像ファイルの比較はしない
             var missingImagePathsInSheet = RenderSheet(targetSheetNode, confData, newSheet);
 
-            // シートの今の入力内容を取り込む
-            var sheetAddressInfo = GetSheetAddressInfo(sheet);
-            var sheetValues = GetValues(sheet, sheetAddressInfo);
-            var sheetValueIds = GetIds(sheet, sheetAddressInfo);
             var newSheetAddressInfo = GetSheetAddressInfo(newSheet);
             var newSheetRange = GetRange(newSheet, newSheetAddressInfo);
             var newSheetValueIds = GetIds(newSheet, newSheetAddressInfo);
@@ -727,11 +728,6 @@ namespace ExcelDnaTest
             var result = CopyValuesById(newSheetRange.Value2, newSheetValueIds, valuesDictionary, ignoreColumnOffsets);
 
             newSheetRange.Value2 = result;
-
-            // 元のシートを削除
-            excelApp.DisplayAlerts = false;
-            sheet.Delete();
-            excelApp.DisplayAlerts = true;
 
             // シートを元の状態と同じにする
             newSheet.Activate();
