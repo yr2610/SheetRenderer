@@ -224,6 +224,21 @@ public static class ExcelExtensions
         return null;
     }
 
+    public static string GenerateTempSheetName(this Excel.Workbook workbook)
+    {
+        string tempName = "TempSheetName";
+        int counter = 1;
+
+        // 一時的な名前が既存のシート名と重複しないようにチェック
+        while (workbook.GetSheetIfExists(tempName) != null)
+        {
+            tempName = "TempSheetName" + counter;
+            counter++;
+        }
+
+        return tempName;
+    }
+
     public static Excel.Name GetNamedRange(this Excel.Worksheet sheet, string name)
     {
         try

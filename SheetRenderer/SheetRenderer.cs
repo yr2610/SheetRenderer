@@ -682,11 +682,27 @@ namespace ExcelDnaTest
             excelApp.Calculation = Excel.XlCalculation.xlCalculationManual;
             excelApp.EnableEvents = false;
 
+            MacroControl.DisableMacros();
+
+            if (newSheetName != sheetName)
+            {
+                // シート名が変わっていたら index sheet にも反映
+                sheetNameRange.Cells[1 + sheetIndex].Value2 = newSheetName;
+            }
+            else
+            {
+                // 新しく作るシートにこれまでのシート名をセットしたいので、別名にする
+                var tempSheetName = workbook.GenerateTempSheetName();
+                sheet.Name = tempSheetName;
+            }
+
             Excel.Worksheet templateSheet = workbook.Sheets[templateSheetName];
             templateSheet.Copy(After: sheet);
 
             // コピーされたシートはアクティブシートになるので、それを取得
             Excel.Worksheet newSheet = (Excel.Worksheet)templateSheet.Application.ActiveSheet;
+
+            newSheet.Name = newSheetName;
 
             // シート作成
             // node, 画像ファイルの比較はしない
@@ -717,14 +733,6 @@ namespace ExcelDnaTest
             sheet.Delete();
             excelApp.DisplayAlerts = true;
 
-            newSheet.Name = newSheetName;
-
-            // シート名が変わっていたら index sheet にも反映
-            if (newSheetName != sheetName)
-            {
-                sheetNameRange.Cells[1 + sheetIndex].Value2 = newSheetName;
-            }
-
             // シートを元の状態と同じにする
             newSheet.Activate();
             excelApp.SetActiveCellPosition(activeCellPosition);
@@ -736,7 +744,20 @@ namespace ExcelDnaTest
             excelApp.Calculation = Excel.XlCalculation.xlCalculationAutomatic;
             excelApp.EnableEvents = true;
 
-            // TODO: RenderLog とかを書き出す
+            MacroControl.EnableMacros();
+
+            if (missingImagePathsInSheet.Any())
+            {
+                ShowMissingImageFilesDialog(missingImagePathsInSheet);
+            }
+
+            // TODO: RenderLog 書き出す処理を共通化
+            RenderLog renderLog = new RenderLog
+            {
+                SourceFilePath = JsonFilePath,
+                User = Environment.UserName
+            };
+            workbook.SetCustomProperty("RenderLog", renderLog);
         }
 
         public async void OnRenderButtonPressed(IRibbonControl control)
