@@ -252,6 +252,35 @@ public static class ExcelExtensions
         }
     }
 
+    // カスタムプロパティを設定するメソッド
+    public static void SetCustomProperty(this Excel.Worksheet sheet, string propertyName, string propertyValue)
+    {
+        var customProperties = sheet.CustomProperties;
+        foreach (Excel.CustomProperty property in customProperties)
+        {
+            if (property.Name == propertyName)
+            {
+                property.Value = propertyValue;
+                return;
+            }
+        }
+        customProperties.Add(propertyName, propertyValue);
+    }
+
+    // カスタムプロパティを取得するメソッド
+    public static string GetCustomProperty(this Excel.Worksheet sheet, string propertyName)
+    {
+        var customProperties = sheet.CustomProperties;
+        foreach (Excel.CustomProperty property in customProperties)
+        {
+            if (property.Name == propertyName)
+            {
+                return property.Value.ToString();
+            }
+        }
+        return null;
+    }
+
     public static dynamic GetCustomPropertyObject(this Excel.Workbook workbook, string propertyName)
     {
         dynamic properties = workbook.CustomDocumentProperties;
