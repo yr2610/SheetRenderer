@@ -10,6 +10,8 @@ using System.Text.RegularExpressions;
 
 using System.Windows.Forms;
 
+using System.Security.Cryptography;
+
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
@@ -201,6 +203,61 @@ namespace ExcelDnaTest
         {
             public string SourceFilePath { get; set; }
             public string User { get; set; }
+        }
+
+        public class JsonNodeHasher
+        {
+            public static string ComputeHash(JsonNode node)
+            {
+                // TODO: 時間計測して比較
+#if false
+                string jsonString = node.ToJsonString();
+                using (var sha256 = SHA256.Create())
+                {
+                    byte[] hashBytes = sha256.ComputeHash(Encoding.UTF8.GetBytes(jsonString));
+                    return BitConverter.ToString(hashBytes).Replace("-", "").ToLower();
+                }
+#else
+                using (var sha256 = SHA256.Create())
+                {
+                    var result = ComputeHashRecursive(node, sha256);
+
+                    // ハッシュ計算を完了するために TransformFinalBlock を呼び出す
+                    sha256.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
+                    byte[] hashBytes = sha256.Hash;
+
+                    return BitConverter.ToString(hashBytes).Replace("-", "").ToLower();
+                }
+#endif
+            }
+
+            private static SHA256 ComputeHashRecursive(JsonNode node, SHA256 sha256)
+            {
+                if (node is JsonObject jsonObject)
+                {
+                    var sortedKeys = jsonObject.Select(kvp => kvp.Key).OrderBy(k => k);
+                    foreach (var key in sortedKeys)
+                    {
+                        var keyBytes = Encoding.UTF8.GetBytes(key);
+                        sha256.TransformBlock(keyBytes, 0, keyBytes.Length, keyBytes, 0);
+                        ComputeHashRecursive(jsonObject[key], sha256);
+                    }
+                }
+                else if (node is JsonArray jsonArray)
+                {
+                    foreach (var item in jsonArray)
+                    {
+                        ComputeHashRecursive(item, sha256);
+                    }
+                }
+                else if (node is JsonValue jsonValue)
+                {
+                    var valueBytes = Encoding.UTF8.GetBytes(jsonValue.ToString());
+                    sha256.TransformBlock(valueBytes, 0, valueBytes.Length, valueBytes, 0);
+                }
+
+                return sha256;
+            }
         }
 
         static string GetFilePathWithoutExtension(string path)
@@ -820,6 +877,8 @@ namespace ExcelDnaTest
                 foreach (JsonNode sheetNode in items)
                 {
                     string newSheetName = sheetNode["text"].ToString();
+
+                    string sheetHash = JsonNodeHasher.ComputeHash(sheetNode);
 
                     // プログレスバーを更新
                     progressBarForm.Invoke(new Action<string>(progressBarForm.UpdateSheetName), newSheetName);
