@@ -631,10 +631,24 @@ namespace ExcelDnaTest
             }
             Excel.Workbook workbook = sheet.Parent as Excel.Workbook;
 
+            // ファイルが変更されて保存されてない場合
             if (workbook.Saved == false)
             {
-                MessageBox.Show($"ブックが変更されています。変更内容を保存してからやりなおしてください。");
-                return;
+                // 保存確認ダイアログを表示
+                DialogResult yesNoCancel = MessageBox.Show($"シートを更新する前にファイルの変更内容を保存しますか？", "確認", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Exclamation);
+
+                switch (yesNoCancel)
+                {
+                    case DialogResult.Yes:
+                        workbook.Save();
+                        break;
+                    case DialogResult.No:
+                        // 保存せずに続行
+                        break;
+                    case DialogResult.Cancel:
+                        // キャンセルされた場合、処理を中止
+                        return;
+                }
             }
 
             // 作ったシートも元のシートと同じ状態にする
