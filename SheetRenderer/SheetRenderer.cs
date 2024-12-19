@@ -615,17 +615,25 @@ namespace ExcelDnaTest
             return set1.Count == set2.Count && !set1.Except(set2).Any();
         }
 
+        void ForceUpdateCurrentSheet(Excel.Worksheet sheet)
+        {
+
+        }
+
         public void OnUpdateCurrentSheetButtonPressed(IRibbonControl control)
         {
             Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
-            Excel.Workbook workbook = excelApp.ActiveWorkbook;
-            if (workbook == null)
-            {
-                return;
-            }
-            var sheet = workbook.ActiveSheet as Excel.Worksheet;
+            var sheet = excelApp.ActiveSheet as Excel.Worksheet;
             if (sheet == null)
             {
+                MessageBox.Show($"アクティブなシートがありません。");
+                return;
+            }
+            Excel.Workbook workbook = sheet.Parent as Excel.Workbook;
+
+            if (workbook.Saved == false)
+            {
+                MessageBox.Show($"ブックが変更されています。変更内容を保存してからやりなおしてください。");
                 return;
             }
 
