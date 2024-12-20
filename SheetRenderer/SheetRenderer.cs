@@ -620,6 +620,42 @@ namespace ExcelDnaTest
 
         }
 
+        class WorkbookInfo
+        {
+            public string ProjectId { get; set; }
+            public string IndexSheetName { get; set; }
+            public string TemplateSheetName { get; set; }
+            public RenderLog LastRenderLog { get; set; }
+
+            static public WorkbookInfo CreateFromWorkbook(Excel.Workbook workbook)
+            {
+                string projectId = workbook.GetCustomProperty(ssProjectIdCustomPropertyName);
+
+                if (projectId == null)
+                {
+                    return null;
+                }
+
+                // projectId があるなら他のもあるという前提
+                string indexSheetName = workbook.GetCustomProperty(indexSheetNameCustomPropertyName);
+                string templateSheetName = workbook.GetCustomProperty(templateSheetNameCustomPropertyName);
+                var lastRenderLog = workbook.GetCustomProperty<RenderLog>("RenderLog");
+                Debug.Assert(indexSheetName != null, "indexSheetName != null");
+                Debug.Assert(templateSheetName != null, "templateSheetName != null");
+                Debug.Assert(lastRenderLog != null, "lastRenderLog != null");
+
+                return new WorkbookInfo
+                {
+                    ProjectId = projectId,
+                    IndexSheetName = indexSheetName,
+                    TemplateSheetName = templateSheetName,
+                    LastRenderLog = lastRenderLog,
+                };
+            }
+
+
+        }
+
         public void OnUpdateCurrentSheetButtonPressed(IRibbonControl control)
         {
             Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
@@ -656,28 +692,41 @@ namespace ExcelDnaTest
             var scrollPosition = excelApp.GetScrollPosition();
             var activeSheetZoom = excelApp.GetActiveSheetZoom();
 
-            string projectId = workbook.GetCustomProperty(ssProjectIdCustomPropertyName);
-            if (projectId == null)
+            WorkbookInfo workbookInfo = WorkbookInfo.CreateFromWorkbook(workbook);
+
+            if (workbookInfo == null)
             {
                 string projectName = Assembly.GetExecutingAssembly().GetName().Name;
                 MessageBox.Show($"{projectName} で生成されたブックではありません。");
                 return;
             }
 
-            // projectId があるなら他のもあるという前提
-            string indexSheetName = workbook.GetCustomProperty(indexSheetNameCustomPropertyName);
-            string templateSheetName = workbook.GetCustomProperty(templateSheetNameCustomPropertyName);
-            var lastRenderLog = workbook.GetCustomProperty<RenderLog>("RenderLog");
-            Debug.Assert(indexSheetName != null, "indexSheetName != null");
-            Debug.Assert(templateSheetName != null, "templateSheetName != null");
-            Debug.Assert(lastRenderLog != null, "lastRenderLog != null");
-
-            string jsonFilePath;
+            string projectId = workbookInfo.ProjectId;
 
             // lastRenderLog.User が今のユーザーと異なる、もしくは lastRenderLog.SourceFilePath が見つからない場合、前回生成時の環境と異なるとみなしてファイル選択させる
-            if (lastRenderLog.User != Environment.UserName || !File.Exists(lastRenderLog.SourceFilePath))
+            var lastRenderLog = workbookInfo.LastRenderLog;
+            bool isSameUser = lastRenderLog.User == Environment.UserName;
+            bool sourceFileExists = File.Exists(lastRenderLog.SourceFilePath);
+            string jsonFilePath;
+
+            if (!isSameUser || !sourceFileExists)
             {
-                MessageBox.Show($"Project ID が「{projectId}」のソースファイルを選択してください。");
+                string message = null;
+                if (!isSameUser)
+                {
+                    message = "最後に更新された環境と異なります。";
+                }
+                else if (!sourceFileExists)
+                {
+                    message = "ソースファイルが見つかりません。";
+                }
+
+                DialogResult fileSelectionResult = MessageBox.Show($"{message}\nProject ID が「{projectId}」のソースファイルを選択し直してください。", "確認", MessageBoxButtons.OKCancel);
+                if (fileSelectionResult != DialogResult.OK)
+                {
+                    return;
+                }
+
                 jsonFilePath = OpenFile();
                 // キャンセルされたら何もしない
                 if (jsonFilePath == null)
@@ -705,7 +754,7 @@ namespace ExcelDnaTest
             ribbon.InvalidateControl("fileNameBox");
 
             // 今開いているシートの id を index sheet から取得
-            var indexSheet = workbook.Sheets[indexSheetName] as Excel.Worksheet;
+            var indexSheet = workbook.Sheets[workbookInfo.IndexSheetName] as Excel.Worksheet;
             var sheetIds = GetSheetIdsFromIndexSheet(indexSheet);
             var sheetNameRange = GetSheetNamesRangeFromIndexSheet(indexSheet);
             var sheetNames = sheetNameRange.GetColumnValues(0);
@@ -769,7 +818,7 @@ namespace ExcelDnaTest
                 sheetNameRange.Cells[1 + sheetIndex].Value2 = newSheetName;
             }
 
-            Excel.Worksheet templateSheet = workbook.Sheets[templateSheetName];
+            Excel.Worksheet templateSheet = workbook.Sheets[workbookInfo.TemplateSheetName];
             templateSheet.Copy(After: sheet);
 
             // コピーされたシートはアクティブシートになるので、それを取得
