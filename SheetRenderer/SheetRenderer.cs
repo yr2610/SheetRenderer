@@ -313,7 +313,7 @@ namespace ExcelDnaTest
 
         public void OnSelectJsonFileButtonPressed(IRibbonControl control)
         {
-            string selectedFile = OpenFile();
+            string selectedFile = OpenSourceFile();
             if (selectedFile != null)
             {
                 JsonFilePath = selectedFile;
@@ -321,7 +321,7 @@ namespace ExcelDnaTest
             }
         }
 
-        string OpenFile()
+        public static string OpenSourceFile()
         {
             using (OpenFileDialog openFileDialog = new OpenFileDialog())
             {
@@ -652,8 +652,6 @@ namespace ExcelDnaTest
                     LastRenderLog = lastRenderLog,
                 };
             }
-
-
         }
 
         public void OnUpdateCurrentSheetButtonPressed(IRibbonControl control)
@@ -727,7 +725,7 @@ namespace ExcelDnaTest
                     return;
                 }
 
-                jsonFilePath = OpenFile();
+                jsonFilePath = OpenSourceFile();
                 // キャンセルされたら何もしない
                 if (jsonFilePath == null)
                 {
