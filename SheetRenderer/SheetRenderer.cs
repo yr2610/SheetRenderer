@@ -654,15 +654,9 @@ namespace ExcelDnaTest
             }
         }
 
-        public void OnUpdateCurrentSheetButtonPressed(IRibbonControl control)
+        void UpdateCurrentSheet(Excel.Worksheet sheet)
         {
             Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
-            var sheet = excelApp.ActiveSheet as Excel.Worksheet;
-            if (sheet == null)
-            {
-                MessageBox.Show($"アクティブなシートがありません。");
-                return;
-            }
             Excel.Workbook workbook = sheet.Parent as Excel.Workbook;
 
             // ファイルが変更されて保存されてない場合
@@ -804,12 +798,6 @@ namespace ExcelDnaTest
                 }
             }
 
-            excelApp.ScreenUpdating = false;
-            excelApp.Calculation = Excel.XlCalculation.xlCalculationManual;
-            excelApp.EnableEvents = false;
-
-            MacroControl.DisableMacros();
-
             if (newSheetName != sheetName)
             {
                 // シート名が変わっていたら index sheet にも反映
@@ -880,6 +868,34 @@ namespace ExcelDnaTest
                 User = Environment.UserName
             };
             workbook.SetCustomProperty("RenderLog", renderLog);
+        }
+
+        public void OnUpdateCurrentSheetButtonPressed(IRibbonControl control)
+        {
+            Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
+            var sheet = excelApp.ActiveSheet as Excel.Worksheet;
+
+            if (sheet == null)
+            {
+                MessageBox.Show($"アクティブなシートがありません。");
+                return;
+            }
+
+            excelApp.ScreenUpdating = false;
+            excelApp.Calculation = Excel.XlCalculation.xlCalculationManual;
+            excelApp.EnableEvents = false;
+
+            MacroControl.DisableMacros();
+
+            UpdateCurrentSheet(sheet);
+
+            excelApp.StatusBar = false;
+            excelApp.ScreenUpdating = true;
+            excelApp.Calculation = Excel.XlCalculation.xlCalculationAutomatic;
+            excelApp.EnableEvents = true;
+
+            MacroControl.EnableMacros();
+
         }
 
         public async void OnRenderButtonPressed(IRibbonControl control)
