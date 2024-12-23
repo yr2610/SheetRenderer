@@ -731,26 +731,6 @@ namespace ExcelDnaTest
                 return;
             }
 
-            // ファイルが変更されて保存されてない場合
-            if (workbook.Saved == false)
-            {
-                // 保存確認ダイアログを表示
-                DialogResult yesNoCancel = MessageBox.Show($"シートを更新する前にファイルの変更内容を保存しますか？", "確認", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Exclamation);
-
-                switch (yesNoCancel)
-                {
-                    case DialogResult.Yes:
-                        workbook.Save();
-                        break;
-                    case DialogResult.No:
-                        // 保存せずに続行
-                        break;
-                    case DialogResult.Cancel:
-                        // キャンセルされた場合、処理を中止
-                        return;
-                }
-            }
-
             // 選択中の json として設定
             //JsonFilePath = jsonFilePath;
             //ribbon.InvalidateControl("fileNameBox");
@@ -775,7 +755,10 @@ namespace ExcelDnaTest
             //var sheetIdMap = sheetNames.Zip(sheetIds, (sheetName, id) => new { sheetName, id })
             //                           .ToDictionary(x => x.sheetName, x => x.id);
             //string activeSheetId = sheetIdMap[sheet.Name].ToString();
-            //string activeSheetId = sheetIds.ElementAt(sheetIndex).ToString();
+            if (activeSheetId == null)  // XXX: 古いバージョンの対応。ある程度稼働したら削除
+            {
+                activeSheetId = sheetIds.ElementAt(sheetIndex).ToString();
+            }
             string sheetName2 = sheetNameRange[sheetIndex + 1].value;
 
             JsonArray items = jsonObject["children"].AsArray();
@@ -811,6 +794,26 @@ namespace ExcelDnaTest
                 }
             }
 
+            // ファイルが変更されて保存されてない場合
+            if (workbook.Saved == false)
+            {
+                // 保存確認ダイアログを表示
+                DialogResult yesNoCancel = MessageBox.Show($"シートを更新する前にファイルの変更内容を保存しますか？", "確認", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Exclamation);
+
+                switch (yesNoCancel)
+                {
+                    case DialogResult.Yes:
+                        workbook.Save();
+                        break;
+                    case DialogResult.No:
+                        // 保存せずに続行
+                        break;
+                    case DialogResult.Cancel:
+                        // キャンセルされた場合、処理を中止
+                        return;
+                }
+            }
+
             if (newSheetName != sheetName)
             {
                 // シート名が変わっていたら index sheet にも反映
@@ -818,7 +821,10 @@ namespace ExcelDnaTest
             }
 
             Excel.Worksheet templateSheet = workbook.Sheets[workbookInfo.TemplateSheetName];
+            var visible = templateSheet.Visible;
+            templateSheet.Visible = Excel.XlSheetVisibility.xlSheetVisible;
             templateSheet.Copy(After: sheet);
+            templateSheet.Visible = visible;
 
             // コピーされたシートはアクティブシートになるので、それを取得
             Excel.Worksheet newSheet = (Excel.Worksheet)templateSheet.Application.ActiveSheet;
@@ -877,7 +883,7 @@ namespace ExcelDnaTest
             // TODO: RenderLog 書き出す処理を共通化
             RenderLog renderLog = new RenderLog
             {
-                SourceFilePath = JsonFilePath,
+                SourceFilePath = jsonFilePath,
                 User = Environment.UserName
             };
             workbook.SetCustomProperty("RenderLog", renderLog);
@@ -913,7 +919,7 @@ namespace ExcelDnaTest
 
         async Task UpdateAllSheets(Excel.Workbook workbook)
         {
-            Excel.Application excelApp = ExcelDnaUtil.Application;
+            Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
 
             // 作ったシートも元のシートと同じ状態にする
             var activeCellPosition = excelApp.GetActiveCellPosition();
@@ -1047,9 +1053,10 @@ namespace ExcelDnaTest
                 string sheetId = sheetNode["id"].ToString();
                 int sheetIndex = sheetIds.IndexOf(sheetId);
 
+                // シートの JsonNode の hash をカスタムプロパティに保存
                 // XXX: hash には text を含めたくないので、hashを求める前に一時的に削除
                 sheetNode.AsObject().Remove("text");
-                string newSheetHash = JsonNodeHasher.ComputeSha256(sheetNode);
+                string newSheetHash = sheetNode.ComputeSha256();
                 sheetNode["text"] = newSheetName;
 
                 // 既存のシート
@@ -1158,9 +1165,10 @@ namespace ExcelDnaTest
                 {
                     string newSheetName = sheetNode["text"].ToString();
 
+                    // シートの JsonNode の hash をカスタムプロパティに保存
                     // XXX: hash には text を含めたくないので、hashを求める前に一時的に削除
                     sheetNode.AsObject().Remove("text");
-                    string sheetHash = JsonNodeHasher.ComputeSha256(sheetNode);
+                    string sheetHash = sheetNode.ComputeSha256();
                     sheetNode["text"] = newSheetName;
 
                     // プログレスバーを更新
@@ -1172,6 +1180,8 @@ namespace ExcelDnaTest
                     newSheet.Name = newSheetName;
 
                     var missingImagePathsInSheet = RenderSheet(sheetNode, confData, jsonFilePath, newSheet);
+
+                    newSheet.SetCustomProperty(sheetHashCustomPropertyName, sheetHash);
 
                     missingImagePaths.AddRange(missingImagePathsInSheet);
 
@@ -1779,9 +1789,6 @@ namespace ExcelDnaTest
             // シートID をカスタムプロパティに保存
             string sheetId = sheetNode["id"].ToString();
             sheet.SetCustomProperty(sheetIdCustomPropertyName, sheetId);
-
-            // シートの JsonNode の hash をカスタムプロパティに保存
-            sheet.SetCustomProperty(sheetIdCustomPropertyName, sheetNode.ComputeSha256());
 
             return missingImagePaths;
         }
