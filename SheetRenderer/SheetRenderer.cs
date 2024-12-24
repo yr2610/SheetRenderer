@@ -844,7 +844,7 @@ namespace ExcelDnaTest
 
             // シート作成
             // node, 画像ファイルの比較はしない
-            var missingImagePathsInSheet = RenderSheet(targetSheetNode, confData, jsonFilePath, newSheet);
+            var missingImagePathsInSheet = RenderSheet(targetSheetNode, confData, jsonFilePath, newSheet, true);
 
             var newSheetAddressInfo = GetSheetAddressInfo(newSheet);
             var newSheetRange = GetRange(newSheet, newSheetAddressInfo);
@@ -1165,12 +1165,6 @@ namespace ExcelDnaTest
                 {
                     string newSheetName = sheetNode["text"].ToString();
 
-                    // シートの JsonNode の hash をカスタムプロパティに保存
-                    // XXX: hash には text を含めたくないので、hashを求める前に一時的に削除
-                    sheetNode.AsObject().Remove("text");
-                    string sheetHash = sheetNode.ComputeSha256();
-                    sheetNode["text"] = newSheetName;
-
                     // プログレスバーを更新
                     progressBarForm.Invoke(new Action<string>(progressBarForm.UpdateSheetName), newSheetName);
 
@@ -1179,9 +1173,7 @@ namespace ExcelDnaTest
                     Excel.Worksheet newSheet = workbook.Sheets[workbook.Sheets.Count];
                     newSheet.Name = newSheetName;
 
-                    var missingImagePathsInSheet = RenderSheet(sheetNode, confData, jsonFilePath, newSheet);
-
-                    newSheet.SetCustomProperty(sheetHashCustomPropertyName, sheetHash);
+                    var missingImagePathsInSheet = RenderSheet(sheetNode, confData, jsonFilePath, newSheet, true);
 
                     missingImagePaths.AddRange(missingImagePathsInSheet);
 
@@ -1586,13 +1578,33 @@ namespace ExcelDnaTest
             return leafNodes.Select(node => GetJsonValue(node[propertyName]));
         }
 
-        IEnumerable<(string filePath, string sheetName, string address)> RenderSheet(JsonNode sheetNode, Dictionary<string, string> confData, string jsonFilePath, Excel.Worksheet sheet)
+        IEnumerable<(string filePath, string sheetName, string address)> RenderSheet(JsonNode sheetNode, Dictionary<string, string> confData, string jsonFilePath, Excel.Worksheet sheet, bool force)
         {
-            List<JsonNode> leafNodes;
+            List<(string filePath, string sheetName, string address)> missingImagePaths = new List<(string filePath, string sheetName, string address)>();
+
+            // シートの JsonNode の hash をカスタムプロパティに保存
+            // XXX: hash には text を含めたくないので、hashを求める前に一時的に削除
+            var newSheetName = sheetNode["text"].ToString();
+            sheetNode.AsObject().Remove("text");
+            string newSheetHash = sheetNode.ComputeSha256();
+            sheetNode["text"] = newSheetName;
+
+            if (!force)
+            {
+                // 元データが同じなら生成しない
+                // TODO: 画像が変更されていないことも確認
+                var sheetHash = sheet.GetCustomProperty(sheetHashCustomPropertyName);
+                if (sheetHash == newSheetHash)
+                {
+                    return missingImagePaths;
+                }
+            }
+            sheet.SetCustomProperty(sheetHashCustomPropertyName, newSheetHash);
+
+            List <JsonNode> leafNodes;
             int maxDepth;
             List<List<NodeData>> result = TraverseTreeFromRoot(sheetNode, out leafNodes, out maxDepth);
             int leafCount = leafNodes.Count;
-            List<(string filePath, string sheetName, string address)> missingImagePaths = new List<(string filePath, string sheetName, string address)>();
             
             // 左端はシート名なので削除
             result = RemoveFirstColumn(result);
