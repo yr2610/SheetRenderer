@@ -664,6 +664,57 @@ namespace ExcelDnaTest
             }
         }
 
+        class SheetValuesInfo
+        {
+            SheetAddressInfo sheetAddressInfo;
+
+            public Excel.Range Range { get; set; }
+            public object[,] Values { get; set; }
+            public IEnumerable<object> Ids { get; set; }
+
+            public HashSet<int> IgnoreColumnOffsets
+            {
+                get
+                {
+                    return sheetAddressInfo.RangeInfo.IgnoreColumnOffsets;
+                }
+            }
+
+            public int RangeWidth
+            {
+                get
+                {
+                    return Range.Columns.Count;
+                }
+            }
+
+            // idValues を key にした行（List<object>）の dictionary を作る
+            public Dictionary<string, List<object>> RowDictionaryWithIDKeys
+            {
+                get
+                {
+                    return CreateRowDictionaryWithIDKeys(Values, Ids);
+                }
+            }
+
+            public static SheetValuesInfo CreateFromSheet(Excel.Worksheet sheet)
+            {
+                var sheetAddressInfo = GetSheetAddressInfo(sheet);
+                var sheetRange = GetRange(sheet, sheetAddressInfo);
+                var sheetValues = GetValues(sheet, sheetAddressInfo);
+                var sheetValueIds = GetIds(sheet, sheetAddressInfo);
+
+                return new SheetValuesInfo()
+                {
+                    sheetAddressInfo = sheetAddressInfo,
+                    Range = sheetRange,
+                    Values = sheetValues,
+                    Ids = sheetValueIds,
+                };
+            }
+
+        }
+
         void ForceUpdateSheet(Excel.Worksheet sheet)
         {
             Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
@@ -830,9 +881,7 @@ namespace ExcelDnaTest
             Excel.Worksheet newSheet = (Excel.Worksheet)templateSheet.Application.ActiveSheet;
 
             // 元のシートから今の入力内容を取り込む
-            var sheetAddressInfo = GetSheetAddressInfo(sheet);
-            var sheetValues = GetValues(sheet, sheetAddressInfo);
-            var sheetValueIds = GetIds(sheet, sheetAddressInfo);
+            SheetValuesInfo sheetValuesInfo = SheetValuesInfo.CreateFromSheet(sheet);
 
             // 元のシートを削除
             excelApp.DisplayAlerts = false;
@@ -844,17 +893,17 @@ namespace ExcelDnaTest
 
             // シート作成
             // node, 画像ファイルの比較はしない
-            var missingImagePathsInSheet = RenderSheet(targetSheetNode, confData, jsonFilePath, newSheet, true);
+            var missingImagePathsInSheet = RenderSheet(targetSheetNode, confData, jsonFilePath, newSheet, sheetValuesInfo);
 
             var newSheetAddressInfo = GetSheetAddressInfo(newSheet);
             var newSheetRange = GetRange(newSheet, newSheetAddressInfo);
             var newSheetValueIds = GetIds(newSheet, newSheetAddressInfo);
 
             var ignoreColumnOffsets = newSheetAddressInfo.RangeInfo.IgnoreColumnOffsets;
-            Debug.Assert(AreHashSetsEqual(ignoreColumnOffsets, sheetAddressInfo.RangeInfo.IgnoreColumnOffsets), "AreHashSetsEqual(ignoreColumnOffsets, sheetAddressInfo.RangeInfo.IgnoreColumnOffsets)");
+            Debug.Assert(AreHashSetsEqual(ignoreColumnOffsets, sheetValuesInfo.IgnoreColumnOffsets), "AreHashSetsEqual(ignoreColumnOffsets, sheetAddressInfo.RangeInfo.IgnoreColumnOffsets)");
 
             // idValues を key にした行（List<object>）の dictionary を作る
-            var valuesDictionary = CreateRowDictionaryWithIDKeys(sheetValues, sheetValueIds);
+            var valuesDictionary = CreateRowDictionaryWithIDKeys(sheetValuesInfo.Values, sheetValuesInfo.Ids);
 
             // newSheet の Values のコピーを作って、元のシートの Values から id を基に上書きコピーする
             // idが見つからない行、ignoreColumn は何もしないので、newSheet のものが採用される
@@ -1069,8 +1118,8 @@ namespace ExcelDnaTest
                     // TODO: 名前が異なる場合は名前変更
                     // TODO: 変更後の名前のシートが存在する場合はシート名辞書（現在の名前がキー）に追加
 
-                    // 変更なし
-                    // TODO: 画像が変更されてないことも確認
+                    // 元データが同じなら生成しない
+                    // TODO: 画像が変更されていないことも確認
                     if (newSheetHash == sheetHash)
                     {
                         break;
@@ -1173,7 +1222,7 @@ namespace ExcelDnaTest
                     Excel.Worksheet newSheet = workbook.Sheets[workbook.Sheets.Count];
                     newSheet.Name = newSheetName;
 
-                    var missingImagePathsInSheet = RenderSheet(sheetNode, confData, jsonFilePath, newSheet, true);
+                    var missingImagePathsInSheet = RenderSheet(sheetNode, confData, jsonFilePath, newSheet, null);
 
                     missingImagePaths.AddRange(missingImagePathsInSheet);
 
@@ -1578,28 +1627,15 @@ namespace ExcelDnaTest
             return leafNodes.Select(node => GetJsonValue(node[propertyName]));
         }
 
-        IEnumerable<(string filePath, string sheetName, string address)> RenderSheet(JsonNode sheetNode, Dictionary<string, string> confData, string jsonFilePath, Excel.Worksheet sheet, bool force)
+        IEnumerable<(string filePath, string sheetName, string address)> RenderSheet(JsonNode sheetNode, Dictionary<string, string> confData, string jsonFilePath, Excel.Worksheet dstSheet, SheetValuesInfo sheetValuesInfo = null)
         {
             List<(string filePath, string sheetName, string address)> missingImagePaths = new List<(string filePath, string sheetName, string address)>();
 
             // シートの JsonNode の hash をカスタムプロパティに保存
             // XXX: hash には text を含めたくないので、hashを求める前に一時的に削除
             var newSheetName = sheetNode["text"].ToString();
-            sheetNode.AsObject().Remove("text");
-            string newSheetHash = sheetNode.ComputeSha256();
-            sheetNode["text"] = newSheetName;
 
-            if (!force)
-            {
-                // 元データが同じなら生成しない
-                // TODO: 画像が変更されていないことも確認
-                var sheetHash = sheet.GetCustomProperty(sheetHashCustomPropertyName);
-                if (sheetHash == newSheetHash)
-                {
-                    return missingImagePaths;
-                }
-            }
-            sheet.SetCustomProperty(sheetHashCustomPropertyName, newSheetHash);
+            //templateSheet.SetCustomProperty(sheetHashCustomPropertyName, newSheetHash);
 
             List <JsonNode> leafNodes;
             int maxDepth;
@@ -1634,7 +1670,7 @@ namespace ExcelDnaTest
             if (maxDepth > columnWidth)
             {
                 int numberOfColumns = maxDepth - columnWidth;
-                Excel.Range startColumnRange = sheet.Columns[endColumn];
+                Excel.Range startColumnRange = dstSheet.Columns[endColumn];
 
                 // 列を挿入
                 startColumnRange.Resize[1, numberOfColumns].EntireColumn.Insert(Excel.XlInsertShiftDirection.xlShiftToRight);
@@ -1644,20 +1680,20 @@ namespace ExcelDnaTest
             {
                 int numberOfRows = leafCount - rowHeight;
 
-                sheet.InsertRowsAndCopyFormulas(endRow, numberOfRows);
+                dstSheet.InsertRowsAndCopyFormulas(endRow, numberOfRows);
             }
             else if (leafCount < rowHeight)
             {
                 int numberOfRowsToDelete = rowHeight - leafCount;
 
-                sheet.DeleteRows(startRow, numberOfRowsToDelete);
+                dstSheet.DeleteRows(startRow, numberOfRowsToDelete);
             }
 
             // XXX: 深度が列より少ない場合は今のテンプレに合わせていろいろやる…
             if (maxDepth < columnWidth)
             {
                 // とりあえず E 列は削除
-                Excel.Range column = sheet.Columns[5];
+                Excel.Range column = dstSheet.Columns[5];
                 column.Delete();
                 columnWidth--;
 
@@ -1666,9 +1702,9 @@ namespace ExcelDnaTest
                 startColumn += columnWidth - maxDepth;
             }
 
-            sheet.SetValueInSheet(startRow, startColumn, arrayResult);
+            dstSheet.SetValueInSheet(startRow, startColumn, arrayResult);
 
-            sheet.GetRange(startRow, startColumn, leafCount, maxDepth).AutoFitColumnsIfNarrower();
+            dstSheet.GetRange(startRow, startColumn, leafCount, maxDepth).AutoFitColumnsIfNarrower();
 
             // 「チェック予定日」列に無条件で START_DATE を入れる
             int dateColumnOffset = initialDateColumn - initialResultColumn;
@@ -1677,28 +1713,28 @@ namespace ExcelDnaTest
             // 文字列をDateTimeに変換
             if (DateTime.TryParse(dateString, out DateTime dateValue))
             {
-                sheet.SetRangeValue(startRow, dateColumn, leafCount, 1, dateValue);
+                dstSheet.SetRangeValue(startRow, dateColumn, leafCount, 1, dateValue);
             }
 
             // 「チェック予定日」の右隣の列に ID を入れて非表示にする
             int idColumnOffset = initialIdColumn - initialResultColumn;
             int idColumn = startColumn + maxDepth + idColumnOffset;
             var ids = ExtractPropertyValues(leafNodes, "id");
-            sheet.SetValueInSheet(startRow, idColumn, ids, false);
-            Excel.Range idColumnRange = sheet.Columns[idColumn];
+            dstSheet.SetValueInSheet(startRow, idColumn, ids, false);
+            Excel.Range idColumnRange = dstSheet.Columns[idColumn];
             idColumnRange.EntireColumn.Hidden = true;
 
             // 「チェック結果」列に node の initialValues.result を入れる
             int resultColumnOffset = initialResultColumn - initialResultColumn;
             int resultColumn = startColumn + maxDepth + resultColumnOffset;
             var results = ExtractPropertyValuesFromInitialValues(leafNodes, "result");
-            sheet.SetValueInSheet(startRow, resultColumn, results, false);
+            dstSheet.SetValueInSheet(startRow, resultColumn, results, false);
 
             // 「計画時間(分)」列に node の initialValues.estimated_time を入れる
             int planColumnOffset = initialPlanColumn - initialResultColumn;
             int planColumn = startColumn + maxDepth + planColumnOffset;
             var estimatedTimes = ExtractPropertyValuesFromInitialValues(leafNodes, "estimated_time");
-            sheet.SetValueInSheet(startRow, planColumn, estimatedTimes, false);
+            dstSheet.SetValueInSheet(startRow, planColumn, estimatedTimes, false);
 
             int actualTimeColumnOffset = initialActualTimeColumn - initialResultColumn;
 
@@ -1722,13 +1758,13 @@ namespace ExcelDnaTest
                         }
 
                         // ここより右のセルの色を変える
-                        var cells = sheet.Cells[startRow + i, startColumn + j];
+                        var cells = dstSheet.Cells[startRow + i, startColumn + j];
                         cells = cells.Resize(1, maxDepth - j);
                         cells.Interior.ColorIndex = cellColorIndex;
                         cells.Font.ColorIndex = fontColorIndex;
 
                         // チェック予定日欄を空欄にする
-                        var dateCell = sheet.Cells[startRow + i, dateColumn];
+                        var dateCell = dstSheet.Cells[startRow + i, dateColumn];
                         dateCell.Value = null;
 
                         return true;
@@ -1755,8 +1791,8 @@ namespace ExcelDnaTest
             }
 
             // 名前付き範囲として追加
-            var rangeforNamedRange = sheet.GetRange(startRow, resultColumn, leafCount, 1 + actualTimeColumnOffset);
-            var namedRange = sheet.Names.Add(Name: ssSheetRangeName, RefersTo: rangeforNamedRange);
+            var rangeforNamedRange = dstSheet.GetRange(startRow, resultColumn, leafCount, 1 + actualTimeColumnOffset);
+            var namedRange = dstSheet.Names.Add(Name: ssSheetRangeName, RefersTo: rangeforNamedRange);
             RangeInfo rangeInfo = new RangeInfo
             {
                 IdColumnOffset = idColumnOffset,
@@ -1784,13 +1820,13 @@ namespace ExcelDnaTest
                     {
                         const string noImageFilePath = "images/no_image.jpg";
                         string path = GetAbsolutePathFromBasePath(jsonFilePath, node.imageFilePath);
-                        var cell = sheet.Cells[startRow + i, startColumn + j];
+                        var cell = dstSheet.Cells[startRow + i, startColumn + j];
 
                         if (!File.Exists(path))
                         {
                             // XXX: 毎回パス構築はムダ
                             path = GetAbsolutePathFromExecutingDirectory(noImageFilePath);
-                            missingImagePaths.Add((filePath: node.imageFilePath, sheetName: sheet.Name, address: cell.Address));
+                            missingImagePaths.Add((filePath: node.imageFilePath, sheetName: dstSheet.Name, address: cell.Address));
                         }
 
                         AddPictureAsComment(cell, path);
@@ -1798,9 +1834,25 @@ namespace ExcelDnaTest
                 }
             }
 
+            if (sheetValuesInfo != null)
+            {
+                SheetValuesInfo dstSheetValuesInfo = SheetValuesInfo.CreateFromSheet(dstSheet);
+                var ignoreColumnOffsets = dstSheetValuesInfo.IgnoreColumnOffsets;
+                Debug.Assert(AreHashSetsEqual(ignoreColumnOffsets, sheetValuesInfo.IgnoreColumnOffsets), "AreHashSetsEqual(ignoreColumnOffsets, sheetAddressInfo.RangeInfo.IgnoreColumnOffsets)");
+
+                // idValues を key にした行（List<object>）の dictionary を作る
+                var valuesDictionary = sheetValuesInfo.RowDictionaryWithIDKeys;
+
+                // dstSheet の Values のコピーを作って、元のシートの Values から id を基に上書きコピーする
+                // idが見つからない行、ignoreColumn は何もしないので、dstSheet のものが採用される
+                var values = CopyValuesById(dstSheetValuesInfo.Values, dstSheetValuesInfo.Ids, valuesDictionary, ignoreColumnOffsets);
+
+                dstSheetValuesInfo.Range.Value2 = values;
+            }
+
             // シートID をカスタムプロパティに保存
             string sheetId = sheetNode["id"].ToString();
-            sheet.SetCustomProperty(sheetIdCustomPropertyName, sheetId);
+            dstSheet.SetCustomProperty(sheetIdCustomPropertyName, sheetId);
 
             return missingImagePaths;
         }
