@@ -895,22 +895,6 @@ namespace ExcelDnaTest
             // node, 画像ファイルの比較はしない
             var missingImagePathsInSheet = RenderSheet(targetSheetNode, confData, jsonFilePath, newSheet, sheetValuesInfo);
 
-            var newSheetAddressInfo = GetSheetAddressInfo(newSheet);
-            var newSheetRange = GetRange(newSheet, newSheetAddressInfo);
-            var newSheetValueIds = GetIds(newSheet, newSheetAddressInfo);
-
-            var ignoreColumnOffsets = newSheetAddressInfo.RangeInfo.IgnoreColumnOffsets;
-            Debug.Assert(AreHashSetsEqual(ignoreColumnOffsets, sheetValuesInfo.IgnoreColumnOffsets), "AreHashSetsEqual(ignoreColumnOffsets, sheetAddressInfo.RangeInfo.IgnoreColumnOffsets)");
-
-            // idValues を key にした行（List<object>）の dictionary を作る
-            var valuesDictionary = CreateRowDictionaryWithIDKeys(sheetValuesInfo.Values, sheetValuesInfo.Ids);
-
-            // newSheet の Values のコピーを作って、元のシートの Values から id を基に上書きコピーする
-            // idが見つからない行、ignoreColumn は何もしないので、newSheet のものが採用される
-            var result = CopyValuesById(newSheetRange.Value2, newSheetValueIds, valuesDictionary, ignoreColumnOffsets);
-
-            newSheetRange.Value2 = result;
-
             // シートを元の状態と同じにする
             newSheet.Activate();
             excelApp.SetActiveCellPosition(activeCellPosition);
