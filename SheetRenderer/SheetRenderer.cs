@@ -381,6 +381,7 @@ namespace ExcelDnaTest
             int rowCount = usedRange.Rows.Count;
             int colCount = usedRange.Columns.Count;
 
+            Debug.Assert(usedRange.Value2 is object[,], "The type of usedRange.Value2 is invalid.");
             object[,] values = usedRange.Value2;
             bool[,] modified = new bool[rowCount + 1, colCount + 1];
 
@@ -896,6 +897,13 @@ namespace ExcelDnaTest
             // node, 画像ファイルの比較はしない
             var missingImagePathsInSheet = RenderSheet(targetSheetNode, confData, jsonFilePath, newSheet, sheetValuesInfo);
 
+            // シートの JsonNode の hash をカスタムプロパティに保存
+            // XXX: hash には text を含めたくないので、hashを求める前に一時的に削除
+            targetSheetNode.AsObject().Remove("text");
+            string newSheetHash = targetSheetNode.ComputeSha256();
+            //targetSheetNode["text"] = newSheetName;
+            newSheet.SetCustomProperty(sheetHashCustomPropertyName, newSheetHash);
+
             // シートを元の状態と同じにする
             newSheet.Activate();
             excelApp.SetActiveCellPosition(activeCellPosition);
@@ -1209,10 +1217,16 @@ namespace ExcelDnaTest
 
                     var missingImagePathsInSheet = RenderSheet(sheetNode, confData, jsonFilePath, newSheet, null);
 
+                    // シートの JsonNode の hash をカスタムプロパティに保存
+                    // XXX: hash には text を含めたくないので、hashを求める前に一時的に削除
+                    sheetNode.AsObject().Remove("text");
+                    string sheetHash = sheetNode.ComputeSha256();
+                    sheetNode["text"] = newSheetName;
+                    newSheet.SetCustomProperty(sheetHashCustomPropertyName, sheetHash);
+
                     missingImagePaths.AddRange(missingImagePathsInSheet);
 
                     sheetNames.Add(newSheetName);
-
                 }
 
                 // プログレスバーを更新
