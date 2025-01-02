@@ -871,6 +871,7 @@ namespace ExcelDnaTest
                 sheetNameRange.Cells[1 + sheetIndex].Value2 = newSheetName;
             }
 
+            // シートが非表示の場合、コピーしてもシートがアクティブにならないので、一時的に表示状態にする
             Excel.Worksheet templateSheet = workbook.Sheets[workbookInfo.TemplateSheetName];
             var visible = templateSheet.Visible;
             templateSheet.Visible = Excel.XlSheetVisibility.xlSheetVisible;
