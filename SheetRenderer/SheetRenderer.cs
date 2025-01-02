@@ -377,11 +377,16 @@ namespace ExcelDnaTest
         public static void ReplaceValues(Excel.Worksheet sheet, Dictionary<string, string> replacements)
         {
             Excel.Range usedRange = sheet.UsedRange;
+            //Debug.Assert(usedRange.Value2 is object[,], "The type of usedRange.Value2 is invalid.");
+            if (usedRange.Value2 is object)
+            {
+                // 配列として処理したいので適当に2セルにする
+                usedRange = usedRange.Resize[1, 2];
+            }
 
             int rowCount = usedRange.Rows.Count;
             int colCount = usedRange.Columns.Count;
 
-            Debug.Assert(usedRange.Value2 is object[,], "The type of usedRange.Value2 is invalid.");
             object[,] values = usedRange.Value2;
             bool[,] modified = new bool[rowCount + 1, colCount + 1];
 
