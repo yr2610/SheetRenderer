@@ -1201,17 +1201,19 @@ namespace ExcelDnaTest
                 }
             }
 
+            // 元のシートから今の入力内容を取り込む
+            SheetValuesInfo indexSheetValuesInfo = SheetValuesInfo.CreateFromSheet(indexSheet);
+
             // indexシート作り直し
-            // TODO: indexシートの備考欄とかもデータ移行
             var indexSheetTemplate = (Excel.Worksheet)workbook.Sheets[indexTemplateSheetName];
             indexSheetTemplate.Visible = Excel.XlSheetVisibility.xlSheetVisible;
             indexSheetTemplate.Copy(After: indexSheet);
             indexSheetTemplate.Visible = Excel.XlSheetVisibility.xlSheetHidden;
-            var newindexSheet = (Excel.Worksheet)workbook.Sheets[indexSheet.Index + 1];
+            var newIndexSheet = (Excel.Worksheet)workbook.Sheets[indexSheet.Index + 1];
             indexSheet.Delete();
-            newindexSheet.Name = indexSheetName;
+            newIndexSheet.Name = indexSheetName;
 
-            RenderIndexSheet(sheetNodes, confData, newindexSheet);
+            RenderIndexSheet(sheetNodes, confData, newIndexSheet, indexSheetValuesInfo);
 
             if (activeSheetId != null)
             {
@@ -1228,7 +1230,7 @@ namespace ExcelDnaTest
                 else
                 {
                     // とりあえず index sheet を選択しておく
-                    newindexSheet.Activate();
+                    newIndexSheet.Activate();
                 }
             }
             else
@@ -1350,7 +1352,7 @@ namespace ExcelDnaTest
                 indexTemplateSheet.Visible = Excel.XlSheetVisibility.xlSheetHidden;
                 indexTemplateSheet.Name = indexTemplateSheetName;
 
-                RenderIndexSheet(sheetNodes, confData, indexSheet);
+                RenderIndexSheet(sheetNodes, confData, indexSheet, null);
 
                 // 最後にindexシートを選択状態にしておく
                 indexSheet.Activate();
@@ -1430,19 +1432,19 @@ namespace ExcelDnaTest
             excelApp.AutomationSecurity = Office.MsoAutomationSecurity.msoAutomationSecurityByUI;
         }
 
-        static void RenderIndexSheet(IEnumerable<JsonNode> sheetNodes, Dictionary<string, string> confData, Excel.Worksheet indexSheet)
+        static void RenderIndexSheet(IEnumerable<JsonNode> sheetNodes, Dictionary<string, string> confData, Excel.Worksheet dstSheet, SheetValuesInfo sheetValuesInfo = null)
         {
-            var sheetNameListRange = indexSheet.GetNamedRange("SS_SHEETNAMELIST").RefersToRange;
+            var sheetNameListRange = dstSheet.GetNamedRange("SS_SHEETNAMELIST").RefersToRange;
 
             int indexStartRow = sheetNameListRange.Row;
             int indexRowCount = sheetNameListRange.Rows.Count;
             int indexEndRow = sheetNameListRange.Rows[indexRowCount].Row;
             int indexStartColumn = sheetNameListRange.Column;
             string idColumnAddress = "T";
-            int idColumn = indexSheet.ColumnAddressToIndex(idColumnAddress);
+            int idColumn = dstSheet.ColumnAddressToIndex(idColumnAddress);
 
             string syncStartColumnAddress = "Q";
-            int syncStartColumn = indexSheet.ColumnAddressToIndex(syncStartColumnAddress);
+            int syncStartColumn = dstSheet.ColumnAddressToIndex(syncStartColumnAddress);
             int syncStartColumnCount = 1;
             int[] syncIgnoreColumnOffsets = { };
 
@@ -1454,35 +1456,35 @@ namespace ExcelDnaTest
             {
                 int numberOfRows = sheetNamesCount - indexRowCount;
 
-                indexSheet.InsertRowsAndCopyFormulas(indexEndRow, numberOfRows);
+                dstSheet.InsertRowsAndCopyFormulas(indexEndRow, numberOfRows);
             }
             // 多ければ削除
             else if (sheetNamesCount < indexRowCount)
             {
                 int numberOfRowsToDelete = indexRowCount - sheetNamesCount;
 
-                indexSheet.DeleteRows(indexStartRow, numberOfRowsToDelete);
+                dstSheet.DeleteRows(indexStartRow, numberOfRowsToDelete);
             }
 
-            indexSheet.SetValueInSheetAsColumn(indexStartRow, indexStartColumn, sheetNames);
+            dstSheet.SetValueInSheetAsColumn(indexStartRow, indexStartColumn, sheetNames);
 
             // テンプレ処理
-            ReplaceValues(indexSheet, confData);
+            ReplaceValues(dstSheet, confData);
 
             // 幅をautofit
-            indexSheet.Cells[indexStartRow, indexStartColumn].Resize(indexRowCount).Columns.AutoFit();
+            dstSheet.Cells[indexStartRow, indexStartColumn].Resize(indexRowCount).Columns.AutoFit();
 
             // 適当な位置に列挿入して ID を入れて非表示にする
             var ids = ExtractPropertyValues(sheetNodes, "id");
-            Excel.Range column = (Excel.Range)indexSheet.Columns[idColumn];
+            Excel.Range column = (Excel.Range)dstSheet.Columns[idColumn];
             column.Insert(Excel.XlInsertShiftDirection.xlShiftToRight);
-            indexSheet.SetValueInSheet(indexStartRow, idColumn, ids, false);
-            Excel.Range idColumnRange = indexSheet.Columns[idColumn];
+            dstSheet.SetValueInSheet(indexStartRow, idColumn, ids, false);
+            Excel.Range idColumnRange = dstSheet.Columns[idColumn];
             idColumnRange.EntireColumn.Hidden = true;
 
             // 名前付き範囲として追加
-            var rangeforNamedRange = indexSheet.GetRange(indexStartRow, syncStartColumn, sheetNamesCount, syncStartColumnCount);
-            var namedRange = indexSheet.Names.Add(Name: ssSheetRangeName, RefersTo: rangeforNamedRange);
+            var rangeforNamedRange = dstSheet.GetRange(indexStartRow, syncStartColumn, sheetNamesCount, syncStartColumnCount);
+            var namedRange = dstSheet.Names.Add(Name: ssSheetRangeName, RefersTo: rangeforNamedRange);
             RangeInfo rangeInfo = new RangeInfo
             {
                 IdColumnOffset = idColumn - syncStartColumn,
@@ -1494,6 +1496,21 @@ namespace ExcelDnaTest
 
             namedRange.Comment = serializer.Serialize(rangeInfo);
 
+            if (sheetValuesInfo != null)
+            {
+                SheetValuesInfo dstSheetValuesInfo = SheetValuesInfo.CreateFromSheet(dstSheet);
+                var ignoreColumnOffsets = dstSheetValuesInfo.IgnoreColumnOffsets;
+                Debug.Assert(AreHashSetsEqual(ignoreColumnOffsets, sheetValuesInfo.IgnoreColumnOffsets), "AreHashSetsEqual(ignoreColumnOffsets, sheetAddressInfo.RangeInfo.IgnoreColumnOffsets)");
+
+                // idValues を key にした行（List<object>）の dictionary を作る
+                var valuesDictionary = sheetValuesInfo.RowDictionaryWithIDKeys;
+
+                // dstSheet の Values のコピーを作って、元のシートの Values から id を基に上書きコピーする
+                // idが見つからない行、ignoreColumn は何もしないので、dstSheet のものが採用される
+                var values = CopyValuesById(dstSheetValuesInfo.Values, dstSheetValuesInfo.Ids, valuesDictionary, ignoreColumnOffsets);
+
+                dstSheetValuesInfo.Range.Value2 = values;
+            }
         }
 
         static void ShowMissingImageFilesDialog(IEnumerable<(string filePath, string sheetName, string address)> missingFiles)
