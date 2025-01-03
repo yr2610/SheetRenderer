@@ -1072,33 +1072,97 @@ namespace ExcelDnaTest
 
             // 今開いている book の id を index sheet から取得
             var indexSheet = workbook.Sheets[workbookInfo.IndexSheetName] as Excel.Worksheet;
-            var sheetIds = GetSheetIdsFromIndexSheet(indexSheet).ToList();
+            var sheetIds = GetSheetIdsFromIndexSheet(indexSheet).Select(item => item.ToString()).ToList();
             var sheetNameRange = GetSheetNamesRangeFromIndexSheet(indexSheet);
-            var sheetNames = sheetNameRange.GetColumnValues(0).ToList();
+            var sheetNames = sheetNameRange.GetColumnValues(0).Select(item => item.ToString()).ToList();
+            Dictionary<string, string> originalSheetNamesById = sheetIds.Zip(sheetNames, (id, name) => new { id, name })
+                                                                         .ToDictionary(x => x.id, x => x.name);
 
             // 特定のプロパティ（items）を配列としてアクセス
             JsonArray items = jsonObject["children"].AsArray();
+            Dictionary<string, string> newSheetNamesById = items.ToDictionary(
+                item => item["id"].ToString(),
+                item => item["text"].ToString()
+            );
 
-            // "id"プロパティの値をリストアップし、sheetIdsに含まれないものをフィルタリング
-            IEnumerable<string> sheetsToRemoveIds = sheetIds.Where(id => id is string)
-                                                        .Cast<string>()
-                                                        .Where(id => !items.Any(item => item?["id"]?.GetValue<string>() == id))
-                                                        .ToList();
+            // シートを削除をするので警告を出さないように
             excelApp.DisplayAlerts = false;
+
+            // originalSheetNamesByIdから、idがnewSheetNamesByIdに含まれないものをフィルタリング
+            IEnumerable<string> sheetsToRemoveIds = originalSheetNamesById.Keys
+                .Where(key => !newSheetNamesById.ContainsKey(key));
+
+            // シート削除
             foreach (string id in sheetsToRemoveIds)
             {
-                int sheetIndex = sheetIds.IndexOf(id);
-                string sheetName = sheetNames[sheetIndex].ToString();
-
+                string sheetName = originalSheetNamesById[id];
                 workbook.Sheets[sheetName].Delete();
             }
-            excelApp.DisplayAlerts = true;
+
+            // originalSheetNamesByIdからも削除
+            // originalSheetNamesByIdから、idがnewSheetNamesByIdに含まれるものをフィルタリング
+            originalSheetNamesById = originalSheetNamesById
+                .Where(kvp => newSheetNamesById.ContainsKey(kvp.Key))
+                .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+
+            Dictionary<string, Excel.Worksheet> originalSheetsById = new Dictionary<string, Excel.Worksheet>();
+            var sheetsToRename = new List<(Excel.Worksheet Sheet, string NewName, string Id)>();
+
+            foreach (var kvp in originalSheetNamesById)
+            {
+                string sheetName = kvp.Value;
+                string id = kvp.Key;
+                Excel.Worksheet sheet = workbook.Sheets[sheetName];
+                string newSheetName = newSheetNamesById[id];
+
+                if (newSheetName != sheetName)
+                {
+                    if (!originalSheetNamesById.Values.Contains(newSheetName))
+                    {
+                        // newSheetName が一意なら直接リネーム
+                        sheet.Name = newSheetName;
+                        originalSheetNamesById[id] = newSheetName; // originalSheetNamesByIdも更新
+                    }
+                    else
+                    {
+                        // 一時的な名前を生成
+                        // 変更後も重複しない名前にする
+                        string tempName = $"{sheetName}_temp";
+                        int counter = 1;
+                        while (originalSheetNamesById.Values.Contains(tempName)
+                            || newSheetNamesById.Values.Contains(tempName))
+                        {
+                            tempName = $"{sheetName}_temp{counter++}";
+                        }
+                        sheetsToRename.Add((sheet, newSheetName, id));
+                        sheet.Name = tempName; // 一時的な名前に変更
+                        originalSheetNamesById[id] = tempName; // originalSheetNamesByIdも更新
+                    }
+                }
+
+                originalSheetsById.Add(id, sheet);
+            }
+
+            // すべてのシートが一時的な名前に変更された後、最終的な名前にリネーム
+            foreach (var renameInfo in sheetsToRename)
+            {
+                string newSheetName = renameInfo.NewName;
+
+                renameInfo.Sheet.Name = newSheetName;
+                originalSheetNamesById[renameInfo.Id] = newSheetName; // originalSheetNamesByIdも更新
+            }
+
+            var missingImagePaths = new List<(string filePath, string sheetName, string address)>();
+
+            // シートが非表示の場合、コピーしてもシートがアクティブにならないので、一時的に表示状態にする
+            Excel.Worksheet templateSheet = workbook.Sheets[workbookInfo.TemplateSheetName];
+            var templateSheetVisible = templateSheet.Visible;
+            templateSheet.Visible = Excel.XlSheetVisibility.xlSheetVisible;
 
             foreach (JsonNode sheetNode in items)
             {
                 string newSheetName = sheetNode["text"].ToString();
                 string sheetId = sheetNode["id"].ToString();
-                int sheetIndex = sheetIds.IndexOf(sheetId);
 
                 // シートの JsonNode の hash をカスタムプロパティに保存
                 // XXX: hash には text を含めたくないので、hashを求める前に一時的に削除
@@ -1107,39 +1171,73 @@ namespace ExcelDnaTest
                 sheetNode["text"] = newSheetName;
 
                 // 既存のシート
-                if (sheetIndex != -1)
+                if (originalSheetsById.ContainsKey(sheetId))
                 {
-                    string sheetName = sheetNames[sheetIndex].ToString();
-                    var sheet = (Excel.Worksheet)workbook.Sheets[sheetName];
+                    var sheet = originalSheetsById[sheetId];
                     var sheetHash = sheet.GetCustomProperty(sheetHashCustomPropertyName);
-
-                    // TODO: 名前が異なる場合は名前変更
-                    // TODO: 変更後の名前のシートが存在する場合はシート名辞書（現在の名前がキー）に追加
 
                     // 元データが同じなら生成しない
                     // TODO: 画像が変更されていないことも確認
                     if (newSheetHash == sheetHash)
                     {
-                        break;
+                        continue;
                     }
 
-                    // TODO: 入力データを抜き出してシート削除して新規シート作成してデータ移行
+                    // シートをコピー
+                    templateSheet.Copy(After: sheet);
+                    Excel.Worksheet newSheet = workbook.Sheets[sheet.Index + 1];
+
+                    // 元のシートから今の入力内容を取り込む
+                    SheetValuesInfo sheetValuesInfo = SheetValuesInfo.CreateFromSheet(sheet);
+
+                    // 元のシートを削除
+                    sheet.Delete();
+
+                    var missingImagePathsInSheet = RenderSheet(sheetNode, confData, jsonFilePath, newSheet, sheetValuesInfo);
+
+                    missingImagePaths.AddRange(missingImagePathsInSheet);
+                    newSheet.Name = newSheetName;
+                    newSheet.SetCustomProperty(sheetHashCustomPropertyName, newSheetHash);
                 }
                 else
                 {
-                    // TODO: 新規シート作成
-                    // TODO: 同名のシートが存在する場合は、一時的な名前で作ってシート名辞書（一時的な名前がキー）に追加
-                    // TODO: 一時的な名前は
+                    // 新規シート作成
+
+                    // シートをコピー
+                    // 一旦は最後に追加。最後にまとめて並び替える
+                    var beforeSheet = workbook.Sheets[workbook.Sheets.Count];
+                    templateSheet.Copy(After: beforeSheet);
+                    Excel.Worksheet newSheet = workbook.Sheets[beforeSheet.Index + 1];
+
+                    var missingImagePathsInSheet = RenderSheet(sheetNode, confData, jsonFilePath, newSheet, null);
+
+                    missingImagePaths.AddRange(missingImagePathsInSheet);
+                    newSheet.Name = newSheetName;
+                    newSheet.SetCustomProperty(sheetHashCustomPropertyName, newSheetHash);
                 }
             }
 
-            // TODO: 一時的な名前を最終的な名前に変更
-            //ApplyFinalSheetNames(newSheetNames);
+            templateSheet.Visible = templateSheetVisible;
 
-            // TODO: シートの並び順修正
+            excelApp.DisplayAlerts = true;
+
+            // シートの並び順修正
+            // リストに従ってシートを後ろに詰める
+            List<string> sheetNamesInOrder = items.Select(item => item["text"].ToString()).ToList();
+            for (int i = 0; i < sheetNamesInOrder.Count; i++)
+            {
+                Excel.Worksheet sheetToMove = workbook.Sheets[sheetNamesInOrder[i]];
+                int targetIndex = workbook.Sheets.Count - (sheetNamesInOrder.Count - 1 - i);
+
+                // シートが既に正しい位置にない場合のみ移動
+                if (sheetToMove.Index != targetIndex)
+                {
+                    sheetToMove.Move(Type.Missing, workbook.Sheets[targetIndex]);
+                }
+            }
 
             // TODO: indexシート作り直し
-            // TODO: 備考欄とかもデータ移行
+            // TODO: indexシートの備考欄とかもデータ移行
         }
 
         async Task CreateNewWorkbook()
