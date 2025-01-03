@@ -970,11 +970,6 @@ namespace ExcelDnaTest
         {
             Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
 
-            // 作ったシートも元のシートと同じ状態にする
-            var activeCellPosition = excelApp.GetActiveCellPosition();
-            var scrollPosition = excelApp.GetScrollPosition();
-            var activeSheetZoom = excelApp.GetActiveSheetZoom();
-
             WorkbookInfo workbookInfo = WorkbookInfo.CreateFromWorkbook(workbook);
 
             if (workbookInfo == null)
@@ -1072,6 +1067,14 @@ namespace ExcelDnaTest
             excelApp.EnableEvents = false;
             excelApp.AutomationSecurity = Office.MsoAutomationSecurity.msoAutomationSecurityForceDisable;
 
+            // 作ったシートも元のシートと同じ状態にする
+            var activeCellPosition = excelApp.GetActiveCellPosition();
+            var scrollPosition = excelApp.GetScrollPosition();
+            var activeSheetZoom = excelApp.GetActiveSheetZoom();
+            var activeSheet = workbook.ActiveSheet as Excel.Worksheet;
+            string activeSheetId = activeSheet.GetCustomProperty(sheetIdCustomPropertyName);
+            string originalActiveSheetName = activeSheet.Name;
+
             // 今開いている book の id を index sheet から取得
             var indexSheet = workbook.Sheets[workbookInfo.IndexSheetName] as Excel.Worksheet;
             var sheetIds = GetSheetIdsFromIndexSheet(indexSheet).Select(item => item.ToString()).ToList();
@@ -1082,6 +1085,7 @@ namespace ExcelDnaTest
 
             // 特定のプロパティ（items）を配列としてアクセス
             JsonArray items = jsonObject["children"].AsArray();
+
             Dictionary<string, string> newSheetNamesById = items.ToDictionary(
                 item => item["id"].ToString(),
                 item => item["text"].ToString()
@@ -1248,6 +1252,38 @@ namespace ExcelDnaTest
 
             RenderIndexSheet(items, confData, newindexSheet);
 
+            if (activeSheetId != null)
+            {
+                if (newSheetNamesById.ContainsKey(activeSheetId))
+                {
+                    // シートを元の状態と同じにする
+                    var originalActiveSheet = workbook.Sheets[newSheetNamesById[activeSheetId]];
+
+                    originalActiveSheet.Activate();
+                    excelApp.SetActiveCellPosition(activeCellPosition);
+                    excelApp.SetActiveSheetZoom(activeSheetZoom);   // scroll より後に zoom をセットすると微妙にずれるっぽい
+                    excelApp.SetScrollPosition(scrollPosition);
+                }
+                else
+                {
+                    // とりあえず index sheet を選択しておく
+                    newindexSheet.Activate();
+                }
+            }
+            else
+            {
+                var originalActiveSheet = workbook.Sheets[originalActiveSheetName];
+
+                originalActiveSheet.Activate();
+                if (originalActiveSheetName == indexSheetName)
+                {
+                    // index シートならシートを元の状態と同じにする
+                    excelApp.SetActiveCellPosition(activeCellPosition);
+                    excelApp.SetActiveSheetZoom(activeSheetZoom);   // scroll より後に zoom をセットすると微妙にずれるっぽい
+                    excelApp.SetScrollPosition(scrollPosition);
+                }
+            }
+
             excelApp.DisplayAlerts = true;
         }
 
@@ -1356,7 +1392,7 @@ namespace ExcelDnaTest
                 RenderIndexSheet(items, confData, indexSheet);
 
                 // 最後にindexシートを選択状態にしておく
-                indexSheet.Select();
+                indexSheet.Activate();
 
                 // 処理が完了したらフォームを閉じる
                 progressBarForm.Invoke(new Action(progressBarForm.CloseForm));
