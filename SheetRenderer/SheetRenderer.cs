@@ -457,6 +457,8 @@ namespace ExcelDnaTest
 
         const string ssSheetRangeName = "SS_SHEET";
 
+        const string indexTemplateSheetName = "index_template";
+
         class RangeInfo
         {
             public int? IdColumnOffset { get; set; }
@@ -1108,10 +1110,10 @@ namespace ExcelDnaTest
             Dictionary<string, Excel.Worksheet> originalSheetsById = new Dictionary<string, Excel.Worksheet>();
             var sheetsToRename = new List<(Excel.Worksheet Sheet, string NewName, string Id)>();
 
-            foreach (var kvp in originalSheetNamesById)
+            // originalSheetNamesById や originalSheetNamesById.Keys を foreach で回すと、値の変更で例外投げるので Keys.List() の foreach で回避
+            foreach (var id in originalSheetNamesById.Keys.ToList())
             {
-                string sheetName = kvp.Value;
-                string id = kvp.Key;
+                string sheetName = originalSheetNamesById[id];
                 Excel.Worksheet sheet = workbook.Sheets[sheetName];
                 string newSheetName = newSheetNamesById[id];
 
@@ -1219,8 +1221,6 @@ namespace ExcelDnaTest
 
             templateSheet.Visible = templateSheetVisible;
 
-            excelApp.DisplayAlerts = true;
-
             // シートの並び順修正
             // リストに従ってシートを後ろに詰める
             List<string> sheetNamesInOrder = items.Select(item => item["text"].ToString()).ToList();
@@ -1236,8 +1236,19 @@ namespace ExcelDnaTest
                 }
             }
 
-            // TODO: indexシート作り直し
+            // indexシート作り直し
             // TODO: indexシートの備考欄とかもデータ移行
+            var indexSheetTemplate = (Excel.Worksheet)workbook.Sheets[indexTemplateSheetName];
+            indexSheetTemplate.Visible = Excel.XlSheetVisibility.xlSheetVisible;
+            indexSheetTemplate.Copy(After: indexSheet);
+            indexSheetTemplate.Visible = Excel.XlSheetVisibility.xlSheetHidden;
+            var newindexSheet = (Excel.Worksheet)workbook.Sheets[indexSheet.Index + 1];
+            indexSheet.Delete();
+            newindexSheet.Name = indexSheetName;
+
+            RenderIndexSheet(items, confData, newindexSheet);
+
+            excelApp.DisplayAlerts = true;
         }
 
         async Task CreateNewWorkbook()
@@ -1337,6 +1348,10 @@ namespace ExcelDnaTest
 
                 // index sheet にシート名を入力
                 Excel.Worksheet indexSheet = workbook.Sheets[indexSheetName];
+                indexSheet.Copy(After: indexSheet);
+                var indexTemplateSheet = (Excel.Worksheet)workbook.Sheets[indexSheet.Index + 1];
+                indexTemplateSheet.Visible = Excel.XlSheetVisibility.xlSheetHidden;
+                indexTemplateSheet.Name = indexTemplateSheetName;
 
                 RenderIndexSheet(items, confData, indexSheet);
 
