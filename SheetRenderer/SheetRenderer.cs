@@ -247,23 +247,19 @@ namespace ExcelDnaTest
                       <tabs>
                         <tab id='tab1' label='{projectName}'>
                           <group id='group1' label='Render'>
-                            <button id='button1' label='JSONファイル選択' size='large' imageMso='FileSave' onAction='OnSelectJsonFileButtonPressed'/>
                             <splitButton id='splitButton1' size='large'>
-                              <button id='button2' label='Render' imageMso='TableDrawTable' onAction='OnRenderButtonPressed'/>
+                              <button id='button2' label='ファイル更新' imageMso='TableDrawTable' onAction='OnRenderButtonPressed'/>
                               <menu id='menu1'>
-                                <button id='button2a' label='新規作成' onAction='OnCreateNewButtonPressed'/>
+                                <button id='button2a' label='ファイル新規作成' onAction='OnCreateNewButtonPressed'/>
                               </menu>
                             </splitButton>
-                            <button id='button3' label='Update Sheet' size='large' imageMso='TableSharePointListsRefreshList' onAction='OnUpdateCurrentSheetButtonPressed' getEnabled='GetUpdateCurrentSheetButtonEnabled'/>
-                            <editBox id='fileNameBox' label='JSONファイル' sizeString='hoge\\20XX-XX-XX\\index' getText='GetFileName' onChange='OnTextChanged' />
+                            <button id='button3' label='シート更新' size='large' imageMso='TableSharePointListsRefreshList' onAction='OnUpdateCurrentSheetButtonPressed' getEnabled='GetUpdateCurrentSheetButtonEnabled'/>
                           </group>
                         </tab>
                       </tabs>
                     </ribbon>
                   </customUI>";
         }
-
-        string JsonFilePath { get; set; }
 
         public class RenderLog
         {
@@ -300,36 +296,6 @@ namespace ExcelDnaTest
             int startIndex = folders.Length - folderCount;
             string result = string.Join(Path.DirectorySeparatorChar.ToString(), folders.Skip(startIndex).ToArray());
             return result;
-        }
-
-        public string GetFileName(IRibbonControl control)
-        {
-            if (JsonFilePath == null)
-            {
-                return "";
-            }
-            int folderCount = 2; // 取得するフォルダの数を指定
-            string result = GetLastFolders(JsonFilePath, folderCount);
-
-            // ファイル名を取得して連結
-            string fileNathWithoutExtension = Path.GetFileNameWithoutExtension(JsonFilePath);
-
-            return Path.Combine(result, fileNathWithoutExtension);
-        }
-        public void OnTextChanged(IRibbonControl control, string text)
-        {
-            // ユーザーがテキストを変更した場合に元のテキストに戻す
-            ribbon.InvalidateControl("fileNameBox");
-        }
-
-        public void OnSelectJsonFileButtonPressed(IRibbonControl control)
-        {
-            string selectedFile = OpenSourceFile();
-            if (selectedFile != null)
-            {
-                JsonFilePath = selectedFile;
-                ribbon.InvalidateControl("fileNameBox");
-            }
         }
 
         public static string OpenSourceFile()
@@ -790,12 +756,7 @@ namespace ExcelDnaTest
                 return;
             }
 
-            // 選択中の json として設定
-            //JsonFilePath = jsonFilePath;
-            //ribbon.InvalidateControl("fileNameBox");
-
             string activeSheetId = sheet.GetCustomProperty(sheetIdCustomPropertyName);
-
 
             // 今開いているシートの id を index sheet から取得
             var indexSheet = workbook.Sheets[workbookInfo.IndexSheetName] as Excel.Worksheet;
