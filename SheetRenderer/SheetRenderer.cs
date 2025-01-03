@@ -820,14 +820,14 @@ namespace ExcelDnaTest
             }
             string sheetName2 = sheetNameRange[sheetIndex + 1].value;
 
-            JsonArray items = jsonObject["children"].AsArray();
+            JsonArray sheetNodes = jsonObject["children"].AsArray();
 
             // jsonObject から同じ id の node を取得
             JsonNode targetSheetNode = null;
-            foreach (JsonNode sheetNode in items)
+            foreach (JsonNode sheetNode in sheetNodes)
             {
-                string sheetId = sheetNode["id"].ToString();
-                if (sheetId == activeSheetId)
+                string id = sheetNode["id"].ToString();
+                if (id == activeSheetId)
                 {
                     targetSheetNode = sheetNode;
                     break;
@@ -1084,9 +1084,9 @@ namespace ExcelDnaTest
                                                                          .ToDictionary(x => x.id, x => x.name);
 
             // 特定のプロパティ（items）を配列としてアクセス
-            JsonArray items = jsonObject["children"].AsArray();
+            JsonArray sheetNodes = jsonObject["children"].AsArray();
 
-            Dictionary<string, string> newSheetNamesById = items.ToDictionary(
+            Dictionary<string, string> newSheetNamesById = sheetNodes.ToDictionary(
                 item => item["id"].ToString(),
                 item => item["text"].ToString()
             );
@@ -1165,10 +1165,10 @@ namespace ExcelDnaTest
             var templateSheetVisible = templateSheet.Visible;
             templateSheet.Visible = Excel.XlSheetVisibility.xlSheetVisible;
 
-            foreach (JsonNode sheetNode in items)
+            foreach (JsonNode sheetNode in sheetNodes)
             {
                 string newSheetName = sheetNode["text"].ToString();
-                string sheetId = sheetNode["id"].ToString();
+                string id = sheetNode["id"].ToString();
 
                 // シートの JsonNode の hash をカスタムプロパティに保存
                 // XXX: hash には text を含めたくないので、hashを求める前に一時的に削除
@@ -1177,9 +1177,9 @@ namespace ExcelDnaTest
                 sheetNode["text"] = newSheetName;
 
                 // 既存のシート
-                if (originalSheetsById.ContainsKey(sheetId))
+                if (originalSheetsById.ContainsKey(id))
                 {
-                    var sheet = originalSheetsById[sheetId];
+                    var sheet = originalSheetsById[id];
                     var sheetHash = sheet.GetCustomProperty(sheetHashCustomPropertyName);
 
                     // 元データが同じなら生成しない
@@ -1227,7 +1227,7 @@ namespace ExcelDnaTest
 
             // シートの並び順修正
             // リストに従ってシートを後ろに詰める
-            List<string> sheetNamesInOrder = items.Select(item => item["text"].ToString()).ToList();
+            List<string> sheetNamesInOrder = sheetNodes.Select(item => item["text"].ToString()).ToList();
             for (int i = 0; i < sheetNamesInOrder.Count; i++)
             {
                 Excel.Worksheet sheetToMove = workbook.Sheets[sheetNamesInOrder[i]];
@@ -1250,7 +1250,7 @@ namespace ExcelDnaTest
             indexSheet.Delete();
             newindexSheet.Name = indexSheetName;
 
-            RenderIndexSheet(items, confData, newindexSheet);
+            RenderIndexSheet(sheetNodes, confData, newindexSheet);
 
             if (activeSheetId != null)
             {
@@ -1340,7 +1340,7 @@ namespace ExcelDnaTest
             var confData = GetPropertiesFromJsonNode(jsonObject, "variables");
 
             // 特定のプロパティ（items）を配列としてアクセス
-            JsonArray items = jsonObject["children"].AsArray();
+            JsonArray sheetNodes = jsonObject["children"].AsArray();
 
             List<string> sheetNames = new List<string>();
             Excel.Worksheet sheet = workbook.Sheets[templateSheetName];
@@ -1348,12 +1348,12 @@ namespace ExcelDnaTest
             List<(string filePath, string sheetName, string address)> missingImagePaths = new List<(string filePath, string sheetName, string address)>();
 
             // +1 は index シート
-            progressBarForm = new ProgressBarForm(items.Count + 1);
+            progressBarForm = new ProgressBarForm(sheetNodes.Count + 1);
             progressBarForm.Show();
 
             await Task.Run(() =>
             {
-                foreach (JsonNode sheetNode in items)
+                foreach (JsonNode sheetNode in sheetNodes)
                 {
                     string newSheetName = sheetNode["text"].ToString();
 
@@ -1389,7 +1389,7 @@ namespace ExcelDnaTest
                 indexTemplateSheet.Visible = Excel.XlSheetVisibility.xlSheetHidden;
                 indexTemplateSheet.Name = indexTemplateSheetName;
 
-                RenderIndexSheet(items, confData, indexSheet);
+                RenderIndexSheet(sheetNodes, confData, indexSheet);
 
                 // 最後にindexシートを選択状態にしておく
                 indexSheet.Activate();
@@ -2004,8 +2004,8 @@ namespace ExcelDnaTest
             }
 
             // シートID をカスタムプロパティに保存
-            string sheetId = sheetNode["id"].ToString();
-            dstSheet.SetCustomProperty(sheetIdCustomPropertyName, sheetId);
+            string id = sheetNode["id"].ToString();
+            dstSheet.SetCustomProperty(sheetIdCustomPropertyName, id);
 
             return missingImagePaths;
         }
