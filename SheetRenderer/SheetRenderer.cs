@@ -1126,128 +1126,151 @@ namespace ExcelDnaTest
             var templateSheetVisible = templateSheet.Visible;
             templateSheet.Visible = Excel.XlSheetVisibility.xlSheetVisible;
 
-            foreach (JsonNode sheetNode in sheetNodes)
+            // +1 は index シート
+            progressBarForm = new ProgressBarForm(sheetNodes.Count + 1);
+            progressBarForm.Show();
+
+            await Task.Run(() =>
             {
-                string newSheetName = sheetNode["text"].ToString();
-                string id = sheetNode["id"].ToString();
-
-                // シートの JsonNode の hash をカスタムプロパティに保存
-                // XXX: hash には text を含めたくないので、hashを求める前に一時的に削除
-                sheetNode.AsObject().Remove("text");
-                string newSheetHash = sheetNode.ComputeSha256();
-                sheetNode["text"] = newSheetName;
-
-                // 既存のシート
-                if (originalSheetsById.ContainsKey(id))
+                foreach (JsonNode sheetNode in sheetNodes)
                 {
-                    var sheet = originalSheetsById[id];
-                    var sheetHash = sheet.GetCustomProperty(sheetHashCustomPropertyName);
+                    string newSheetName = sheetNode["text"].ToString();
+                    string id = sheetNode["id"].ToString();
 
-                    // 元データが同じなら生成しない
-                    // TODO: 画像が変更されていないことも確認
-                    if (newSheetHash == sheetHash)
+                    // プログレスバーを更新
+                    progressBarForm.Invoke(new Action<string>(progressBarForm.UpdateSheetName), newSheetName);
+
+                    // シートの JsonNode の hash をカスタムプロパティに保存
+                    // XXX: hash には text を含めたくないので、hashを求める前に一時的に削除
+                    sheetNode.AsObject().Remove("text");
+                    string newSheetHash = sheetNode.ComputeSha256();
+                    sheetNode["text"] = newSheetName;
+
+                    // 既存のシート
+                    if (originalSheetsById.ContainsKey(id))
                     {
-                        continue;
+                        var sheet = originalSheetsById[id];
+                        var sheetHash = sheet.GetCustomProperty(sheetHashCustomPropertyName);
+
+                        // 元データが同じなら生成しない
+                        // TODO: 画像が変更されていないことも確認
+                        if (newSheetHash == sheetHash)
+                        {
+                            continue;
+                        }
+
+                        // シートをコピー
+                        templateSheet.Copy(After: sheet);
+                        Excel.Worksheet newSheet = workbook.Sheets[sheet.Index + 1];
+
+                        // 元のシートから今の入力内容を取り込む
+                        SheetValuesInfo sheetValuesInfo = SheetValuesInfo.CreateFromSheet(sheet);
+
+                        // 元のシートを削除
+                        sheet.Delete();
+
+                        var missingImagePathsInSheet = RenderSheet(sheetNode, confData, jsonFilePath, newSheet, sheetValuesInfo);
+
+                        missingImagePaths.AddRange(missingImagePathsInSheet);
+                        newSheet.Name = newSheetName;
+                        newSheet.SetCustomProperty(sheetHashCustomPropertyName, newSheetHash);
                     }
+                    else
+                    {
+                        // 新規シート作成
 
-                    // シートをコピー
-                    templateSheet.Copy(After: sheet);
-                    Excel.Worksheet newSheet = workbook.Sheets[sheet.Index + 1];
+                        // シートをコピー
+                        // 一旦は最後に追加。最後にまとめて並び替える
+                        var beforeSheet = workbook.Sheets[workbook.Sheets.Count];
+                        templateSheet.Copy(After: beforeSheet);
+                        Excel.Worksheet newSheet = workbook.Sheets[beforeSheet.Index + 1];
 
-                    // 元のシートから今の入力内容を取り込む
-                    SheetValuesInfo sheetValuesInfo = SheetValuesInfo.CreateFromSheet(sheet);
+                        var missingImagePathsInSheet = RenderSheet(sheetNode, confData, jsonFilePath, newSheet, null);
 
-                    // 元のシートを削除
-                    sheet.Delete();
+                        missingImagePaths.AddRange(missingImagePathsInSheet);
+                        newSheet.Name = newSheetName;
+                        newSheet.SetCustomProperty(sheetHashCustomPropertyName, newSheetHash);
+                    }
+                }
 
-                    var missingImagePathsInSheet = RenderSheet(sheetNode, confData, jsonFilePath, newSheet, sheetValuesInfo);
+                templateSheet.Visible = templateSheetVisible;
 
-                    missingImagePaths.AddRange(missingImagePathsInSheet);
-                    newSheet.Name = newSheetName;
-                    newSheet.SetCustomProperty(sheetHashCustomPropertyName, newSheetHash);
+                // シートの並び順修正
+                // リストに従ってシートを後ろに詰める
+                List<string> sheetNamesInOrder = sheetNodes.Select(item => item["text"].ToString()).ToList();
+                for (int i = 0; i < sheetNamesInOrder.Count; i++)
+                {
+                    Excel.Worksheet sheetToMove = workbook.Sheets[sheetNamesInOrder[i]];
+                    int targetIndex = workbook.Sheets.Count - (sheetNamesInOrder.Count - 1 - i);
+
+                    // シートが既に正しい位置にない場合のみ移動
+                    if (sheetToMove.Index != targetIndex)
+                    {
+                        sheetToMove.Move(Type.Missing, workbook.Sheets[targetIndex]);
+                    }
+                }
+
+                // プログレスバーを更新
+                progressBarForm.Invoke(new Action<string>(progressBarForm.UpdateSheetName), indexSheetName);
+
+                // 元のシートから今の入力内容を取り込む
+                SheetValuesInfo indexSheetValuesInfo = SheetValuesInfo.CreateFromSheet(indexSheet);
+
+                // indexシート作り直し
+                var indexSheetTemplate = (Excel.Worksheet)workbook.Sheets[indexTemplateSheetName];
+                indexSheetTemplate.Visible = Excel.XlSheetVisibility.xlSheetVisible;
+                indexSheetTemplate.Copy(After: indexSheet);
+                indexSheetTemplate.Visible = Excel.XlSheetVisibility.xlSheetHidden;
+                var newIndexSheet = (Excel.Worksheet)workbook.Sheets[indexSheet.Index + 1];
+                indexSheet.Delete();
+                newIndexSheet.Name = indexSheetName;
+
+                RenderIndexSheet(sheetNodes, confData, newIndexSheet, indexSheetValuesInfo);
+
+                if (activeSheetId != null)
+                {
+                    if (newSheetNamesById.ContainsKey(activeSheetId))
+                    {
+                        // シートを元の状態と同じにする
+                        var originalActiveSheet = workbook.Sheets[newSheetNamesById[activeSheetId]];
+
+                        originalActiveSheet.Activate();
+                        excelApp.SetActiveCellPosition(activeCellPosition);
+                        excelApp.SetActiveSheetZoom(activeSheetZoom);   // scroll より後に zoom をセットすると微妙にずれるっぽい
+                        excelApp.SetScrollPosition(scrollPosition);
+                    }
+                    else
+                    {
+                        // とりあえず index sheet を選択しておく
+                        newIndexSheet.Activate();
+                    }
                 }
                 else
                 {
-                    // 新規シート作成
-
-                    // シートをコピー
-                    // 一旦は最後に追加。最後にまとめて並び替える
-                    var beforeSheet = workbook.Sheets[workbook.Sheets.Count];
-                    templateSheet.Copy(After: beforeSheet);
-                    Excel.Worksheet newSheet = workbook.Sheets[beforeSheet.Index + 1];
-
-                    var missingImagePathsInSheet = RenderSheet(sheetNode, confData, jsonFilePath, newSheet, null);
-
-                    missingImagePaths.AddRange(missingImagePathsInSheet);
-                    newSheet.Name = newSheetName;
-                    newSheet.SetCustomProperty(sheetHashCustomPropertyName, newSheetHash);
-                }
-            }
-
-            templateSheet.Visible = templateSheetVisible;
-
-            // シートの並び順修正
-            // リストに従ってシートを後ろに詰める
-            List<string> sheetNamesInOrder = sheetNodes.Select(item => item["text"].ToString()).ToList();
-            for (int i = 0; i < sheetNamesInOrder.Count; i++)
-            {
-                Excel.Worksheet sheetToMove = workbook.Sheets[sheetNamesInOrder[i]];
-                int targetIndex = workbook.Sheets.Count - (sheetNamesInOrder.Count - 1 - i);
-
-                // シートが既に正しい位置にない場合のみ移動
-                if (sheetToMove.Index != targetIndex)
-                {
-                    sheetToMove.Move(Type.Missing, workbook.Sheets[targetIndex]);
-                }
-            }
-
-            // 元のシートから今の入力内容を取り込む
-            SheetValuesInfo indexSheetValuesInfo = SheetValuesInfo.CreateFromSheet(indexSheet);
-
-            // indexシート作り直し
-            var indexSheetTemplate = (Excel.Worksheet)workbook.Sheets[indexTemplateSheetName];
-            indexSheetTemplate.Visible = Excel.XlSheetVisibility.xlSheetVisible;
-            indexSheetTemplate.Copy(After: indexSheet);
-            indexSheetTemplate.Visible = Excel.XlSheetVisibility.xlSheetHidden;
-            var newIndexSheet = (Excel.Worksheet)workbook.Sheets[indexSheet.Index + 1];
-            indexSheet.Delete();
-            newIndexSheet.Name = indexSheetName;
-
-            RenderIndexSheet(sheetNodes, confData, newIndexSheet, indexSheetValuesInfo);
-
-            if (activeSheetId != null)
-            {
-                if (newSheetNamesById.ContainsKey(activeSheetId))
-                {
-                    // シートを元の状態と同じにする
-                    var originalActiveSheet = workbook.Sheets[newSheetNamesById[activeSheetId]];
+                    var originalActiveSheet = workbook.Sheets[originalActiveSheetName];
 
                     originalActiveSheet.Activate();
-                    excelApp.SetActiveCellPosition(activeCellPosition);
-                    excelApp.SetActiveSheetZoom(activeSheetZoom);   // scroll より後に zoom をセットすると微妙にずれるっぽい
-                    excelApp.SetScrollPosition(scrollPosition);
+                    if (originalActiveSheetName == indexSheetName)
+                    {
+                        // index シートならシートを元の状態と同じにする
+                        excelApp.SetActiveCellPosition(activeCellPosition);
+                        excelApp.SetActiveSheetZoom(activeSheetZoom);   // scroll より後に zoom をセットすると微妙にずれるっぽい
+                        excelApp.SetScrollPosition(scrollPosition);
+                    }
                 }
-                else
-                {
-                    // とりあえず index sheet を選択しておく
-                    newIndexSheet.Activate();
-                }
-            }
-            else
-            {
-                var originalActiveSheet = workbook.Sheets[originalActiveSheetName];
 
-                originalActiveSheet.Activate();
-                if (originalActiveSheetName == indexSheetName)
-                {
-                    // index シートならシートを元の状態と同じにする
-                    excelApp.SetActiveCellPosition(activeCellPosition);
-                    excelApp.SetActiveSheetZoom(activeSheetZoom);   // scroll より後に zoom をセットすると微妙にずれるっぽい
-                    excelApp.SetScrollPosition(scrollPosition);
-                }
-            }
+                // 処理が完了したらフォームを閉じる
+                progressBarForm.Invoke(new Action(progressBarForm.CloseForm));
+            });
+
+            progressBarForm.Close();
 
             excelApp.DisplayAlerts = true;
+
+            if (missingImagePaths.Any())
+            {
+                ShowMissingImageFilesDialog(missingImagePaths);
+            }
         }
 
         async Task CreateNewWorkbook()
