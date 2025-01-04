@@ -1168,11 +1168,11 @@ namespace ExcelDnaTest
 
                         // 元のシートを削除
                         sheet.Delete();
+                        newSheet.Name = newSheetName;
 
                         var missingImagePathsInSheet = RenderSheet(sheetNode, confData, jsonFilePath, newSheet, sheetValuesInfo);
 
                         missingImagePaths.AddRange(missingImagePathsInSheet);
-                        newSheet.Name = newSheetName;
                         newSheet.SetCustomProperty(sheetHashCustomPropertyName, newSheetHash);
                     }
                     else
@@ -1184,11 +1184,11 @@ namespace ExcelDnaTest
                         var beforeSheet = workbook.Sheets[workbook.Sheets.Count];
                         templateSheet.Copy(After: beforeSheet);
                         Excel.Worksheet newSheet = workbook.Sheets[beforeSheet.Index + 1];
+                        newSheet.Name = newSheetName;
 
                         var missingImagePathsInSheet = RenderSheet(sheetNode, confData, jsonFilePath, newSheet, null);
 
                         missingImagePaths.AddRange(missingImagePathsInSheet);
-                        newSheet.Name = newSheetName;
                         newSheet.SetCustomProperty(sheetHashCustomPropertyName, newSheetHash);
                     }
                 }
