@@ -54,7 +54,7 @@ public static class ExcelExtensions
         return range;
     }
 
-    static object[,] GetValuesAs2DArray(object range)
+    public static object[,] GetValuesAs2DArray(object range)
     {
         if (range is object[,] array)
         {
