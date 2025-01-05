@@ -252,9 +252,29 @@ public static class ExcelExtensions
         }
     }
 
-    // カスタムプロパティを設定するメソッド
+    public static void DeleteCustomProperty(this Excel.Worksheet sheet, string propertyName)
+    {
+        var customProperties = sheet.CustomProperties;
+        foreach (Excel.CustomProperty property in customProperties)
+        {
+            if (property.Name == propertyName)
+            {
+                property.Delete();  // 既存のプロパティを削除
+                return;
+            }
+        }
+        // 既存のプロパティが見つからない場合は何もしない
+    }
+
     public static void SetCustomProperty(this Excel.Worksheet sheet, string propertyName, string propertyValue)
     {
+        if (string.IsNullOrEmpty(propertyValue))
+        {
+            sheet.DeleteCustomProperty(propertyName);
+            return;
+        }
+
+        // プロパティ値がnullまたは空でない場合、新規追加または更新
         var customProperties = sheet.CustomProperties;
         foreach (Excel.CustomProperty property in customProperties)
         {
@@ -267,7 +287,6 @@ public static class ExcelExtensions
         customProperties.Add(propertyName, propertyValue);
     }
 
-    // カスタムプロパティを取得するメソッド
     public static string GetCustomProperty(this Excel.Worksheet sheet, string propertyName)
     {
         var customProperties = sheet.CustomProperties;
