@@ -782,7 +782,6 @@ namespace ExcelDnaTest
             {
                 activeSheetId = sheetIds.ElementAt(sheetIndex).ToString();
             }
-            string sheetName2 = sheetNameRange[sheetIndex + 1].value;
 
             JsonArray sheetNodes = jsonObject["children"].AsArray();
 
