@@ -420,10 +420,13 @@ namespace ExcelDnaTest
         const string ssProjectIdCustomPropertyName = "SSProjectId";
         const string sheetIdCustomPropertyName = "SheetId";
         const string sheetHashCustomPropertyName = "SheetHash";
+        const string sheetImageHashCustomPropertyName = "SheetImageHash";
 
         const string ssSheetRangeName = "SS_SHEET";
 
         const string indexTemplateSheetName = "index_template";
+
+        const string noImageFilePath = "images/no_image.jpg";
 
         class RangeInfo
         {
@@ -581,7 +584,7 @@ namespace ExcelDnaTest
         static object[,] GetValues(Excel.Worksheet sheet, SheetAddressInfo sheetAddressInfo)
         {
             var range = GetRange(sheet, sheetAddressInfo);
-            var values = range.Value2 as object[,];
+            var values = ExcelExtensions.GetValuesAs2DArray(range.Value2);
 
             return values;
         }
@@ -689,7 +692,7 @@ namespace ExcelDnaTest
 
         }
 
-        void ForceUpdateSheet(Excel.Worksheet sheet)
+        async Task ForceUpdateSheet(Excel.Worksheet sheet)
         {
             Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
             Excel.Workbook workbook = sheet.Parent as Excel.Workbook;
@@ -872,18 +875,15 @@ namespace ExcelDnaTest
             //targetSheetNode["text"] = newSheetName;
             newSheet.SetCustomProperty(sheetHashCustomPropertyName, newSheetHash);
 
+            var newSheetImageHash = await ComputeImagesHash(jsonFilePath, targetSheetNode);
+            newSheet.SetCustomProperty(sheetImageHashCustomPropertyName, newSheetImageHash);
+
             // シートを元の状態と同じにする
             newSheet.Activate();
             excelApp.SetActiveCellPosition(activeCellPosition);
             excelApp.SetActiveSheetZoom(activeSheetZoom);   // scroll より後に zoom をセットすると微妙にずれるっぽい
-            excelApp.SetScrollPosition(scrollPosition);
-
-            excelApp.StatusBar = false;
             excelApp.ScreenUpdating = true;
-            excelApp.Calculation = Excel.XlCalculation.xlCalculationAutomatic;
-            excelApp.EnableEvents = true;
-
-            MacroControl.EnableMacros();
+            excelApp.SetScrollPosition(scrollPosition);
 
             if (missingImagePathsInSheet.Any())
             {
@@ -899,7 +899,7 @@ namespace ExcelDnaTest
             workbook.SetCustomProperty("RenderLog", renderLog);
         }
 
-        public void OnUpdateCurrentSheetButtonPressed(IRibbonControl control)
+        public async void OnUpdateCurrentSheetButtonPressed(IRibbonControl control)
         {
             Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
             var sheet = excelApp.ActiveSheet as Excel.Worksheet;
@@ -913,18 +913,94 @@ namespace ExcelDnaTest
             excelApp.ScreenUpdating = false;
             excelApp.Calculation = Excel.XlCalculation.xlCalculationManual;
             excelApp.EnableEvents = false;
+            MacroControl.DisableMacros(excelApp);
 
-            MacroControl.DisableMacros();
-
-            ForceUpdateSheet(sheet);
+            await ForceUpdateSheet(sheet);
 
             excelApp.StatusBar = false;
             excelApp.ScreenUpdating = true;
             excelApp.Calculation = Excel.XlCalculation.xlCalculationAutomatic;
             excelApp.EnableEvents = true;
+            MacroControl.EnableMacros(excelApp);
 
-            MacroControl.EnableMacros();
+        }
 
+        static SortedSet<string> CollectImageFilePaths(JsonNode node)
+        {
+            var imageFilePaths = new SortedSet<string>();
+
+            void TraverseForImagePaths(JsonNode currentNode)
+            {
+                if (currentNode == null)
+                {
+                    return;
+                }
+
+                string imageFilePath = currentNode["imageFilePath"]?.GetValue<string>();
+
+                if (imageFilePath != null)
+                {
+                    imageFilePaths.Add(imageFilePath);
+                }
+
+                if (currentNode["children"] is JsonArray children)
+                {
+                    foreach (JsonNode child in children)
+                    {
+                        TraverseForImagePaths(child);
+                    }
+                }
+            }
+
+            TraverseForImagePaths(node);
+
+            return imageFilePaths;
+        }
+
+        // 画像のhashを計算
+        // filepath順にソートしてhashを改行で連結
+        // 差分検出用
+        async Task<string> ComputeImagesHash(string jsonFilePath, JsonNode sheetNode)
+        {
+            var imageFilePaths = CollectImageFilePaths(sheetNode);
+
+            if (!imageFilePaths.Any())
+            {
+                return null;
+            }
+
+            var tasks = imageFilePaths.Select(imagePath => Task.Run(() =>
+            {
+                string path = GetAbsolutePathFromBasePath(jsonFilePath, imagePath);
+
+                if (!File.Exists(path))
+                {
+                    return new
+                    {
+                        Path = imagePath,
+                        //AbsolutePath = path,
+                        Hash = "no_image"
+                    };
+                }
+
+                using (var sha256 = SHA256.Create())
+                {
+                    using (var stream = File.OpenRead(path))
+                    {
+                        return new
+                        {
+                            Path = imagePath,
+                            //AbsolutePath = path,
+                            Hash = BitConverter.ToString(sha256.ComputeHash(stream)).Replace("-", "").ToLower()
+                        };
+                    }
+                }
+            })).ToArray();
+            
+            await Task.WhenAll(tasks);
+
+            //var results = tasks.Select(t => t.Result).ToList();
+            return string.Join("\n", tasks.Select(t => t.Result.Hash));
         }
 
         async Task UpdateAllSheets(Excel.Workbook workbook)
@@ -1130,7 +1206,7 @@ namespace ExcelDnaTest
             progressBarForm = new ProgressBarForm(sheetNodes.Count + 1);
             progressBarForm.Show();
 
-            await Task.Run(() =>
+            await Task.Run(async () =>
             {
                 foreach (JsonNode sheetNode in sheetNodes)
                 {
@@ -1151,12 +1227,17 @@ namespace ExcelDnaTest
                     {
                         var sheet = originalSheetsById[id];
                         var sheetHash = sheet.GetCustomProperty(sheetHashCustomPropertyName);
+                        string newSheetImageHash = await ComputeImagesHash(jsonFilePath, sheetNode);
 
-                        // 元データが同じなら生成しない
-                        // TODO: 画像が変更されていないことも確認
+                        // 元データが同じで、画像も変更されていないなら生成しない
                         if (newSheetHash == sheetHash)
                         {
-                            continue;
+                            var sheetImageHash = sheet.GetCustomProperty(sheetImageHashCustomPropertyName);
+
+                            if (newSheetImageHash == sheetImageHash)
+                            {
+                                continue;
+                            }
                         }
 
                         // シートをコピー
@@ -1174,6 +1255,7 @@ namespace ExcelDnaTest
 
                         missingImagePaths.AddRange(missingImagePathsInSheet);
                         newSheet.SetCustomProperty(sheetHashCustomPropertyName, newSheetHash);
+                        newSheet.SetCustomProperty(sheetImageHashCustomPropertyName, newSheetImageHash);
                     }
                     else
                     {
@@ -1189,7 +1271,11 @@ namespace ExcelDnaTest
                         var missingImagePathsInSheet = RenderSheet(sheetNode, confData, jsonFilePath, newSheet, null);
 
                         missingImagePaths.AddRange(missingImagePathsInSheet);
+
                         newSheet.SetCustomProperty(sheetHashCustomPropertyName, newSheetHash);
+
+                        var newSheetImageHash = await ComputeImagesHash(jsonFilePath, sheetNode);
+                        newSheet.SetCustomProperty(sheetImageHashCustomPropertyName, newSheetImageHash);
                     }
                 }
 
@@ -1237,6 +1323,7 @@ namespace ExcelDnaTest
                         originalActiveSheet.Activate();
                         excelApp.SetActiveCellPosition(activeCellPosition);
                         excelApp.SetActiveSheetZoom(activeSheetZoom);   // scroll より後に zoom をセットすると微妙にずれるっぽい
+                        excelApp.ScreenUpdating = true;
                         excelApp.SetScrollPosition(scrollPosition);
                     }
                     else
@@ -1269,6 +1356,7 @@ namespace ExcelDnaTest
 
             if (missingImagePaths.Any())
             {
+                excelApp.ScreenUpdating = true;
                 ShowMissingImageFilesDialog(missingImagePaths);
             }
         }
@@ -1337,7 +1425,7 @@ namespace ExcelDnaTest
             progressBarForm = new ProgressBarForm(sheetNodes.Count + 1);
             progressBarForm.Show();
 
-            await Task.Run(() =>
+            await Task.Run(async () =>
             {
                 foreach (JsonNode sheetNode in sheetNodes)
                 {
@@ -1359,6 +1447,9 @@ namespace ExcelDnaTest
                     string sheetHash = sheetNode.ComputeSha256();
                     sheetNode["text"] = newSheetName;
                     newSheet.SetCustomProperty(sheetHashCustomPropertyName, sheetHash);
+
+                    var newSheetImageHash = await ComputeImagesHash(jsonFilePath, sheetNode);
+                    newSheet.SetCustomProperty(sheetImageHashCustomPropertyName, newSheetImageHash);
 
                     missingImagePaths.AddRange(missingImagePathsInSheet);
 
@@ -1597,15 +1688,13 @@ namespace ExcelDnaTest
         // マクロを一時的に黙らせたい
         public static class MacroControl
         {
-            public static void DisableMacros()
+            public static void DisableMacros(Excel.Application excelApp)
             {
-                Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
                 excelApp.AutomationSecurity = Office.MsoAutomationSecurity.msoAutomationSecurityForceDisable;
             }
 
-            public static void EnableMacros()
+            public static void EnableMacros(Excel.Application excelApp)
             {
-                Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
                 excelApp.AutomationSecurity = Office.MsoAutomationSecurity.msoAutomationSecurityByUI;
             }
         }
@@ -1972,7 +2061,6 @@ namespace ExcelDnaTest
 
                     if (node.imageFilePath != null)
                     {
-                        const string noImageFilePath = "images/no_image.jpg";
                         string path = GetAbsolutePathFromBasePath(jsonFilePath, node.imageFilePath);
                         var cell = dstSheet.Cells[startRow + i, startColumn + j];
 
