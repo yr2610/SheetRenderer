@@ -343,15 +343,17 @@ namespace ExcelDnaTest
         public static void ReplaceValues(Excel.Worksheet sheet, Dictionary<string, string> replacements)
         {
             Excel.Range usedRange = sheet.UsedRange;
-            //Debug.Assert(usedRange.Value2 is object[,], "The type of usedRange.Value2 is invalid.");
-            if (usedRange.Value2 is object)
-            {
-                // 配列として処理したいので適当に2セルにする
-                usedRange = usedRange.Resize[1, 2];
-            }
 
             int rowCount = usedRange.Rows.Count;
             int colCount = usedRange.Columns.Count;
+
+            //Debug.Assert(usedRange.Value2 is object[,], "The type of usedRange.Value2 is invalid.");
+            if (rowCount == 1 && colCount == 1)
+            {
+                // 配列として処理したいので適当に2セルにする
+                // colCount は 1 のままで良い
+                usedRange = usedRange.Resize[1, 2];
+            }
 
             object[,] values = usedRange.Value2;
             bool[,] modified = new bool[rowCount + 1, colCount + 1];
@@ -1322,7 +1324,6 @@ namespace ExcelDnaTest
                         originalActiveSheet.Activate();
                         excelApp.SetActiveCellPosition(activeCellPosition);
                         excelApp.SetActiveSheetZoom(activeSheetZoom);   // scroll より後に zoom をセットすると微妙にずれるっぽい
-                        excelApp.ScreenUpdating = true;
                         excelApp.SetScrollPosition(scrollPosition);
                     }
                     else
@@ -1335,13 +1336,16 @@ namespace ExcelDnaTest
                 {
                     var originalActiveSheet = workbook.Sheets[originalActiveSheetName];
 
-                    originalActiveSheet.Activate();
                     if (originalActiveSheetName == indexSheetName)
                     {
                         // index シートならシートを元の状態と同じにする
                         excelApp.SetActiveCellPosition(activeCellPosition);
                         excelApp.SetActiveSheetZoom(activeSheetZoom);   // scroll より後に zoom をセットすると微妙にずれるっぽい
                         excelApp.SetScrollPosition(scrollPosition);
+                    }
+                    else
+                    {
+                        originalActiveSheet.Activate();
                     }
                 }
 
@@ -1353,9 +1357,14 @@ namespace ExcelDnaTest
 
             excelApp.DisplayAlerts = true;
 
+            var originalZoom = excelApp.ActiveWindow.Zoom;
+            excelApp.ActiveWindow.Zoom = originalZoom + 1; // ズームレベルを一時的に変更
+            excelApp.ScreenUpdating = true;
+            excelApp.ActiveWindow.Zoom = originalZoom; // 元に戻す
+            excelApp.SetScrollPosition(scrollPosition);
+
             if (missingImagePaths.Any())
             {
-                excelApp.ScreenUpdating = true;
                 ShowMissingImageFilesDialog(missingImagePaths);
             }
         }
