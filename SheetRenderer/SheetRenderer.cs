@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 
 using System.IO;
@@ -876,19 +877,33 @@ namespace ExcelDnaTest
             //targetSheetNode["text"] = newSheetName;
             newSheet.SetCustomProperty(sheetHashCustomPropertyName, newSheetHash);
 
+            // await の前にWindowsFormsSynchronizationContextを設定
+            if (SynchronizationContext.Current == null)
+            {
+                SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());
+            }
+
             var newSheetImageHash = await ComputeImagesHash(jsonFilePath, targetSheetNode);
             newSheet.SetCustomProperty(sheetImageHashCustomPropertyName, newSheetImageHash);
 
             // シートを元の状態と同じにする
             newSheet.Activate();
             excelApp.SetActiveCellPosition(activeCellPosition);
-            excelApp.SetActiveSheetZoom(activeSheetZoom);   // scroll より後に zoom をセットすると微妙にずれるっぽい
+
+            var originalZoom = excelApp.ActiveWindow.Zoom;
+            if (originalZoom == activeSheetZoom)
+            {
+                excelApp.ActiveWindow.Zoom = originalZoom + 1; // ズームレベルを一時的に変更
+            }
             excelApp.ScreenUpdating = true;
+            excelApp.SetActiveSheetZoom(activeSheetZoom);   // scroll より後に zoom をセットすると微妙にずれるっぽい
             excelApp.SetScrollPosition(scrollPosition);
 
             if (missingImagePathsInSheet.Any())
             {
-                ShowMissingImageFilesDialog(missingImagePathsInSheet);
+                SynchronizationContext.Current.Post(_ => {
+                    ShowMissingImageFilesDialog(missingImagePathsInSheet);
+                }, null);
             }
 
             // TODO: RenderLog 書き出す処理を共通化
