@@ -1114,6 +1114,13 @@ namespace ExcelDnaTest
                 }
             }
 
+            // await の前にWindowsFormsSynchronizationContextを設定
+            if (SynchronizationContext.Current == null)
+            {
+                SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());
+            }
+            var context = SynchronizationContext.Current;
+
             excelApp.DisplayAlerts = false;
             excelApp.ScreenUpdating = false;
             excelApp.Calculation = Excel.XlCalculation.xlCalculationManual;
@@ -1241,14 +1248,17 @@ namespace ExcelDnaTest
                     // 既存のシート
                     if (originalSheetsById.ContainsKey(id))
                     {
+                        // 画像の hash 計算を開始しておく
+                        var newSheetImageHashTask = ComputeImagesHash(jsonFilePath, sheetNode);
                         var sheet = originalSheetsById[id];
                         var sheetHash = sheet.GetCustomProperty(sheetHashCustomPropertyName);
-                        string newSheetImageHash = await ComputeImagesHash(jsonFilePath, sheetNode);
+                        string newSheetImageHash;
 
                         // 元データが同じで、画像も変更されていないなら生成しない
                         if (newSheetHash == sheetHash)
                         {
                             var sheetImageHash = sheet.GetCustomProperty(sheetImageHashCustomPropertyName);
+                            newSheetImageHash = await newSheetImageHashTask;
 
                             if (newSheetImageHash == sheetImageHash)
                             {
@@ -1271,11 +1281,15 @@ namespace ExcelDnaTest
 
                         missingImagePaths.AddRange(missingImagePathsInSheet);
                         newSheet.SetCustomProperty(sheetHashCustomPropertyName, newSheetHash);
+                        newSheetImageHash = await newSheetImageHashTask;
                         newSheet.SetCustomProperty(sheetImageHashCustomPropertyName, newSheetImageHash);
                     }
                     else
                     {
                         // 新規シート作成
+
+                        // 画像の hash 計算を開始しておく
+                        var newSheetImageHashTask = ComputeImagesHash(jsonFilePath, sheetNode);
 
                         // シートをコピー
                         // 一旦は最後に追加。最後にまとめて並び替える
@@ -1290,7 +1304,7 @@ namespace ExcelDnaTest
 
                         newSheet.SetCustomProperty(sheetHashCustomPropertyName, newSheetHash);
 
-                        var newSheetImageHash = await ComputeImagesHash(jsonFilePath, sheetNode);
+                        var newSheetImageHash = await newSheetImageHashTask;
                         newSheet.SetCustomProperty(sheetImageHashCustomPropertyName, newSheetImageHash);
                     }
                 }
@@ -1380,7 +1394,9 @@ namespace ExcelDnaTest
 
             if (missingImagePaths.Any())
             {
-                ShowMissingImageFilesDialog(missingImagePaths);
+                context.Post(_ => {
+                    ShowMissingImageFilesDialog(missingImagePaths);
+                }, null);
             }
         }
 
@@ -1452,6 +1468,9 @@ namespace ExcelDnaTest
             {
                 foreach (JsonNode sheetNode in sheetNodes)
                 {
+                    // 画像の hash 計算を開始しておく
+                    var newSheetImageHashTask = ComputeImagesHash(jsonFilePath, sheetNode);
+
                     string newSheetName = sheetNode["text"].ToString();
 
                     // プログレスバーを更新
@@ -1471,7 +1490,7 @@ namespace ExcelDnaTest
                     sheetNode["text"] = newSheetName;
                     newSheet.SetCustomProperty(sheetHashCustomPropertyName, sheetHash);
 
-                    var newSheetImageHash = await ComputeImagesHash(jsonFilePath, sheetNode);
+                    var newSheetImageHash = await newSheetImageHashTask;
                     newSheet.SetCustomProperty(sheetImageHashCustomPropertyName, newSheetImageHash);
 
                     missingImagePaths.AddRange(missingImagePathsInSheet);
@@ -1500,9 +1519,13 @@ namespace ExcelDnaTest
 
             progressBarForm.Close();
 
+            var originalZoom = excelApp.ActiveWindow.Zoom;
+
             excelApp.EnableEvents = true;
             excelApp.Calculation = Excel.XlCalculation.xlCalculationAutomatic;
+            excelApp.ActiveWindow.Zoom = originalZoom + 1;
             excelApp.ScreenUpdating = true;
+            excelApp.ActiveWindow.Zoom = originalZoom;
             excelApp.DisplayAlerts = true;
             excelApp.AutomationSecurity = Office.MsoAutomationSecurity.msoAutomationSecurityByUI;
 
