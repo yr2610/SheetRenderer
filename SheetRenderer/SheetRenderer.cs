@@ -340,6 +340,92 @@ namespace ExcelDnaTest
             return null;
         }
 
+        // テンプレートセル情報
+        class TemplateCellInfo
+        {
+            public string Address { get; set; }
+            public string Value { get; set; }
+            public List<string> VariableNames { get; set; }
+        }
+
+        static List<TemplateCellInfo> GetTemplateCells(Excel.Worksheet sheet)
+        {
+            Excel.Range usedRange = sheet.UsedRange;
+
+            int rowCount = usedRange.Rows.Count;
+            int colCount = usedRange.Columns.Count;
+
+            if (rowCount == 1 && colCount == 1)
+            {
+                // 配列として処理するため適当に2セルにする
+                // colCount は 1 のままで良い
+                usedRange = usedRange.Resize[1, 2];
+            }
+
+            int startRow = usedRange.Row;
+            int startCol = usedRange.Column;
+
+            // セルのアドレスを計算するヘルパーメソッド
+            string GetCellAddress(int row, int col)
+            {
+                int actualRow = startRow + row - 1;
+                int actualCol = startCol + col - 1;
+                return $"{GetColumnLetter(actualCol)}{actualRow}";
+            }
+
+            // 列番号を列文字に変換するヘルパーメソッド
+            string GetColumnLetter(int col)
+            {
+                string columnLetter = "";
+                while (col > 0)
+                {
+                    int mod = (col - 1) % 26;
+                    columnLetter = (char)(mod + 65) + columnLetter;
+                    col = (col - mod) / 26;
+                }
+                return columnLetter;
+            }
+
+            object[,] values = usedRange.Value2;
+            Regex regex = new Regex(@"\{\{([_A-Za-z]\w*)\}\}"); // 複数マッチを考慮
+            List<TemplateCellInfo> matchingCells = new List<TemplateCellInfo>();
+
+            for (int row = 1; row <= rowCount; row++)
+            {
+                for (int col = 1; col <= colCount; col++)
+                {
+                    if (!(values[row, col] is string))
+                    {
+                        continue;
+                    }
+
+                    string cellValue = (string)values[row, col];
+
+                    // 複数のマッチを見つける
+                    MatchCollection matches = regex.Matches(cellValue);
+                    if (matches.Count > 0)
+                    {
+                        string cellAddress = GetCellAddress(row, col);
+                        var info = new TemplateCellInfo
+                        {
+                            Address = cellAddress,
+                            Value = cellValue,
+                            VariableNames = new List<string>()
+                        };
+
+                        foreach (Match match in matches)
+                        {
+                            info.VariableNames.Add(match.Groups[1].Value);
+                        }
+
+                        matchingCells.Add(info);
+                    }
+                }
+            }
+
+            return matchingCells;
+        }
+
         // セル内の {{*}} を置き換える
         public static void ReplaceValues(Excel.Worksheet sheet, Dictionary<string, string> replacements)
         {
