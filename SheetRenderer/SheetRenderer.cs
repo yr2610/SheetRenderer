@@ -510,6 +510,7 @@ namespace ExcelDnaTest
         const string sheetIdCustomPropertyName = "SheetId";
         const string sheetHashCustomPropertyName = "SheetHash";
         const string sheetImageHashCustomPropertyName = "SheetImageHash";
+        const string indexSheetTemplateCellsCustomPropertyName = "SheetImageHash";
 
         const string ssSheetRangeName = "SS_SHEET";
 
@@ -1427,6 +1428,15 @@ namespace ExcelDnaTest
                 indexSheet.Delete();
                 newIndexSheet.Name = indexSheetName;
 
+                // XXX: index sheet 再利用の実装が終わるまでは更新でも index sheet のテンプレセルの情報を保存しておく
+                var indexSheetTemplateCells = GetTemplateCells(newIndexSheet);
+                var serializer = new SerializerBuilder()
+                    .WithNamingConvention(NullNamingConvention.Instance) // ここでNullNamingConventionを使用
+                    .Build();
+                var indexSheetTemplateCellsYaml = serializer.Serialize(indexSheetTemplateCells);
+
+                newIndexSheet.SetCustomProperty(indexSheetTemplateCellsCustomPropertyName, indexSheetTemplateCellsYaml);
+
                 RenderIndexSheet(sheetNodes, confData, newIndexSheet, indexSheetValuesInfo);
 
                 if (activeSheetId != null)
@@ -1504,8 +1514,15 @@ namespace ExcelDnaTest
             string jsonString = File.ReadAllText(jsonFilePath);
 
             JsonNode jsonObject = JsonNode.Parse(jsonString);
+            var confData = GetPropertiesFromJsonNode(jsonObject, "variables");
 
-            string newFilePath = GetFilePathWithoutExtension(jsonFilePath);
+            const string outputFilenameConfName = "outputFilename";
+
+            //string newFilePath = GetFilePathWithoutExtension(jsonFilePath);
+            string newFileName = confData.ContainsKey(outputFilenameConfName) ? confData[outputFilenameConfName] : Path.GetFileNameWithoutExtension(jsonFilePath);
+            string jsonFileDirectory = Path.GetDirectoryName(jsonFilePath);
+            string newFilePath = Path.Combine(jsonFileDirectory, newFileName);
+
             Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
 
             string templateFilePath = GetAbsolutePathFromExecutingDirectory(templateFileName);
@@ -1535,8 +1552,6 @@ namespace ExcelDnaTest
             excelApp.Calculation = Excel.XlCalculation.xlCalculationManual;
             excelApp.EnableEvents = false;
             excelApp.AutomationSecurity = Office.MsoAutomationSecurity.msoAutomationSecurityForceDisable;
-
-            var confData = GetPropertiesFromJsonNode(jsonObject, "variables");
 
             // 特定のプロパティ（items）を配列としてアクセス
             JsonArray sheetNodes = jsonObject["children"].AsArray();
@@ -1593,6 +1608,15 @@ namespace ExcelDnaTest
                 var indexTemplateSheet = (Excel.Worksheet)workbook.Sheets[indexSheet.Index + 1];
                 indexTemplateSheet.Visible = Excel.XlSheetVisibility.xlSheetHidden;
                 indexTemplateSheet.Name = indexTemplateSheetName;
+
+                // 新規作成時は index sheet のテンプレセルの情報を保存しておく
+                var indexSheetTemplateCells = GetTemplateCells(indexSheet);
+                var serializer = new SerializerBuilder()
+                    .WithNamingConvention(NullNamingConvention.Instance) // ここでNullNamingConventionを使用
+                    .Build();
+                var indexSheetTemplateCellsYaml = serializer.Serialize(indexSheetTemplateCells);
+
+                indexSheet.SetCustomProperty(indexSheetTemplateCellsCustomPropertyName, indexSheetTemplateCellsYaml);
 
                 RenderIndexSheet(sheetNodes, confData, indexSheet, null);
 
