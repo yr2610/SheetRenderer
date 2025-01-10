@@ -1496,6 +1496,25 @@ namespace ExcelDnaTest
             }
         }
 
+        static bool IsSameNameWorkbookOpen(string fileName)
+        {
+            Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
+
+            // ファイル名の拡張子を取り除く
+            string fileNameWithoutExtension = Path.GetFileNameWithoutExtension(fileName);
+
+            // すべての開いているブックをチェック
+            foreach (Excel.Workbook wb in excelApp.Workbooks)
+            {
+                // ファイル名の比較（拡張子を除いた名前で比較）
+                if (Path.GetFileNameWithoutExtension(wb.FullName).Equals(fileNameWithoutExtension, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
         async Task CreateNewWorkbook()
         {
             DialogResult fileSelectionResult = MessageBox.Show($"ファイルを新規作成します。\nソースファイルを選択してください。", "確認", MessageBoxButtons.OKCancel);
@@ -1520,6 +1539,14 @@ namespace ExcelDnaTest
 
             //string newFilePath = GetFilePathWithoutExtension(jsonFilePath);
             string newFileName = confData.ContainsKey(outputFilenameConfName) ? confData[outputFilenameConfName] : Path.GetFileNameWithoutExtension(jsonFilePath);
+
+            if (IsSameNameWorkbookOpen(newFileName))
+            {
+                string fileNameWithoutExtension = Path.GetFileNameWithoutExtension(newFileName);
+                MessageBox.Show($"'{fileNameWithoutExtension}'と同じ名前のファイルが既に開かれています。\nファイルを閉じてから再度実行してください。");
+                return;
+            }
+
             string jsonFileDirectory = Path.GetDirectoryName(jsonFilePath);
             string newFilePath = Path.Combine(jsonFileDirectory, newFileName);
 
