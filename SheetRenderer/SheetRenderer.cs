@@ -341,14 +341,13 @@ namespace ExcelDnaTest
         }
 
         // テンプレートセル情報
-        class TemplateCellInfo
+        class CellInfo
         {
             public string Address { get; set; }
             public string Value { get; set; }
-            public List<string> VariableNames { get; set; }
         }
 
-        static List<TemplateCellInfo> GetTemplateCells(Excel.Worksheet sheet)
+        static List<CellInfo> GetTemplateCells(Excel.Worksheet sheet)
         {
             Excel.Range usedRange = sheet.UsedRange;
 
@@ -387,8 +386,8 @@ namespace ExcelDnaTest
             }
 
             object[,] values = usedRange.Value2;
-            Regex regex = new Regex(@"\{\{([_A-Za-z]\w*)\}\}"); // 複数マッチを考慮
-            List<TemplateCellInfo> matchingCells = new List<TemplateCellInfo>();
+            Regex regex = new Regex(@"\{\{[_A-Za-z]\w*\}\}");
+            List<CellInfo> matchingCells = new List<CellInfo>();
 
             for (int row = 1; row <= rowCount; row++)
             {
@@ -401,22 +400,15 @@ namespace ExcelDnaTest
 
                     string cellValue = (string)values[row, col];
 
-                    // 複数のマッチを見つける
-                    MatchCollection matches = regex.Matches(cellValue);
-                    if (matches.Count > 0)
+                    // パターンにマッチするかどうかだけを判定
+                    if (regex.IsMatch(cellValue))
                     {
                         string cellAddress = GetCellAddress(row, col);
-                        var info = new TemplateCellInfo
+                        var info = new CellInfo
                         {
                             Address = cellAddress,
-                            Value = cellValue,
-                            VariableNames = new List<string>()
+                            Value = cellValue
                         };
-
-                        foreach (Match match in matches)
-                        {
-                            info.VariableNames.Add(match.Groups[1].Value);
-                        }
 
                         matchingCells.Add(info);
                     }
@@ -426,80 +418,67 @@ namespace ExcelDnaTest
             return matchingCells;
         }
 
-        // セル内の {{*}} を置き換える
-        public static void ReplaceValues(Excel.Worksheet sheet, Dictionary<string, string> replacements)
+        static string ReplacePlaceholders(string s, Dictionary<string, string> parameters)
         {
-            Excel.Range usedRange = sheet.UsedRange;
+            // 正規表現パターンを定義します。識別子はC言語のルールに従います。
+            var pattern = @"\{\{(\w[\w\d]*)\}\}";
 
-            int rowCount = usedRange.Rows.Count;
-            int colCount = usedRange.Columns.Count;
-
-            //Debug.Assert(usedRange.Value2 is object[,], "The type of usedRange.Value2 is invalid.");
-            if (rowCount == 1 && colCount == 1)
+            // 正規表現でマッチングされた部分を置換します。
+            return Regex.Replace(s, pattern, match =>
             {
-                // 配列として処理したいので適当に2セルにする
-                // colCount は 1 のままで良い
-                usedRange = usedRange.Resize[1, 2];
-            }
+                var key = match.Groups[1].Value;
+                if (parameters.TryGetValue(key, out var value))
+                {
+                    return value;
+                }
+                // 見つからないキーの場合はそのまま返す
+                return match.Value;
+            });
+        }
 
-            object[,] values = usedRange.Value2;
-            bool[,] modified = new bool[rowCount + 1, colCount + 1];
-
-            Regex regex = new Regex(@"\{\{([_A-Za-z]\w*)\}\}");
+        static void SetCellValues(Excel.Worksheet worksheet, List<CellInfo> cellInfos)
+        {
             Regex urlRegex = new Regex(@"https?://[^\s/$.?#].[^\s]*");
 
-            // まず全セルの値を配列に取り込む
-            for (int row = 1; row <= rowCount; row++)
+            foreach (var cellInfo in cellInfos)
             {
-                for (int col = 1; col <= colCount; col++)
+                var range = worksheet.Range[cellInfo.Address];
+
+                // セルに数式が含まれる場合はスキップ
+                if (range.HasFormula)
                 {
-                    if (!(values[row, col] is string))
-                    {
-                        continue;
-                    }
-
-                    string cellValue = (string)values[row, col];
-
-                    Match match = regex.Match(cellValue);
-                    if (match.Success)
-                    {
-                        string key = match.Groups[1].Value;
-                        if (replacements.ContainsKey(key))
-                        {
-                            values[row, col] = regex.Replace(cellValue, replacements[key]);
-                            modified[row, col] = true;
-                        }
-                        else
-                        {
-                            values[row, col] = regex.Replace(cellValue, "");
-                            modified[row, col] = true;
-                        }
-                    }
-                    else
-                    {
-                        values[row, col] = null;
-                    }
+                    continue;
                 }
+
+                string value = cellInfo.Value as string;
+
+                // URLの場合、ハイパーリンクを追加
+                if (urlRegex.IsMatch(value ?? ""))
+                {
+                    worksheet.Hyperlinks.Add(range, value);
+                }
+
+                range.Value2 = value;
+            }
+        }
+
+        // セル内の {{*}} を置き換える
+        static void ReplaceValues(Excel.Worksheet sheet, Dictionary<string, string> replacements)
+        {
+            var yamlContent = sheet.GetCustomProperty(indexSheetTemplateCellsCustomPropertyName);
+
+            if (string.IsNullOrEmpty(yamlContent))
+            {
+                return;
             }
 
-            // 必要なセルのみ HasFormula をチェックして書き戻す
-            for (int row = 1; row <= rowCount; row++)
-            {
-                for (int col = 1; col <= colCount; col++)
-                {
-                    if (modified[row, col] && !usedRange.Cells[row, col].HasFormula)
-                    {
-                        string newValue = values[row, col] as string;
-                        if (urlRegex.IsMatch(newValue))
-                        {
-                            // 新しいリンクを設定
-                            sheet.Hyperlinks.Add(usedRange.Cells[row, col], newValue);
-                        }
-                        // セルの値を設定
-                        usedRange.Cells[row, col].Value2 = newValue;
-                    }
-                }
-            }
+            var replacedYamlContent = ReplacePlaceholders(yamlContent, replacements);
+            var deserializer = new DeserializerBuilder()
+                       .WithNamingConvention(NullNamingConvention.Instance)
+                       .Build();
+            var cellInfos = deserializer.Deserialize<List<CellInfo>>(replacedYamlContent);
+
+            SetCellValues(sheet, cellInfos);
         }
 
         const string templateFileName = "template.xlsm";
@@ -513,8 +492,6 @@ namespace ExcelDnaTest
         const string indexSheetTemplateCellsCustomPropertyName = "SheetImageHash";
 
         const string ssSheetRangeName = "SS_SHEET";
-
-        const string indexTemplateSheetName = "index_template";
 
         const string noImageFilePath = "images/no_image.jpg";
 
@@ -1419,25 +1396,7 @@ namespace ExcelDnaTest
                 // 元のシートから今の入力内容を取り込む
                 SheetValuesInfo indexSheetValuesInfo = SheetValuesInfo.CreateFromSheet(indexSheet);
 
-                // indexシート作り直し
-                var indexSheetTemplate = (Excel.Worksheet)workbook.Sheets[indexTemplateSheetName];
-                indexSheetTemplate.Visible = Excel.XlSheetVisibility.xlSheetVisible;
-                indexSheetTemplate.Copy(After: indexSheet);
-                indexSheetTemplate.Visible = Excel.XlSheetVisibility.xlSheetHidden;
-                var newIndexSheet = (Excel.Worksheet)workbook.Sheets[indexSheet.Index + 1];
-                indexSheet.Delete();
-                newIndexSheet.Name = indexSheetName;
-
-                // XXX: index sheet 再利用の実装が終わるまでは更新でも index sheet のテンプレセルの情報を保存しておく
-                var indexSheetTemplateCells = GetTemplateCells(newIndexSheet);
-                var serializer = new SerializerBuilder()
-                    .WithNamingConvention(NullNamingConvention.Instance) // ここでNullNamingConventionを使用
-                    .Build();
-                var indexSheetTemplateCellsYaml = serializer.Serialize(indexSheetTemplateCells);
-
-                newIndexSheet.SetCustomProperty(indexSheetTemplateCellsCustomPropertyName, indexSheetTemplateCellsYaml);
-
-                RenderIndexSheet(sheetNodes, confData, newIndexSheet, indexSheetValuesInfo);
+                RenderIndexSheet(sheetNodes, confData, indexSheet, indexSheetValuesInfo);
 
                 if (activeSheetId != null)
                 {
@@ -1454,12 +1413,14 @@ namespace ExcelDnaTest
                     else
                     {
                         // とりあえず index sheet を選択しておく
-                        newIndexSheet.Activate();
+                        indexSheet.Activate();
                     }
                 }
                 else
                 {
                     var originalActiveSheet = workbook.Sheets[originalActiveSheetName];
+
+                    originalActiveSheet.Activate();
 
                     if (originalActiveSheetName == indexSheetName)
                     {
@@ -1467,10 +1428,6 @@ namespace ExcelDnaTest
                         excelApp.SetActiveCellPosition(activeCellPosition);
                         excelApp.SetActiveSheetZoom(activeSheetZoom);   // scroll より後に zoom をセットすると微妙にずれるっぽい
                         excelApp.SetScrollPosition(scrollPosition);
-                    }
-                    else
-                    {
-                        originalActiveSheet.Activate();
                     }
                 }
 
@@ -1629,17 +1586,12 @@ namespace ExcelDnaTest
                 // プログレスバーを更新
                 progressBarForm.Invoke(new Action<string>(progressBarForm.UpdateSheetName), indexSheetName);
 
-                // index sheet にシート名を入力
                 Excel.Worksheet indexSheet = workbook.Sheets[indexSheetName];
-                indexSheet.Copy(After: indexSheet);
-                var indexTemplateSheet = (Excel.Worksheet)workbook.Sheets[indexSheet.Index + 1];
-                indexTemplateSheet.Visible = Excel.XlSheetVisibility.xlSheetHidden;
-                indexTemplateSheet.Name = indexTemplateSheetName;
 
                 // 新規作成時は index sheet のテンプレセルの情報を保存しておく
                 var indexSheetTemplateCells = GetTemplateCells(indexSheet);
                 var serializer = new SerializerBuilder()
-                    .WithNamingConvention(NullNamingConvention.Instance) // ここでNullNamingConventionを使用
+                    .WithNamingConvention(NullNamingConvention.Instance)
                     .Build();
                 var indexSheetTemplateCellsYaml = serializer.Serialize(indexSheetTemplateCells);
 
@@ -1753,7 +1705,7 @@ namespace ExcelDnaTest
             {
                 int numberOfRows = sheetNamesCount - indexRowCount;
 
-                dstSheet.InsertRowsAndCopyFormulas(indexEndRow, numberOfRows);
+                dstSheet.InsertRowsAndCopyFormulas(indexStartRow + 1, numberOfRows);
             }
             // 多ければ削除
             else if (sheetNamesCount < indexRowCount)
@@ -1769,12 +1721,16 @@ namespace ExcelDnaTest
             ReplaceValues(dstSheet, confData);
 
             // 幅をautofit
-            dstSheet.Cells[indexStartRow, indexStartColumn].Resize(indexRowCount).Columns.AutoFit();
+            dstSheet.Cells[indexStartRow, indexStartColumn].Resize(sheetNamesCount).Columns.AutoFit();
 
             // 適当な位置に列挿入して ID を入れて非表示にする
             var ids = ExtractPropertyValues(sheetNodes, "id");
-            Excel.Range column = (Excel.Range)dstSheet.Columns[idColumn];
-            column.Insert(Excel.XlInsertShiftDirection.xlShiftToRight);
+            Excel.Range column = dstSheet.Columns[idColumn];
+            // XXX: id列が非表示ならすでにid列が存在するとみなして上書きする。どうせこの仕様は廃止したいので一旦これで
+            if (!column.EntireColumn.Hidden)
+            {
+                column.Insert(Excel.XlInsertShiftDirection.xlShiftToRight);
+            }
             dstSheet.SetValueInSheet(indexStartRow, idColumn, ids, false);
             Excel.Range idColumnRange = dstSheet.Columns[idColumn];
             idColumnRange.EntireColumn.Hidden = true;
