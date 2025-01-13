@@ -158,8 +158,60 @@ public static class ExcelExtensions
 
         // 挿入した行の上の行から数式をコピー
         Excel.Range sourceRange = worksheet.Rows[startRow - 1];
-        Excel.Range destinationRange = worksheet.Rows[startRow].Resize[rowCount];
-        sourceRange.Copy(destinationRange);
+
+        // 1行目にフォーマットをコピー
+        Excel.Range firstRowDestination = worksheet.Rows[startRow];
+        sourceRange.Copy(firstRowDestination);
+
+        // シートの使用範囲を取得
+        Excel.Range sheetUsedRange = worksheet.UsedRange;
+
+        // UsedRange の列範囲を処理
+        int startColumn = sheetUsedRange.Column;
+        int endColumn = sheetUsedRange.Column + sheetUsedRange.Columns.Count - 1;
+
+        // 1行目に数式を持たないセルを空欄にする
+        for (int column = startColumn; column <= endColumn; column++)
+        {
+            Excel.Range sourceCell = sourceRange.Cells[1, column];
+            if (!sourceCell.HasFormula) // 数式がない場合
+            {
+                firstRowDestination.Cells[1, column].Value = null;
+            }
+        }
+
+        // 2行目以降がある場合、1行目からコピー
+        if (rowCount > 1)
+        {
+            // firstRowDestination を1行下にずらし、サイズを設定
+            Excel.Range secondToLastRange = firstRowDestination.Offset[1].Resize[rowCount - 1];
+            firstRowDestination.Copy(secondToLastRange);
+        }
+
+        UpdateNamedRanges(worksheet, startRow, rowCount);
+    }
+
+    // 名前付き範囲を自動的に検出し、必要であれば更新
+    private static void UpdateNamedRanges(Excel.Worksheet worksheet, int startRow, int rowCount)
+    {
+        foreach (Excel.Name name in worksheet.Names)
+        {
+            Excel.Range range = name.RefersToRange;
+            int rangeLastRow = range.Row + range.Rows.Count - 1;
+
+            // 名前付き範囲が自動で拡張されないケースに対応
+            // 挿入位置が名前付き範囲の最終行に一致するかチェック
+            if (startRow == rangeLastRow)
+            {
+                // 名前付き範囲を更新
+                int newLastRow = rangeLastRow + rowCount; // 追加された行数だけ最終行をシフト
+
+                // 新しい範囲を計算して更新
+                int rangeLastColumn = range.Column + range.Columns.Count - 1;
+                var newRange = worksheet.Range[range.Cells[1, 1], worksheet.Cells[newLastRow, rangeLastColumn]];
+                worksheet.Names.Item(name.Name).RefersTo = "=" + worksheet.Name + "!" + newRange.Address;
+            }
+        }
     }
 
     // 指定した範囲のセルに同じ値を代入します
