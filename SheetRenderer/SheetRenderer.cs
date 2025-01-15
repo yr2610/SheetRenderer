@@ -1076,11 +1076,20 @@ namespace ExcelDnaTest
                     }
                 }
             })).ToArray();
-            
+
             await Task.WhenAll(tasks);
 
             //var results = tasks.Select(t => t.Result).ToList();
             return string.Join("\n", tasks.Select(t => t.Result.Hash));
+        }
+
+        string ComputeSheetHash(JsonNode sheetNode)
+        {
+            // XXX: hash には text を含めたくないので、hashを求める前に削除
+            JsonNode clonedNode = sheetNode.DeepClone();
+
+            clonedNode.AsObject().Remove("text");
+            return clonedNode.ComputeSha256();
         }
 
         async Task UpdateAllSheets(Excel.Workbook workbook)
@@ -1293,6 +1302,16 @@ namespace ExcelDnaTest
             progressBarForm = new ProgressBarForm(sheetNodes.Count + 1);
             progressBarForm.Show();
 
+            // シートの JsonNode の hash をカスタムプロパティに保存
+            Dictionary<string, Task<string>> newSheetHashTasks = new Dictionary<string, Task<string>>();
+            foreach (JsonNode sheetNode in sheetNodes)
+            {
+                string id = sheetNode["id"].ToString();
+                var task = Task.Run(() => ComputeSheetHash(sheetNode));
+
+                newSheetHashTasks.Add(id, task);
+            }
+
             await Task.Run(async () =>
             {
                 foreach (JsonNode sheetNode in sheetNodes)
@@ -1302,12 +1321,6 @@ namespace ExcelDnaTest
 
                     // プログレスバーを更新
                     progressBarForm.Invoke(new Action<string>(progressBarForm.UpdateSheetName), newSheetName);
-
-                    // シートの JsonNode の hash をカスタムプロパティに保存
-                    // XXX: hash には text を含めたくないので、hashを求める前に一時的に削除
-                    sheetNode.AsObject().Remove("text");
-                    string newSheetHash = sheetNode.ComputeSha256();
-                    sheetNode["text"] = newSheetName;
 
                     // 既存のシート
                     if (originalSheetsById.ContainsKey(id))
@@ -1319,6 +1332,7 @@ namespace ExcelDnaTest
                         string newSheetImageHash;
 
                         // 元データが同じで、画像も変更されていないなら生成しない
+                        string newSheetHash = await newSheetHashTasks[id];
                         if (newSheetHash == sheetHash)
                         {
                             var sheetImageHash = sheet.GetCustomProperty(sheetImageHashCustomPropertyName);
@@ -1366,6 +1380,7 @@ namespace ExcelDnaTest
 
                         missingImagePaths.AddRange(missingImagePathsInSheet);
 
+                        string newSheetHash = await newSheetHashTasks[id];
                         newSheet.SetCustomProperty(sheetHashCustomPropertyName, newSheetHash);
 
                         var newSheetImageHash = await newSheetImageHashTask;
@@ -2019,11 +2034,11 @@ namespace ExcelDnaTest
 
             //templateSheet.SetCustomProperty(sheetHashCustomPropertyName, newSheetHash);
 
-            List <JsonNode> leafNodes;
+            List<JsonNode> leafNodes;
             int maxDepth;
             List<List<NodeData>> result = TraverseTreeFromRoot(sheetNode, out leafNodes, out maxDepth);
             int leafCount = leafNodes.Count;
-            
+
             // 左端はシート名なので削除
             result = RemoveFirstColumn(result);
             maxDepth--;
@@ -2185,7 +2200,7 @@ namespace ExcelDnaTest
                 .Build();
 
             namedRange.Comment = serializer.Serialize(rangeInfo);
-            
+
             // 画像を貼る
             for (int i = 0; i < result.Count; i++)
             {
