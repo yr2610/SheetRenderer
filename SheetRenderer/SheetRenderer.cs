@@ -1571,6 +1571,9 @@ namespace ExcelDnaTest
                     // 画像の hash 計算を開始しておく
                     var newSheetImageHashTask = ComputeImagesHash(jsonFilePath, sheetNode);
 
+                    // シートの JsonNode の hash 計算を開始しておく
+                    var sheetHashTask = Task.Run(() => ComputeSheetHash(sheetNode));
+
                     string newSheetName = sheetNode["text"].ToString();
 
                     // プログレスバーを更新
@@ -1584,10 +1587,7 @@ namespace ExcelDnaTest
                     var missingImagePathsInSheet = RenderSheet(sheetNode, confData, jsonFilePath, newSheet, null);
 
                     // シートの JsonNode の hash をカスタムプロパティに保存
-                    // XXX: hash には text を含めたくないので、hashを求める前に一時的に削除
-                    sheetNode.AsObject().Remove("text");
-                    string sheetHash = sheetNode.ComputeSha256();
-                    sheetNode["text"] = newSheetName;
+                    string sheetHash = await sheetHashTask;
                     newSheet.SetCustomProperty(sheetHashCustomPropertyName, sheetHash);
 
                     var newSheetImageHash = await newSheetImageHashTask;
