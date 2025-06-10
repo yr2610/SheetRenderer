@@ -2147,13 +2147,8 @@ namespace ExcelDnaTest
                         continue;
                     }
 
-                    bool InitializeCommentCell(string text_, string pattern, int cellColorIndex, int fontColorIndex)
+                    void ApplyCommentCell(int cellColorIndex, int fontColorIndex)
                     {
-                        if (!Regex.IsMatch(text_, pattern))
-                        {
-                            return false;
-                        }
-
                         // ここより右のセルの色を変える
                         var cells = dstSheet.Cells[startRow + i, startColumn + j];
                         cells = cells.Resize(1, maxDepth - j);
@@ -2163,11 +2158,68 @@ namespace ExcelDnaTest
                         // チェック予定日欄を空欄にする
                         var dateCell = dstSheet.Cells[startRow + i, dateColumn];
                         dateCell.Value = null;
+                    }
+
+                    void ApplyCommentCellColor(Color cellColor, Color fontColor)
+                    {
+                        // ここより右のセルの色を変える
+                        var cells = dstSheet.Cells[startRow + i, startColumn + j];
+                        cells = cells.Resize(1, maxDepth - j);
+                        cells.Interior.Color = ColorTranslator.ToOle(cellColor);
+                        cells.Font.Color = ColorTranslator.ToOle(fontColor);
+
+                        // チェック予定日欄を空欄にする
+                        var dateCell = dstSheet.Cells[startRow + i, dateColumn];
+                        dateCell.Value = null;
+                    }
+
+                    bool InitializeCommentCell(string text_, string pattern, int cellColorIndex, int fontColorIndex)
+                    {
+                        if (!Regex.IsMatch(text_, pattern))
+                        {
+                            return false;
+                        }
+
+                        ApplyCommentCell(cellColorIndex, fontColorIndex);
 
                         return true;
                     }
 
                     string text = node.text;
+
+                    // NOTE: ユーザーがざっと内容を読むだけでも知っておくべき有用な情報です。
+                    // TIP: 物事をより良く、または簡単に行うための役立つアドバイスです。
+                    // IMPORTANT: ユーザーが目的を達成するために知っておくべき重要な情報です。
+                    // WARNING: 問題を回避するために、ユーザーがすぐに注意を払う必要がある緊急の情報です。
+                    // CAUTION: 特定の行動に伴うリスクや悪影響についての注意喚起です。
+                    var tagColors = new Dictionary<string, (Color cellColor, Color fontColor)>
+                    {
+                        { "[!NOTE]", (ColorTranslator.FromHtml("#cce5ff"), ColorTranslator.FromHtml("#004085")) },
+                        { "[!TIP]", (ColorTranslator.FromHtml("#d4edda"), ColorTranslator.FromHtml("#155724")) },
+                        { "[!IMPORTANT]", (ColorTranslator.FromHtml("#d1ecf1"), ColorTranslator.FromHtml("#0c5460")) },
+                        { "[!WARNING]", (ColorTranslator.FromHtml("#fff3cd"), ColorTranslator.FromHtml("#856404")) },
+                        { "[!CAUTION]", (ColorTranslator.FromHtml("#f8d7da"), ColorTranslator.FromHtml("#721c24")) }
+                    };
+
+                    bool applied = false;
+                    foreach (var tag in tagColors.Keys)
+                    {
+                        if (text.StartsWith(tag))
+                        {
+                            text = text.Substring(tag.Length).Trim();
+
+                            ApplyCommentCellColor(tagColors[tag].cellColor, tagColors[tag].fontColor);
+                            dstSheet.Cells[startRow + i, startColumn + j].Value = text;
+                            dstSheet.Cells[startRow + i, resultColumn].Value = "-";
+                            applied = true;
+                            break;
+                        }
+                    }
+
+                    if (applied)
+                    {
+                        break;
+                    }
 
                     const string descPattern = @"^【.*】";
                     const int descCellColorIndex = 37;   // 水色っぽい色
@@ -2255,18 +2307,22 @@ namespace ExcelDnaTest
 
         static void AddPictureAsComment(Excel.Range cell, string imageFilePath)
         {
-            // 画像のサイズを取得
-            System.Drawing.Image image = System.Drawing.Image.FromFile(imageFilePath);
-            float imageWidth = image.Width;
-            float imageHeight = image.Height;
-            image.Dispose();
+            using (System.Drawing.Image image = System.Drawing.Image.FromFile(imageFilePath))
+            {
+                float dpiX = image.HorizontalResolution;
+                float dpiY = image.VerticalResolution;
 
-            // コメントを追加し、画像を背景に設定
-            var comment = cell.AddComment(" ");
-            comment.Visible = false;
-            comment.Shape.Fill.UserPicture(imageFilePath);
-            comment.Shape.Height = imageHeight;
-            comment.Shape.Width = imageWidth;
+                // ピクセル → ポイント（1インチ = 72ポイント）
+                float widthInPoints = image.Width * 72f / dpiX;
+                float heightInPoints = image.Height * 72f / dpiY;
+
+                // コメントを追加し、画像を背景に設定
+                var comment = cell.AddComment(" ");
+                comment.Visible = false;
+                comment.Shape.Fill.UserPicture(imageFilePath);
+                comment.Shape.Width = widthInPoints;
+                comment.Shape.Height = heightInPoints;
+            }
         }
 
         static string GetAbsolutePathFromExecutingDirectory(string relativePath)
