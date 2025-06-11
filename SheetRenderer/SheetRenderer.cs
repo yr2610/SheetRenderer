@@ -2196,7 +2196,8 @@ namespace ExcelDnaTest
                     {
                         { "[!NOTE]", (ColorTranslator.FromHtml("#cce5ff"), ColorTranslator.FromHtml("#004085")) },
                         { "[!TIP]", (ColorTranslator.FromHtml("#d4edda"), ColorTranslator.FromHtml("#155724")) },
-                        { "[!IMPORTANT]", (ColorTranslator.FromHtml("#d1ecf1"), ColorTranslator.FromHtml("#0c5460")) },
+                        //{ "[!IMPORTANT]", (ColorTranslator.FromHtml("#d1ecf1"), ColorTranslator.FromHtml("#0c5460")) },
+                        { "[!IMPORTANT]", (ColorTranslator.FromHtml("#e2dbff"), ColorTranslator.FromHtml("#5936bb")) },
                         { "[!WARNING]", (ColorTranslator.FromHtml("#fff3cd"), ColorTranslator.FromHtml("#856404")) },
                         { "[!CAUTION]", (ColorTranslator.FromHtml("#f8d7da"), ColorTranslator.FromHtml("#721c24")) }
                     };
@@ -2204,7 +2205,7 @@ namespace ExcelDnaTest
                     bool applied = false;
                     foreach (var tag in tagColors.Keys)
                     {
-                        if (text.StartsWith(tag))
+                        if (text.StartsWith(tag, StringComparison.OrdinalIgnoreCase))
                         {
                             text = text.Substring(tag.Length).Trim();
 
