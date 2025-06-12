@@ -2192,28 +2192,36 @@ namespace ExcelDnaTest
                     // IMPORTANT: ユーザーが目的を達成するために知っておくべき重要な情報です。
                     // WARNING: 問題を回避するために、ユーザーがすぐに注意を払う必要がある緊急の情報です。
                     // CAUTION: 特定の行動に伴うリスクや悪影響についての注意喚起です。
-                    var tagColors = new Dictionary<string, (Color cellColor, Color fontColor)>
+                    var tagColors = new Dictionary<string, (Color cellColor, Color fontColor, string emoji)>
                     {
-                        { "[!NOTE]", (ColorTranslator.FromHtml("#cce5ff"), ColorTranslator.FromHtml("#004085")) },
-                        { "[!TIP]", (ColorTranslator.FromHtml("#d4edda"), ColorTranslator.FromHtml("#155724")) },
+                        { "NOTE", (ColorTranslator.FromHtml("#cce5ff"), ColorTranslator.FromHtml("#004085"), "ℹ️") },    // 📝
+                        { "TIP", (ColorTranslator.FromHtml("#d4edda"), ColorTranslator.FromHtml("#155724"), "💡") },
                         //{ "[!IMPORTANT]", (ColorTranslator.FromHtml("#d1ecf1"), ColorTranslator.FromHtml("#0c5460")) },
-                        { "[!IMPORTANT]", (ColorTranslator.FromHtml("#e2dbff"), ColorTranslator.FromHtml("#5936bb")) },
-                        { "[!WARNING]", (ColorTranslator.FromHtml("#fff3cd"), ColorTranslator.FromHtml("#856404")) },
-                        { "[!CAUTION]", (ColorTranslator.FromHtml("#f8d7da"), ColorTranslator.FromHtml("#721c24")) }
+                        { "IMPORTANT", (ColorTranslator.FromHtml("#e2dbff"), ColorTranslator.FromHtml("#5936bb"), "📌") },
+                        { "WARNING", (ColorTranslator.FromHtml("#fff3cd"), ColorTranslator.FromHtml("#856404"), "⚠️") },
+                        { "CAUTION", (ColorTranslator.FromHtml("#f8d7da"), ColorTranslator.FromHtml("#721c24"), "⛔") },  // 🚨🚫
                     };
 
                     bool applied = false;
-                    foreach (var tag in tagColors.Keys)
-                    {
-                        if (text.StartsWith(tag, StringComparison.OrdinalIgnoreCase))
-                        {
-                            text = text.Substring(tag.Length).Trim();
 
-                            ApplyCommentCellColor(tagColors[tag].cellColor, tagColors[tag].fontColor);
-                            dstSheet.Cells[startRow + i, startColumn + j].Value = text;
+                    var match = Regex.Match(text, @"^\[\!(\w+)(-)?\]\s*(.*)", RegexOptions.IgnoreCase);
+                    if (match.Success)
+                    {
+                        var tagName = match.Groups[1].Value.ToUpper(); // 例: "NOTE"
+                        var noEmoji = match.Groups[2].Success;         // "-" があれば true
+                        var body = match.Groups[3].Value;              // 本文
+
+                        if (tagColors.TryGetValue(tagName, out var style))
+                        {
+                            if (!noEmoji)
+                            {
+                                body = style.emoji + " " + body;
+                            }
+
+                            ApplyCommentCellColor(style.cellColor, style.fontColor);
+                            dstSheet.Cells[startRow + i, startColumn + j].Value = body;
                             dstSheet.Cells[startRow + i, resultColumn].Value = "-";
                             applied = true;
-                            break;
                         }
                     }
 
