@@ -2204,7 +2204,7 @@ namespace ExcelDnaTest
 
                     bool applied = false;
 
-                    var match = Regex.Match(text, @"^\[\!(\w+)(-)?\]\s*(.*)", RegexOptions.IgnoreCase);
+                    var match = Regex.Match(text, @"^\[\!(\w+)(-)?\]\s*(.*)", RegexOptions.IgnoreCase | RegexOptions.Singleline);
                     if (match.Success)
                     {
                         var tagName = match.Groups[1].Value.ToUpper(); // 例: "NOTE"
