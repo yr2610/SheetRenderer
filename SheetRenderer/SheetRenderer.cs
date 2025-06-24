@@ -2227,7 +2227,8 @@ namespace ExcelDnaTest
 
                     if (applied)
                     {
-                        break;
+                        //break;
+                        continue;
                     }
 
                     const string descPattern = @"^【.*】";
