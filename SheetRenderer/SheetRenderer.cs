@@ -1466,6 +1466,14 @@ namespace ExcelDnaTest
                     ShowMissingImageFilesDialog(missingImagePaths);
                 }, null);
             }
+
+            // RenderLog を更新して次回以降に今回選択したソースを利用できるようにする
+            RenderLog renderLog = new RenderLog
+            {
+                SourceFilePath = jsonFilePath,
+                User = Environment.UserName
+            };
+            workbook.SetCustomProperty("RenderLog", renderLog);
         }
 
         static bool IsSameNameWorkbookOpen(string fileName)
