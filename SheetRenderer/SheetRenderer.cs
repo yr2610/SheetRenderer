@@ -303,18 +303,18 @@ namespace ExcelDnaTest
         {
             using (OpenFileDialog openFileDialog = new OpenFileDialog())
             {
-                openFileDialog.Filter = "JSONファイル (*.json)|*.json";
-                openFileDialog.Title = "ファイルを選択してください";
+                openFileDialog.Filter = "Text ファイル (*.txt)|*.txt";
+                openFileDialog.Title = "ソースファイルを選択してください";
 
-                if (openFileDialog.ShowDialog() == DialogResult.OK)
-                {
-                    return openFileDialog.FileName;
-                }
-                else
-                {
-                    return null;
-                }
+                return (openFileDialog.ShowDialog() == DialogResult.OK)
+                    ? openFileDialog.FileName
+                    : null;
             }
+        }
+
+        static string TxtToJsonPath(string txtPath)
+        {
+            return Path.ChangeExtension(txtPath, ".json");
         }
 
         // JsonNode から指定した名前のオブジェクトの直下のプロパティをすべて Dictionary<string, string> として返却する
@@ -1111,36 +1111,47 @@ namespace ExcelDnaTest
             var lastRenderLog = workbookInfo.LastRenderLog;
             bool isSameUser = lastRenderLog.User == Environment.UserName;
             bool sourceFileExists = File.Exists(lastRenderLog.SourceFilePath);
-            string jsonFilePath;
+            string txtFilePath;
 
             if (!isSameUser || !sourceFileExists)
             {
-                string message = null;
-                if (!isSameUser)
-                {
-                    message = "最後に更新された環境と異なります。";
-                }
-                else if (!sourceFileExists)
-                {
-                    message = "ソースファイルが見つかりません。";
-                }
+                string message = !isSameUser
+                    ? "最後に更新された環境と異なります。"
+                    : "ソースファイルが見つかりません。";
 
-                DialogResult fileSelectionResult = MessageBox.Show($"{message}\nProject ID が「{projectId}」のソースファイルを選択し直してください。", "確認", MessageBoxButtons.OKCancel);
+                DialogResult fileSelectionResult = MessageBox.Show(
+                    $"{message}\nProject ID が「{projectId}」の TXT を選択し直してください。", "確認",
+                    MessageBoxButtons.OKCancel);
+
                 if (fileSelectionResult != DialogResult.OK)
                 {
                     return;
                 }
 
-                jsonFilePath = OpenSourceFile();
+                txtFilePath = OpenSourceFile();
                 // キャンセルされたら何もしない
-                if (jsonFilePath == null)
+                if (txtFilePath == null)
                 {
                     return;
                 }
             }
             else
             {
-                jsonFilePath = lastRenderLog.SourceFilePath;
+                // RenderLog.SourceFilePath は TXT を想定
+                txtFilePath = lastRenderLog.SourceFilePath;
+            }
+
+            // TXT → JSON 兄弟パスに変換
+            string jsonFilePath = TxtToJsonPath(txtFilePath);
+
+            // JSON が無ければメッセージ出して中断
+            if (!File.Exists(jsonFilePath))
+            {
+                MessageBox.Show(
+                    $"JSON ファイルが見つかりません。\n期待したパス:\n{jsonFilePath}\n\n" +
+                    "先に [Parse] を実行して JSON を生成してください。",
+                    "JSON 不在", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
             }
 
             string jsonString = File.ReadAllText(jsonFilePath);
@@ -1470,7 +1481,7 @@ namespace ExcelDnaTest
             // RenderLog を更新して次回以降に今回選択したソースを利用できるようにする
             RenderLog renderLog = new RenderLog
             {
-                SourceFilePath = jsonFilePath,
+                SourceFilePath = txtFilePath,
                 User = Environment.UserName
             };
             workbook.SetCustomProperty("RenderLog", renderLog);
@@ -1497,21 +1508,37 @@ namespace ExcelDnaTest
 
         async Task CreateNewWorkbook()
         {
-            DialogResult fileSelectionResult = MessageBox.Show($"ファイルを新規作成します。\nソースファイルを選択してください。", "確認", MessageBoxButtons.OKCancel);
+            DialogResult fileSelectionResult = MessageBox.Show(
+                "ファイルを新規作成します。\nソースの TXT を選択してください。",
+                "確認", MessageBoxButtons.OKCancel);
             if (fileSelectionResult != DialogResult.OK)
             {
                 return;
             }
 
-            var jsonFilePath = OpenSourceFile();
+            // TXT を選ぶ
+            var txtFilePath = OpenSourceFile();
             // キャンセルされたら何もしない
-            if (jsonFilePath == null)
+            if (txtFilePath == null)
             {
                 return;
             }
 
-            string jsonString = File.ReadAllText(jsonFilePath);
+            // 兄弟 JSON を決定
+            string jsonFilePath = TxtToJsonPath(txtFilePath);
 
+            // JSON が存在しなければ中断
+            if (!File.Exists(jsonFilePath))
+            {
+                MessageBox.Show(
+                    $"JSON ファイルが見つかりません。\n期待したパス:\n{jsonFilePath}\n\n" +
+                    "先に [Parse] を実行して JSON を生成してください。",
+                    "JSON 不在", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            // jsonFilePath を読み、confData 等を取得してテンプレから生成
+            string jsonString = File.ReadAllText(jsonFilePath);
             JsonNode jsonObject = JsonNode.Parse(jsonString);
             var confData = GetPropertiesFromJsonNode(jsonObject, "variables");
 
@@ -1646,9 +1673,10 @@ namespace ExcelDnaTest
                 ShowMissingImageFilesDialog(missingImagePaths);
             }
 
+            // RenderLog は TXT を保存
             RenderLog renderLog = new RenderLog
             {
-                SourceFilePath = jsonFilePath,
+                SourceFilePath = txtFilePath,   // TXT を保存
                 User = Environment.UserName
             };
             workbook.SetCustomProperty("RenderLog", renderLog);
