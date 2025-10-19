@@ -318,6 +318,25 @@ namespace ExcelDnaTest
             return Path.ChangeExtension(txtPath, ".json");
         }
 
+        static string NormalizeSourceFilePath(string storedPath)
+        {
+            if (string.IsNullOrEmpty(storedPath))
+            {
+                return storedPath;
+            }
+
+            if (string.Equals(Path.GetExtension(storedPath), ".json", StringComparison.OrdinalIgnoreCase))
+            {
+                string candidateTxtPath = Path.ChangeExtension(storedPath, ".txt");
+                if (File.Exists(candidateTxtPath))
+                {
+                    return candidateTxtPath;
+                }
+            }
+
+            return storedPath;
+        }
+
         // JsonNode から指定した名前のオブジェクトの直下のプロパティをすべて Dictionary<string, string> として返却する
         static Dictionary<string, string> GetPropertiesFromJsonNode(JsonNode jsonNode, string objectName)
         {
@@ -784,8 +803,9 @@ namespace ExcelDnaTest
             // lastRenderLog.User が今のユーザーと異なる、もしくは lastRenderLog.SourceFilePath が見つからない場合、前回生成時の環境と異なるとみなしてファイル選択させる
             var lastRenderLog = workbookInfo.LastRenderLog;
             bool isSameUser = lastRenderLog.User == Environment.UserName;
-            bool sourceFileExists = File.Exists(lastRenderLog.SourceFilePath);
-            string jsonFilePath;
+            string storedSourceFilePath = NormalizeSourceFilePath(lastRenderLog.SourceFilePath);
+            bool sourceFileExists = File.Exists(storedSourceFilePath);
+            string txtFilePath;
 
             if (!isSameUser || !sourceFileExists)
             {
@@ -799,22 +819,33 @@ namespace ExcelDnaTest
                     message = "ソースファイルが見つかりません。";
                 }
 
-                DialogResult fileSelectionResult = MessageBox.Show($"{message}\nProject ID が「{projectId}」のソースファイルを選択し直してください。", "確認", MessageBoxButtons.OKCancel);
+                DialogResult fileSelectionResult = MessageBox.Show($"{message}\nProject ID が「{projectId}」の TXT を選択し直してください。", "確認", MessageBoxButtons.OKCancel);
                 if (fileSelectionResult != DialogResult.OK)
                 {
                     return;
                 }
 
-                jsonFilePath = OpenSourceFile();
+                txtFilePath = OpenSourceFile();
                 // キャンセルされたら何もしない
-                if (jsonFilePath == null)
+                if (txtFilePath == null)
                 {
                     return;
                 }
             }
             else
             {
-                jsonFilePath = lastRenderLog.SourceFilePath;
+                txtFilePath = storedSourceFilePath;
+            }
+
+            string jsonFilePath = TxtToJsonPath(txtFilePath);
+
+            if (!File.Exists(jsonFilePath))
+            {
+                MessageBox.Show(
+                    $"JSON ファイルが見つかりません。\n期待したパス:\n{jsonFilePath}\n\n" +
+                    "先に [Parse] を実行して JSON を生成してください。",
+                    "JSON 不在", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
             }
 
             string jsonString = File.ReadAllText(jsonFilePath);
@@ -974,7 +1005,7 @@ namespace ExcelDnaTest
             // TODO: RenderLog 書き出す処理を共通化
             RenderLog renderLog = new RenderLog
             {
-                SourceFilePath = jsonFilePath,
+                SourceFilePath = txtFilePath,
                 User = Environment.UserName
             };
             workbook.SetCustomProperty("RenderLog", renderLog);
@@ -1111,7 +1142,8 @@ namespace ExcelDnaTest
             // lastRenderLog.User が今のユーザーと異なる、もしくは lastRenderLog.SourceFilePath が見つからない場合、前回生成時の環境と異なるとみなしてファイル選択させる
             var lastRenderLog = workbookInfo.LastRenderLog;
             bool isSameUser = lastRenderLog.User == Environment.UserName;
-            bool sourceFileExists = File.Exists(lastRenderLog.SourceFilePath);
+            string storedSourceFilePath = NormalizeSourceFilePath(lastRenderLog.SourceFilePath);
+            bool sourceFileExists = File.Exists(storedSourceFilePath);
             string txtFilePath;
 
             if (!isSameUser || !sourceFileExists)
@@ -1139,7 +1171,7 @@ namespace ExcelDnaTest
             else
             {
                 // RenderLog.SourceFilePath は TXT を想定
-                txtFilePath = lastRenderLog.SourceFilePath;
+                txtFilePath = storedSourceFilePath;
             }
 
             // TXT → JSON 兄弟パスに変換
