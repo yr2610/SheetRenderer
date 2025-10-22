@@ -33,6 +33,8 @@ using Office = Microsoft.Office.Core;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 
+using Microsoft.ClearScript.V8;
+
 
 public class ProgressBarForm : Form
 {
@@ -2473,6 +2475,40 @@ namespace ExcelDnaTest
 
         public void OnTestButtonPressed(IRibbonControl control)
         {
+#if false
+            try
+            {
+                // V8 を使った最小評価
+                using (var engine = new V8ScriptEngine())
+                {
+                    // 1) 素の評価
+                    var val = engine.Evaluate("(() => 21 * 2)()");
+
+                    // 2) .NET → JS 連携（ホスト型/オブジェクト）
+                    engine.AddHostType("DateTime", typeof(DateTime));
+                    engine.AddHostObject("host", new
+                    {
+                        Sum = (Func<int, int, int>)((a, b) => a + b)
+                    });
+
+                    // ★ C#の値を JS グローバルへ露出（ここがミソ）
+                    engine.Script.val = val;                          // 42 を JSで参照可能に
+                    engine.Script.now = DateTime.Now.ToString("G");   // 例：日時も渡す
+
+                    var msg = engine.Evaluate(@"
+                    const s = host.Sum(2, 3);
+                    `now=${DateTime.Now.ToString()}; sum=${s}; val=${" + "val" + @"}`;
+                ");
+
+                    MessageBox.Show($"JS OK:\n{msg}", "ClearScript V8");
+                } // using でネイティブも確実に解放
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(ex.ToString(), "ClearScript Error");
+            }
+            return;
+#endif
             try
             {
                 string wsfPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "scripts", "parse.wsf");
@@ -2485,6 +2521,20 @@ namespace ExcelDnaTest
                     return;
                 }
 
+                // 1) OpenFileDialogでtxtファイルを選択
+                string txtPath;
+                using (var ofd = new OpenFileDialog())
+                {
+                    ofd.Title = "ソースとなるテキストファイルを選択";
+                    ofd.Filter = "テキストファイル (*.txt)|*.txt|すべてのファイル (*.*)|*.*";
+                    ofd.CheckFileExists = true;
+
+                    if (ofd.ShowDialog() != DialogResult.OK)
+                        return; // キャンセル時は終了
+
+                    txtPath = ofd.FileName;
+                }
+
                 // 2) cscript.exe のパス（Excelのbit数に合う実体）
                 string cscript = Path.Combine(Environment.SystemDirectory, "cscript.exe");
 
@@ -2492,9 +2542,10 @@ namespace ExcelDnaTest
                 var args = new StringBuilder();
                 args.Append("//nologo //B ");
                 // 必要ならジョブ名: args.Append("//job:\"Main\" ");
-                args.Append("\"").Append(wsfPath).Append("\"");
+                args.Append("\"").Append(wsfPath).Append("\" ");
+                args.Append("\"").Append(txtPath).Append("\" "); // 選んだtxtファイルパスを渡す
                 // 将来のために非対話フラグも渡しておく（スクリプト側で無視されてもOK）
-                args.Append(" --noninteractive");
+                //args.Append(" --noninteractive");
 
                 var psi = new ProcessStartInfo
                 {
