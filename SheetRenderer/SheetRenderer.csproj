@@ -131,6 +131,7 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="ExcelExtensions.cs" />
+    <Compile Include="JsHost.cs" />
     <Compile Include="SheetRenderer.cs">
       <SubType>Form</SubType>
     </Compile>
@@ -144,8 +145,8 @@
   </ItemGroup>
   <ItemGroup>
     <Content Include="scripts\**\*.*" CopyToOutputDirectory="PreserveNewest" />
-    <Content Include="images\**\*.*"  CopyToOutputDirectory="PreserveNewest" />
-    <Content Include="template.xlsm"  CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="images\**\*.*" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="template.xlsm" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
   <ItemGroup />
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
