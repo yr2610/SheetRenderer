@@ -11,61 +11,116 @@ using Microsoft.ClearScript.V8;
 public static class JsHost
 {
     private static V8ScriptEngine _engine;
+    private static WScriptPolyfill _wscript;
+    private static string _baseDir;
 
-    public static void Init(string scriptsRoot)
+    // ① 初期化（アドイン読み込み時 or 最初に使うときに1回だけ呼ぶ）
+    public static void Init(string baseDir)
     {
-        // V8 エンジン生成（Isolate 名でキャッシュしやすく）
-        _engine = new V8ScriptEngine(V8ScriptEngineFlags.None);
+        if (_engine != null) return; // もう初期化済みなら何もしない
 
-        // 1) 便利ユーティリティ（.NET 側の安全ラッパ）を公開
-        _engine.AddHostObject("host", new HostFunctions());
-        _engine.AddHostType("Console", typeof(Console));
+        _baseDir = baseDir ?? throw new ArgumentNullException(nameof(baseDir));
 
-        // 2) 最小 WSH 互換ポリフィルを注入
-        _engine.Script.WScript = new WScriptPolyfill();
-        _engine.Script.FS = new FsPolyfill(scriptsRoot);
+        _engine = new V8ScriptEngine();
+        _wscript = new WScriptPolyfill();
+        _engine.AddHostObject("WScript", _wscript);
 
-        // 3) 必要ならグローバル定数
-        _engine.Script.__SCRIPTS_ROOT__ = scriptsRoot;
+        // ここで C# 側の橋渡しオブジェクトを公開したい場合は追加で AddHostObject する
+        // 例: _engine.AddHostObject("HostCrypto", new CryptoBridge());
     }
 
-    public static object RunFile(string jsPath, params string[] args)
+    // ② スクリプト読み込み（WSFの<script src="...">相当）
+    //    ここで読み込まれた関数・変数はグローバルに積み上がって残る
+    public static void LoadModule(string path)
     {
-        if (!Path.IsPathRooted(jsPath))
+        EnsureInit();
+
+        // 相対パス対応
+        if (!Path.IsPathRooted(path))
         {
-            throw new ArgumentException("Absolute path required.", nameof(jsPath));
+            path = Path.Combine(_baseDir, path);
         }
 
-        // 引数を WScript.Arguments 風に供給
-        (_engine.Script.WScript as WScriptPolyfill)?.SetArguments(args);
+        if (!File.Exists(path))
+            throw new FileNotFoundException("JSモジュールが見つかりません", path);
 
-        string code = File.ReadAllText(jsPath);
-        return _engine.Evaluate($"(function() {{ {code}\n }})()");
+        var code = File.ReadAllText(path);
+
+        // IIFEで包まず、素のままExecuteするのがポイント
+        // → これで各ファイルの関数が同じグローバルにたまっていく
+        _engine.Execute(path, code);
+    }
+
+    // ③ WScript.Arguments っぽいものをセット
+    public static void SetArguments(params string[] args)
+    {
+        EnsureInit();
+        _wscript.SetArguments(args);
+    }
+
+    // ④ JS側の関数を呼ぶ
+    public static object Call(string functionName, params object[] args)
+    {
+        EnsureInit();
+
+        // C# から JS のグローバル関数を直接呼ぶ
+        // _engine.Script.<名前> は dynamic なのでこうやって呼べる
+        return _engine.Script[functionName].Invoke(false, args);
+    }
+
+    private static void EnsureInit()
+    {
+        if (_engine == null)
+            throw new InvalidOperationException("JsHost.Init() がまだ呼ばれていません。");
     }
 }
 
+// 最低限の WScript 代用品
+// WScriptもどき（最小）
 public class WScriptPolyfill
 {
-    private string[] _args = Array.Empty<string>();
+    private string[] _args = new string[0];
 
-    public void Echo(string s)
+    public void SetArguments(string[] args)
     {
-        Console.WriteLine(s);
-    }
-
-    public void Quit(int code = 0)
-    {
-        throw new ScriptEngineException($"WScript.Quit({code}) called");
+        _args = args ?? new string[0];
     }
 
     public dynamic Arguments
     {
-        get { return _args; }
+        get { return new ArgumentsView(_args); }
     }
 
-    public void SetArguments(string[] args)
+    public void Echo(object msg)
     {
-        _args = args ?? Array.Empty<string>();
+        // 必要ならロギング先を差し替える
+        System.Diagnostics.Debug.WriteLine(msg == null ? "" : msg.ToString());
+    }
+
+    public void Quit(int code = 0)
+    {
+        // WSHだとWScript.Quit(code)でホスト終了だけど、
+        // ここでは例外投げることでCall側に「失敗」として伝える案もある
+        throw new JsQuitException(code);
+    }
+
+    private class ArgumentsView
+    {
+        private readonly string[] _inner;
+        public ArgumentsView(string[] args) { _inner = args; }
+
+        public int length { get { return _inner.Length; } }
+        public string this[int i] { get { return _inner[i]; } }
+        //public string Item(int i) { return _inner[i]; }
+    }
+}
+
+public class JsQuitException : Exception
+{
+    public int ExitCode { get; }
+    public JsQuitException(int exitCode) : base("Script requested quit: " + exitCode)
+    {
+        ExitCode = exitCode;
     }
 }
 
