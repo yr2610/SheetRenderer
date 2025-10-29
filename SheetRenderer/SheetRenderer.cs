@@ -2475,6 +2475,33 @@ namespace ExcelDnaTest
 
         public void OnTestButtonPressed(IRibbonControl control)
         {
+            // アドインの実行ファイルの隣に scripts/ フォルダ置いてる前提
+            var baseDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "scripts");
+            JsHost.Init(baseDir);
+
+            string txtPath2;
+            using (var ofd = new OpenFileDialog())
+            {
+                ofd.Title = "ソースとなるテキストファイルを選択";
+                ofd.Filter = "テキストファイル (*.txt)|*.txt|すべてのファイル (*.*)|*.*";
+                ofd.CheckFileExists = true;
+
+                if (ofd.ShowDialog() != DialogResult.OK)
+                    return; // キャンセル時は終了
+
+                txtPath2 = ofd.FileName;
+            }
+            //JsHost.SetArguments("--in=C:\\tmp\\data.txt", "--out=C:\\tmp\\data.json");
+            JsHost.SetArguments(txtPath2);
+
+            // 最初に共通ライブラリを全部チャージ
+            JsHost.LoadModule(@"lib\lodash.min.js");
+            JsHost.LoadModule(@"lib\js-yaml.min.js");
+
+            // parse_main.js の中の main() を呼ぶイメージ
+            //var result = JsHost.Call("main");
+            return;
+
 #if false
             try
             {
