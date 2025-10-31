@@ -2498,8 +2498,23 @@ namespace ExcelDnaTest
             JsHost.LoadModule(@"lib\lodash.min.js");
             JsHost.LoadModule(@"lib\js-yaml.min.js");
 
-            // parse_main.js の中の main() を呼ぶイメージ
-            //var result = JsHost.Call("main");
+            JsHost.LoadModule(@"app\utilities.js");
+            JsHost.LoadModule(@"app\constants.js");
+            JsHost.LoadModule(@"app\CLCommon.js");
+            JsHost.LoadModule(@"app\preprocess.js");
+            JsHost.LoadModule(@"app\readconf.js");
+            try
+            {
+                JsHost.LoadModule(@"app\txt2json.js");
+
+                // parse_main.js の中の main() を呼ぶイメージ
+                var result = JsHost.Call("parse");
+            }
+            catch (Microsoft.ClearScript.ScriptEngineException ex)
+            {
+                string details = ex.ErrorDetails;
+                MessageBox.Show(details, "JS実行エラー");
+            }
             return;
 
 #if false

@@ -131,6 +131,7 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="ExcelExtensions.cs" />
+    <Compile Include="FileSystemObject.cs" />
     <Compile Include="JsHost.cs" />
     <Compile Include="SheetRenderer.cs">
       <SubType>Form</SubType>

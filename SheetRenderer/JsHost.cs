@@ -24,6 +24,7 @@ public static class JsHost
         _engine = new V8ScriptEngine();
         _wscript = new WScriptPolyfill();
         _engine.AddHostObject("WScript", _wscript);
+        _engine.AddHostObject("FileSystem", new FileSystemObject());
 
         // ここで C# 側の橋渡しオブジェクトを公開したい場合は追加で AddHostObject する
         // 例: _engine.AddHostObject("HostCrypto", new CryptoBridge());
