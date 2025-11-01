@@ -18,9 +18,23 @@ public class FileSystemObject
         return Path.GetDirectoryName(path);
     }
 
+    // FSO: GetFileName に相当（＝拡張子付きのファイル名）
     public string GetFileName(string path)
     {
         return Path.GetFileName(path);
+    }
+
+    // FSO: GetExtensionName("a/b.txt") -> "txt"（先頭ドットなし／拡張子なしなら空文字）
+    public string GetExtensionName(string path)
+    {
+        var ext = Path.GetExtension(path);
+        return string.IsNullOrEmpty(ext) ? "" : (ext[0] == '.' ? ext.Substring(1) : ext);
+    }
+
+    // FSO: GetBaseName("a/b.txt") -> "b"（拡張子抜きのファイル名）
+    public string GetBaseName(string path)
+    {
+        return Path.GetFileNameWithoutExtension(path);
     }
 
     public string GetAbsolutePathName(string path)
@@ -95,5 +109,46 @@ public class FileSystemObject
             _reader?.Dispose();
             _writer?.Dispose();
         }
+    }
+
+    // FSO: BuildPath("a/b", "c.txt") -> "a/b/c.txt"（区切り気にせず結合）
+    public string BuildPath(string path, string name)
+    {
+        return Path.Combine(path ?? "", name ?? "");
+    }
+
+    // FSO: CopyFile(source, destination [, overwrite=false])
+    // destination がフォルダなら中へコピー、ファイルならその名前でコピー
+    public void CopyFile(string source, string destination, bool overwrite = false)
+    {
+        if (string.IsNullOrEmpty(source)) throw new ArgumentNullException(nameof(source));
+        if (string.IsNullOrEmpty(destination)) throw new ArgumentNullException(nameof(destination));
+        if (!File.Exists(source)) throw new FileNotFoundException("Source file not found", source);
+
+        string destFile;
+        if (Directory.Exists(destination))
+        {
+            destFile = Path.Combine(destination, Path.GetFileName(source));
+        }
+        else
+        {
+            // フォルダっぽい終端（…\ or …/）ならフォルダとして扱う
+            if (destination.EndsWith(Path.DirectorySeparatorChar.ToString()) ||
+                destination.EndsWith(Path.AltDirectorySeparatorChar.ToString()))
+            {
+                Directory.CreateDirectory(destination);
+                destFile = Path.Combine(destination, Path.GetFileName(source));
+            }
+            else
+            {
+                destFile = destination;
+                // 親フォルダが無ければ作成（FSOはエラーだが、運用的にこちらが便利）
+                var parent = Path.GetDirectoryName(destFile);
+                if (!string.IsNullOrEmpty(parent) && !Directory.Exists(parent))
+                    Directory.CreateDirectory(parent);
+            }
+        }
+
+        File.Copy(source, destFile, overwrite);
     }
 }
