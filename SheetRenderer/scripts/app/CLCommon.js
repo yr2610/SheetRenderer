@@ -347,9 +347,8 @@ CL.yyyymmddhhmmss = function (date) {
 
 // フォルダが存在しなければ作成
 // フォルダ名として作れないパスを渡された場合は無視
-CL.createFolder = function (folderPath)
-{
-  var fso = new ActiveXObject("Scripting.FileSystemObject");
+CL.createFolder = function (folderPath) {
+  var fso = FileSystem;
 
   function recurse(folderPath) {
     var parentFolderPath = fso.GetParentFolderName(folderPath);
@@ -371,7 +370,7 @@ CL.createFolder = function (folderPath)
 
 // 指定したフォルダ（相対パス。なければ作る）にファイルを移動
 CL.moveFile = function (filePath, relativeFolderPath) {
-  var fso = new ActiveXObject("Scripting.FileSystemObject");
+  var fso = FileSystem;
   var parentFolderPath = fso.GetParentFolderName(filePath);
   var dstFolderPath = fso.BuildPath(parentFolderPath, relativeFolderPath);
   var fileName = fso.GetFileName(filePath);
@@ -383,10 +382,8 @@ CL.moveFile = function (filePath, relativeFolderPath) {
 };
 
 // DateLastModified をつけたファイル名を生成
-CL.makeBackupFileName = function (filePath, fso) {
-  if (typeof fso === "undefined") {
-    fso = new ActiveXObject("Scripting.FileSystemObject");
-  }
+CL.makeBackupFileName = function (filePath) {
+  var fso = FileSystem;
   var file = fso.GetFile(filePath);
   var lastModifiedDate = CL.yyyymmddhhmmss(new Date(file.DateLastModified)).slice(2);
   var backupFileName = fso.GetBaseName(filePath) + "-bak" + lastModifiedDate + "." + fso.GetExtensionName(filePath);
@@ -398,7 +395,7 @@ CL.makeBackupFileName = function (filePath, fso) {
 // 更新日時をファイル名に追加したような名前でコピーする
 // filePath にディレクトリー付きのパスを渡してもファイル名だけ返す
 CL.makeBackupFile = function (filePath, relativeFolderPath) {
-  var fso = new ActiveXObject("Scripting.FileSystemObject");
+  var fso = FileSystem;
   var backupFolderPath = fso.GetParentFolderName(filePath);
   if (typeof relativeFolderPath !== "undefined") {
     backupFolderPath = fso.BuildPath(backupFolderPath, relativeFolderPath);
@@ -420,13 +417,11 @@ CL.getRelativePath = function (basePath, absolutePath) {
       return "";
   }
 
-  var fso = new ActiveXObject("Scripting.FileSystemObject");
+  var fso = FileSystem;
   var directorySeparatorChar = "\\";
   var parentDirectoryString = ".." + directorySeparatorChar;
 
   basePath = _.trimRight(basePath, directorySeparatorChar);
-
-  var fso = new ActiveXObject("Scripting.FileSystemObject");
 
   basePath = fso.GetAbsolutePathName(basePath);
   absolutePath = fso.GetAbsolutePathName(absolutePath);
@@ -501,177 +496,4 @@ CL.yyyymmddhhmmssExcelFormat = function (date) {
   );
   
   return s;
-};
-
-// sheet に更新履歴を書き出す
-CL.renderHistoryToSheet = function(dstSheet, history, root, excel, templateData)
-{
-  var checkSheetTableRow = 0;
-  if (!_.isUndefined(templateData)) {
-    checkSheetTableRow = templateData.checkSheet.table.row;
-  }
-
-  function getIdToY(leafNodes) {
-    var idToY = [];
-
-    for (var i = 0; i < leafNodes.length; i++)
-    {
-        idToY[leafNodes[i].id] = i;
-    }
-
-    return idToY;
-  }
-
-  function findH1NodeById(id) {
-    var nodeH1 = null;
-    CL.forAllNodes(root, null, function (node, parent) {
-      if (parent !== root) {
-        return false;
-      }
-      if (node.id === id) {
-        nodeH1 = node;
-        return true;
-      }
-      return false;
-    });
-    return nodeH1;
-  }
-
-  var array = [];
-
-  var headers = ["Rev.", "ユーザー", "日付", "シート", "行", "項目", "列", "元", "変更後"];
-  array.push(headers);
-
-  // 新しい順に並び替え
-  var changeSets = history.changeSets.slice(0).reverse();
-
-  // XXX: 力技で deep copy…
-  var data = JSON.parse(JSON.stringify(history.data));
-
-  for (var i = 0; i < changeSets.length; i++)
-  {
-    var changeSet = changeSets[i];
-    if (!changeSet.changes) {
-      continue;
-    }
-    var row = [];
-    row.push(changeSet.revision);
-    row.push(changeSet.author);
-    row.push(CL.yyyymmddhhmmssExcelFormat(new Date(changeSet.date)));
-    var sheets = changeSet.changes.checkSheet.sheets;
-    for (var sheetId in sheets)
-    {
-      var sheet = sheets[sheetId];
-      var sheetData = data.checkSheet.sheets[sheetId];
-      var nodeH1 = findH1NodeById(sheetId);
-      var idToY = getIdToY(CL.getLeafNodes(nodeH1));
-      row.push(sheet.text);
-      for (var id in sheet.items)
-      {
-        var item = sheet.items[id];
-        var itemData = sheetData.items[id];
-        row.push(checkSheetTableRow + idToY[id]); // TODO: リンク張る
-        row.push(_.trunc(item.text));  // TODO: パスを入れる
-        for (var header in item.values)
-        {
-          var value0 = item.values[header];
-          var value1 = itemData.values[header];
-          itemData.values[header] = value0;
-          row.push(header);
-          row.push(value0 === null ? "" : value0);
-          row.push(value1);
-          array.push(row.slice(0));
-          row.pop();
-          row.pop();
-          row.pop();
-        }
-        row.pop();
-        row.pop();
-      }
-      row.pop();
-    }
-  }
-  
-  excel.ScreenUpdating = false;
-
-  var range = dstSheet.Cells(1, 1).Resize(array.length, headers.length);
-  range.Value = jsArray2dToSafeArray2d(array);
-
-  var xlSrcRange = 1;
-  var xlYes = 1;
-  //var table = dstSheet.ListObjects.Add(xlSrcRange, Range("$A$1:$D$5"), , xlYes).Name = "テーブル";
-  //dstSheet.Range("テーブル[#All]").ListObjects("テーブル").TableStyle = "TableStyleMedium2"
-  var listObject = dstSheet.ListObjects.Add(xlSrcRange, dstSheet.UsedRange, null, xlYes);
-  listObject.TableStyle = "TableStyleMedium2";
-  //listObject.ShowTotals = true;
-
-  dstSheet.UsedRange.EntireColumn.AutoFit;
-
-  dstSheet.Cells(1, 1).Resize(1, headers.length).Select();
-  excel.ActiveWindow.Zoom = true;
-  dstSheet.Cells(2, 1).Select();  // 何となく
-
-  excel.ScreenUpdating = true;
-};
-
-CL.addSheetToEndOfBook = function (book, name, visible) {
-    var sheet = book.Worksheets.Add();
-    sheet.Name = name;
-    // 非表示のシートが末尾にある場合は、その非表示のシートより前に移動する仕様っぽい
-    sheet.Move(null, book.Worksheets(book.Worksheets.Count));
-    sheet.Visible = visible;
-
-    return sheet;
-};
-
-// 更新履歴シート作成
-CL.createChangelogSheet = function(book, history, root, excel, templateData) {
-  var changelogSheet = findSheetByName(book, "changelog");
-  // あれば削除して作り直す
-  if (changelogSheet)
-  {
-      excel.DisplayAlerts = false;
-      changelogSheet.Delete();
-      excel.DisplayAlerts = true;
-  }
-
-  // revision 0 の場合は作らない
-  if (history.head === 0) {
-    return null;
-  }
-
-  changelogSheet = CL.addSheetToEndOfBook(book, "changelog", true);
-  // 先頭に移動して選択
-  // → やっぱり先頭に移動はやめておく
-  //changelogSheet.Move(book.Worksheets(1), null);
-  changelogSheet.Select();
-  CL.renderHistoryToSheet(changelogSheet, history, root, excel, templateData);
-
-  return changelogSheet;
-};
-
-// Excel等のファイルがすでに開かれているか判定
-CL.isFileOpened = function(filePath) {
-  var fso = new ActiveXObject("Scripting.FileSystemObject");
-  try {
-    // 同じ名前にリネームしてみてエラーになるかどうかで判定
-    // ファイルをロックする系のアプリで開かれているかはこれで判定可能とのこと
-    fso.MoveFile(filePath, filePath);
-  } catch(e) {
-    return true;
-  }
-  return false;
-};
-
-CL.getIndexSheet = function(book, root) {
-//  if (root.variables.sheetname) {
-//    root.variables.indexSheetname = root.variables.sheetname;
-//  }
-//  var sheetname = root.variables.indexSheetname;
-//
-//  sheetname = _.isUndefined(sheetname) ? "index" : sheetname;
-
-  var sheetname = root.variables.indexSheetname || root.variables.sheetname || "index";
-
-  return findSheetByName(book, sheetname);
 };

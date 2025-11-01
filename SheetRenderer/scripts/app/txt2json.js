@@ -1,16 +1,5 @@
-﻿var isCscript = /cscript\.exe$/i.test(WScript.FullName);
-function println(s) {
-    try {
-        if (isCscript && WScript.StdOut) {
-            WScript.StdOut.WriteLine(s);
-            return;
-        }
-    } catch (e) { /* ignore */ }
-    WScript.Echo(s); // wscript用フォールバック
-}
-
-function alert(s) {
-    println(s);
+﻿function alert(s) {
+    WScript.Echo(s);
 }
 
 function printJSON(json) {
@@ -271,7 +260,6 @@ function absorbContinuations(reader, text, baseline, options) {
 
 var shell = null;
 var shellApplication = null;
-var fso = null;
 var stream = null;
 
 var conf = null;
@@ -279,7 +267,6 @@ var conf = null;
 function setupEnvironment(force) {
     if (force || !shell) shell = new ActiveXObject("WScript.Shell");
     if (force || !shellApplication) shellApplication = new ActiveXObject("Shell.Application");
-    if (force || !fso) fso = new ActiveXObject("Scripting.FileSystemObject");
     if (force || !stream) stream = new ActiveXObject("ADODB.Stream");
 }
 
@@ -334,10 +321,6 @@ ArrayReader.prototype.read = function(o) { if (this.atEnd) return null; if (this
 // すべての ID を割り当て直す
 var fResetId = false;
 
-var runInCScript = (function() {
-    return (FileSystem.getBaseName(WScript.FullName).toLowerCase() === "cscript");
-})();
-
 function $templateObject(object, data) {
     var json = JSON.stringify(object);
     function replacer(m, k) {
@@ -367,11 +350,8 @@ function makeLineinfoString(filePath, lineNum) {
     return s;
 }
 
-function getRelativePath(filePath, rootFilePath, fso) {
-    if (typeof fso === "undefined") {
-        fso = new ActiveXObject("Scripting.FileSystemObject");
-    }
-
+function getRelativePath(filePath, rootFilePath) {
+    var fso = FileSystem;
     var absFile = fso.GetAbsolutePathName(filePath);
     var rootDir = fso.GetParentFolderName(fso.GetAbsolutePathName(rootFilePath));
 
@@ -405,7 +385,7 @@ function parseError(e) {
 
 function MyError(message, filePath, lineNum) {
     if (typeof filePath !== "undefined") {
-        var relativeFilePath = getRelativePath(filePath, rootFilePath, fso);
+        var relativeFilePath = getRelativePath(filePath, rootFilePath);
         if (relativeFilePath) {
             filePath = relativeFilePath;
         }
@@ -413,11 +393,7 @@ function MyError(message, filePath, lineNum) {
         message += "\n" + makeLineinfoString(filePath, lineNum);
     }
 
-    if (runInCScript) {
-        WScript.StdErr.Write(message);
-    } else {
-        showPopup(message, 0, "エラー", ICON_EXCLA);
-    }
+    WScript.StdErr.Write(message);
     WScript.Quit(1);
 }
 
@@ -488,7 +464,7 @@ var intermediateDirectoryName = "intermediate";
 
 function readVarsFile(varsFileName) {
     var varsFilePath = fso.BuildPath(fso.GetParentFolderName(filePath), varsFileName);
-    if (!fso.FileExists(varsFilePath)) {
+    if (!FileSystem.FileExists(varsFilePath)) {
         return {};
     }
 
@@ -1704,7 +1680,7 @@ var lastParsedRoot;
 
 (function() {
     // 前回出力したJSONファイルがあれば読む
-    if (!fso.FileExists(outfilePath)) {
+    if (!FileSystem.FileExists(outfilePath)) {
         return;
     }
 
@@ -2094,9 +2070,9 @@ function getPlaceholderWarningsFilePath() {
 
 function clearPlaceholderWarningsFile() {
     var warningsFilePath = getPlaceholderWarningsFilePath();
-    if (fso.FileExists(warningsFilePath)) {
+    if (FileSystem.FileExists(warningsFilePath)) {
         try {
-            fso.DeleteFile(warningsFilePath);
+            FileSystem.DeleteFile(warningsFilePath);
         } catch (e) {
             // ignore failures (e.g. read-only file)
         }
@@ -2110,9 +2086,9 @@ function getPlaceholderWarningsCacheFilePath() {
 
 function clearPlaceholderWarningsCacheFile() {
     var cacheFilePath = getPlaceholderWarningsCacheFilePath();
-    if (fso.FileExists(cacheFilePath)) {
+    if (FileSystem.FileExists(cacheFilePath)) {
         try {
-            fso.DeleteFile(cacheFilePath);
+            FileSystem.DeleteFile(cacheFilePath);
         } catch (e) {
             // ignore failures (e.g. read-only file)
         }
@@ -2121,7 +2097,7 @@ function clearPlaceholderWarningsCacheFile() {
 
 function loadPlaceholderWarningsCache() {
     var cacheFilePath = getPlaceholderWarningsCacheFilePath();
-    if (!fso.FileExists(cacheFilePath)) {
+    if (!FileSystem.FileExists(cacheFilePath)) {
         return {};
     }
 
@@ -4199,32 +4175,18 @@ var strUpdatedSrcFiles = (function () {
 
 var placeholderWarningsMessage = finalizePlaceholderWarnings();
 
-if (!runInCScript) {
-    var messageParts = ["JSONファイル(" + outFilename + ")を出力しました"];
+var cliMessageParts = [];
 
-    if (strUpdatedSrcFiles) {
-        messageParts.push(strUpdatedSrcFiles);
-    }
-    if (placeholderWarningsMessage) {
-        messageParts.push(placeholderWarningsMessage);
-    }
-
-    alert(messageParts.join("\n\n---\n\n"));
+// CScript 実行時は更新情報と警告のみ通知する
+if (strUpdatedSrcFiles) {
+    cliMessageParts.push(strUpdatedSrcFiles);
 }
-else {
-    var cliMessageParts = [];
+if (placeholderWarningsMessage) {
+    cliMessageParts.push(placeholderWarningsMessage);
+}
 
-    // CScript 実行時は更新情報と警告のみ通知する
-    if (strUpdatedSrcFiles) {
-        cliMessageParts.push(strUpdatedSrcFiles);
-    }
-    if (placeholderWarningsMessage) {
-        cliMessageParts.push(placeholderWarningsMessage);
-    }
-
-    if (cliMessageParts.length > 0) {
-        alert(cliMessageParts.join("\n\n---\n\n"));
-    }
+if (cliMessageParts.length > 0) {
+    alert(cliMessageParts.join("\n\n---\n\n"));
 }
     
 }
