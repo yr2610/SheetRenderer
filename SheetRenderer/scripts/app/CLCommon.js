@@ -5,42 +5,9 @@ CL.kind = {
   UL: "UL"
 };
 
-CL.readTextFileUTF8 = function (filePath) {
-  var stream = new ActiveXObject("ADODB.Stream");
-
-  stream.Type = adTypeText;
-  stream.charset = "utf-8";
-  stream.Open();
-  stream.LoadFromFile(filePath);
-  var s = stream.ReadText(adReadAll);
-  stream.Close();
-
-  return s;
-};
-
 // json をテキストファイルに書き出すのを作ったけど、 stringify は別にやれば済む話なので単に文字列をテキストファイル化するだけな感じで
 CL.writeTextFileUTF8 = function (s, outFilePath) {
-  var stream = new ActiveXObject("ADODB.Stream");
-
-  stream.Type = adTypeText;
-  stream.charset = "utf-8";
-  stream.Open();
-
-  s = s.split("\n").join("\r\n"); // メモ帳で開けるように…
-
-  stream.WriteText(s, adWriteChar);
-
-  stream.Position = 0;
-  stream.Type = adTypeBinary;
-  stream.Position = 3;
-  var bytes = stream.Read();
-  stream.Position = 0;
-  stream.SetEOS();
-  stream.Write(bytes);
-
-  stream.SaveToFile(outFilePath, adSaveCreateOverWrite);
-  stream.Close();
-  stream = null;
+  File.WriteAllText(outFilePath, s);
 };
 
 // 圧縮されてれば展開
@@ -80,16 +47,16 @@ CL.decompressJSON = function (json) {
 };
 
 CL.readJSONFile = function (jsonFilePath) {
-  var s = CL.readTextFileUTF8(jsonFilePath);
+  var s = File.ReadAllText(jsonFilePath);
 
   return CL.decompressJSON(s).object;
 };
 CL.ReadJSONFile = CL.readJSONFile;
 
 CL.readYAMLFile = function (yamlFilePath) {
-  var s = CL.readTextFileUTF8(yamlFilePath);
+  var s = File.ReadAllText(yamlFilePath);
 
-  return jsyaml.safeLoad(s);
+  return jsyaml.load(s);
 };
 
 CL.readJSONFromSheet = function (jsonSheet) {
@@ -421,7 +388,7 @@ CL.getRelativePath = function (basePath, absolutePath) {
   var directorySeparatorChar = "\\";
   var parentDirectoryString = ".." + directorySeparatorChar;
 
-  basePath = _.trimRight(basePath, directorySeparatorChar);
+  basePath = _.trimEnd(basePath, directorySeparatorChar);
 
   basePath = fso.GetAbsolutePathName(basePath);
   absolutePath = fso.GetAbsolutePathName(absolutePath);

@@ -47,7 +47,101 @@ function toKeySet(keys) {
 
 var DEFAULT_DROP_KEYS = toKeySet(DROP_KEYS_LIST);
 
-function parse(filePath) {
+
+function $templateObject(object, data) {
+    var json = JSON.stringify(object);
+    function replacer(m, k) {
+        return data[k];
+    }
+    json = json.replace(/\{\{([^\}]+)\}\}/g, replacer);
+
+    return JSON.parse(json);
+}
+
+// file の ReadLine(), AtEndOfStream 風の仕様で配列にアクセスするための機構を用意
+function ArrayReader(array) { this.__a = array; this.index = 0; this.atEnd = false; }
+ArrayReader.prototype.read = function(o) { if (this.atEnd) return null; if (this.index + 1 >= this.__a.length) this.atEnd = true; return this.__a[this.index++]; }
+
+var ParseError = function(errorMessage, lineObj) {
+    this.errorMessage = errorMessage;
+    this.lineObj = lineObj;
+};
+
+// ParseError が引数
+function parseError(e) {
+    if (_.isUndefined(e.lineObj)) {
+        MyError(e.errorMessage);
+    }
+    else {
+        var lineObj = e.lineObj;
+        MyError(e.errorMessage, lineObj.filePath, lineObj.lineNum);
+    }
+}
+
+function MyError(message, filePath, lineNum) {
+    if (typeof filePath !== "undefined") {
+        var relativeFilePath = getRelativePath(filePath, rootFilePath);
+        if (relativeFilePath) {
+            filePath = relativeFilePath;
+        }
+
+        message += "\n" + makeLineinfoString(filePath, lineNum);
+    }
+
+    Notifier.Error("", message);
+    //WScript.StdErr.Write(message);
+    WScript.Quit(1);
+}
+
+function makeLineinfoString(filePath, lineNum) {
+    var s = "";
+
+    // ファイル名がない時点で終了
+    if (typeof filePath === 'undefined') {
+        return s;
+    }
+
+    s += "\nファイル:\t" + filePath;
+
+    if (typeof lineNum === 'undefined') {
+        return s;
+    }
+
+    s += "\n行:\t" + lineNum;
+
+    return s;
+}
+
+function getRelativePath(filePath, rootFilePath) {
+    var absFile = FileSystem.GetAbsolutePathName(filePath);
+    var rootDir = FileSystem.GetParentFolderName(FileSystem.GetAbsolutePathName(rootFilePath));
+
+    // 比較用に区切りと大文字/小文字を正規化
+    var a = absFile.replace(/\//g, "\\").toLowerCase();
+    var b = rootDir.replace(/\//g, "\\").toLowerCase();
+
+    if (a.indexOf(b + "\\") !== 0) {
+        return null;
+    }
+
+    // 返り値は元の大小を保った相対パス
+    return absFile.slice(rootDir.length + 1);
+}
+
+// プロジェクトフォルダ内のソース置き場
+const sourceDirectoryName = "source";
+
+let absolutePathToSourceLocalPath;
+let directoryLocalPathToAbsolutePath;
+
+let filePath;
+let rootFilePath;
+
+function parse(filePath_) {
+    filePath = filePath_;
+
+    absolutePathToSourceLocalPath = absolutePathToSourceLocalPath_;
+    directoryLocalPathToAbsolutePath = directoryLocalPathToAbsolutePath_;
 
 // --- numeric repeat sugar (lodash 3.10.1 前提) ---
 var ENABLE_NUMERIC_REPEAT = (conf && conf.ENABLE_NUMERIC_REPEAT === false) ? false : true;
@@ -258,144 +352,23 @@ function absorbContinuations(reader, text, baseline, options) {
     return text;
 }
 
-var shell = null;
-var shellApplication = null;
-var stream = null;
-
 var conf = null;
 
-function setupEnvironment(force) {
-    if (force || !shell) shell = new ActiveXObject("WScript.Shell");
-    if (force || !shellApplication) shellApplication = new ActiveXObject("Shell.Application");
-    if (force || !stream) stream = new ActiveXObject("ADODB.Stream");
-}
-
-function showPopup(message, secondsToWait, title, type) {
-    if (_.isUndefined(secondsToWait)) secondsToWait = 0;
-    if (_.isUndefined(title)) title = "";
-    if (_.isUndefined(type)) type = 0;
-
-    for (var attempt = 0; attempt < 2; attempt++) {
-        try {
-            setupEnvironment(attempt > 0);
-            return shell.Popup(message, secondsToWait, title, type);
-        } catch (err) {
-            shell = null;
-            if (attempt === 1) {
-                throw err;
-            }
-        }
-    }
-}
-
-function parseArgs() {
-    if (( WScript.Arguments.length != 1 ) ||
-        ( WScript.Arguments.Unnamed(0) == "")) {
-        MyError("チェックリストのソースファイル（.txt）をドラッグ＆ドロップしてください。");
-    }
-    return WScript.Arguments.Unnamed(0);
-}
-
 function computeRootId() {
-
     // root.children を基に hash を求める
     //var k = JSON.stringify(root.children);
     var k = _.values(srcTexts).join("\n");
     var scopeHash = root.globalScopeHash || "";
     k += scopeHash;
 
-    //var startTime = performance.now();
 //    var shaObj = new jsSHA("SHA-256", "TEXT", { encoding: "UTF8" });
 //    shaObj.update(k);
 //    root.id = shaObj.getHash("HEX");
     root.id = getMD5Hash(k);
-    //var endTime = performance.now();
-    //alert(endTime - startTime);
-
 }
-
-// file の ReadLine(), AtEndOfStream 風の仕様で配列にアクセスするための機構を用意
-function ArrayReader(array) { this.__a = array; this.index = 0; this.atEnd = false; }
-ArrayReader.prototype.read = function(o) { if (this.atEnd) return null; if (this.index + 1 >= this.__a.length) this.atEnd = true; return this.__a[this.index++]; }
 
 // すべての ID を割り当て直す
 var fResetId = false;
-
-function $templateObject(object, data) {
-    var json = JSON.stringify(object);
-    function replacer(m, k) {
-        return data[k];
-    }
-    json = json.replace(/\{\{([^\}]+)\}\}/g, replacer);
-
-    return JSON.parse(json);
-}
-
-function makeLineinfoString(filePath, lineNum) {
-    var s = "";
-
-    // ファイル名がない時点で終了
-    if (typeof filePath === 'undefined') {
-        return s;
-    }
-
-    s += "\nファイル:\t" + filePath;
-
-    if (typeof lineNum === 'undefined') {
-        return s;
-    }
-
-    s += "\n行:\t" + lineNum;
-
-    return s;
-}
-
-function getRelativePath(filePath, rootFilePath) {
-    var fso = FileSystem;
-    var absFile = fso.GetAbsolutePathName(filePath);
-    var rootDir = fso.GetParentFolderName(fso.GetAbsolutePathName(rootFilePath));
-
-    // 比較用に区切りと大文字/小文字を正規化
-    var a = absFile.replace(/\//g, "\\").toLowerCase();
-    var b = rootDir.replace(/\//g, "\\").toLowerCase();
-
-    if (a.indexOf(b + "\\") !== 0) {
-        return null;
-    }
-
-    // 返り値は元の大小を保った相対パス
-    return absFile.slice(rootDir.length + 1);
-}
-
-var ParseError = function(errorMessage, lineObj) {
-    this.errorMessage = errorMessage;
-    this.lineObj = lineObj;
-};
-
-// ParseError が引数
-function parseError(e) {
-    if (_.isUndefined(e.lineObj)) {
-        MyError(e.errorMessage);
-    }
-    else {
-        var lineObj = e.lineObj;
-        MyError(e.errorMessage, lineObj.filePath, lineObj.lineNum);
-    }
-}
-
-function MyError(message, filePath, lineNum) {
-    if (typeof filePath !== "undefined") {
-        var relativeFilePath = getRelativePath(filePath, rootFilePath);
-        if (relativeFilePath) {
-            filePath = relativeFilePath;
-        }
-
-        message += "\n" + makeLineinfoString(filePath, lineNum);
-    }
-
-    WScript.StdErr.Write(message);
-    WScript.Quit(1);
-}
 
 function createRandomId(len, random) {
     if (_.isUndefined(random)) {
@@ -436,34 +409,17 @@ if (typeof(global) === 'undefined') {
     global = Function('return this')();
 }
 
-setupEnvironment();
-
-filePath = parseArgs();
-
-if (fso.GetExtensionName(filePath) != "txt") {
-    MyError(".txt ファイルをドラッグ＆ドロップしてください。");
-}
-
-var outFilename = fso.GetBaseName(filePath) + ".json";
-var outfilePath = fso.BuildPath(fso.GetParentFolderName(filePath), outFilename);
-
-// Performance を取得
-var htmlfile = WSH.CreateObject("htmlfile");
-htmlfile.write('<meta http-equiv="x-ua-compatible" content="IE=Edge"/>');
-var performance = htmlfile.parentWindow.performance;
-htmlfile.close();
-
-// プロジェクトフォルダ内のソース置き場
-var sourceDirectoryName = "source";
+var outFilename = FileSystem.GetBaseName(filePath) + ".json";
+var outfilePath = FileSystem.BuildPath(FileSystem.GetParentFolderName(filePath), outFilename);
 
 // バックアップ置き場
-var backupDirectoryName = "bak";
+const backupDirectoryName = "bak";
 
 // 中間生成ファイル置き場
-var intermediateDirectoryName = "intermediate";
+const intermediateDirectoryName = "intermediate";
 
 function readVarsFile(varsFileName) {
-    var varsFilePath = fso.BuildPath(fso.GetParentFolderName(filePath), varsFileName);
+    var varsFilePath = FileSystem.BuildPath(FileSystem.GetParentFolderName(filePath), varsFileName);
     if (!FileSystem.FileExists(varsFilePath)) {
         return {};
     }
@@ -485,7 +441,7 @@ function readVarsFile(varsFileName) {
         var includeFiles = target.$include;
         delete target.$include;
 
-        var baseDirectory = fso.GetParentFolderName(baseFile);
+        var baseDirectory = FileSystem.GetParentFolderName(baseFile);
         _.forEach(includeFiles, function(value) {
             var includeFilePath;
             if (typeof value === "string" && value.charAt(0) === "/") {
@@ -493,9 +449,9 @@ function readVarsFile(varsFileName) {
                 if (!rootDirectory) {
                     rootDirectory = baseDirectory;
                 }
-                includeFilePath = fso.BuildPath(rootDirectory, value.slice(1));
+                includeFilePath = FileSystem.BuildPath(rootDirectory, value.slice(1));
             } else {
-                includeFilePath = fso.BuildPath(baseDirectory, value);
+                includeFilePath = FileSystem.BuildPath(baseDirectory, value);
             }
 
             var includeData = CL.readYAMLFile(includeFilePath) || {};
@@ -511,13 +467,15 @@ function readVarsFile(varsFileName) {
 
 var confFileName = "conf.yml";
 (function() {
-    var baseName = fso.GetBaseName(filePath);
+    var baseName = FileSystem.GetBaseName(filePath);
     baseName = baseName.replace(/_index$/, "");
     if (baseName != "index") {
         confFileName = baseName + "_" + confFileName;
     }
 })();
-conf = readConfigFile(confFileName);
+const confFilePath = FileSystem.BuildPath(FileSystem.GetParentFolderName(filePath), confFileName);
+
+conf = readConfigFile(confFilePath);
 
 // 一番上の階層の upper snake case なプロパティをシートから閲覧できるようにする
 var confGlobalScope = (function(original) {
@@ -532,9 +490,9 @@ var confGlobalScope = (function(original) {
     return filtered;
 })(conf);
 
-var varsFileName = "vars.yml";
+let varsFileName = "vars.yml";
 (function() {
-    var baseName = fso.GetBaseName(filePath);
+    var baseName = FileSystem.GetBaseName(filePath);
     baseName = baseName.replace(/_index$/, "");
     if (baseName != "index") {
         varsFileName = baseName + "_" + varsFileName;
@@ -546,20 +504,20 @@ var initialGlobalScope = _.extend({}, confGlobalScope, readVarsFile(varsFileName
 var globalScope = _.cloneDeep(initialGlobalScope);
 
 var entryFilePath = filePath;
-var entryProject = fso.GetParentFolderName(entryFilePath);
+var entryProject = FileSystem.GetParentFolderName(entryFilePath);
 var entryProjectFromRoot = CL.getRelativePath(conf.$rootDirectory, entryProject);
 
 // XXX: entry source からの相対パスを root からの絶対パスに変換
 // XXX: 名前が機能を十分に説明してないけど、基本的に source 以下のファイル以外を変換するケースはないと思うので…
 function $abspath(path) {
-    var entrySourceDirectoryFromRoot = fso.BuildPath(entryProjectFromRoot, sourceDirectoryName);
-    return "/" + fso.BuildPath(entrySourceDirectoryFromRoot, path);
+    var entrySourceDirectoryFromRoot = FileSystem.BuildPath(entryProjectFromRoot, sourceDirectoryName);
+    return "/" + FileSystem.BuildPath(entrySourceDirectoryFromRoot, path);
 }
 
 var allFilePaths = [];
 
-var rootFilePath = filePath;
-var srcLines = preProcess(filePath);
+rootFilePath = filePath;
+var srcLines = preProcess(filePath, conf.$rootDirectory);
 srcLines = new ArrayReader(srcLines);
 
 var stack = new Stack();
@@ -614,7 +572,7 @@ stack.push(root);
 
     if (!_.isUndefined(root.variables.rootDirectory)) {
         // 相対パスに変換
-        var basePath = fso.GetParentFolderName(filePath);
+        var basePath = FileSystem.GetParentFolderName(filePath);
         var absolutePath = root.variables.rootDirectory;
         var relativePath = CL.getRelativePath(basePath, absolutePath);
 
@@ -654,7 +612,7 @@ stack.push(root);
 
 // root local な project path から project path local なパスを取得
 function getProjectLocalPath(filePath, projectDirectory) {
-    var projectDirectoryAbs = fso.BuildPath(conf.$rootDirectory, projectDirectory);
+    var projectDirectoryAbs = FileSystem.BuildPath(conf.$rootDirectory, projectDirectory);
 
     return CL.getRelativePath(projectDirectoryAbs, filePath);
 }
@@ -734,7 +692,7 @@ function FindUidList(parent) {
 
 function parseComment(text, lineObj) {
     var projectDirectoryFromRoot = lineObj.projectDirectory;
-    var fileParentFolderAbs = sourceLocalPathToAbsolutePath(fso.GetParentFolderName(lineObj.filePath), projectDirectoryFromRoot);
+    var fileParentFolderAbs = sourceLocalPathToAbsolutePath(FileSystem.GetParentFolderName(lineObj.filePath), projectDirectoryFromRoot);
     // 複数行テキストに対応するために .+ じゃなくて [\s\S]+
     var re = /^([\s\S]+)\s+\[\^(.+)\]$/;
     var commentMatch = text.trim().match(re);
@@ -1337,7 +1295,7 @@ while (!srcLines.atEnd) {
         var o;
 
         try {
-            o = jsyaml.safeLoad(s);
+            o = jsyaml.load(s);
         }
         catch (e) {
             var errorMessage = "YAML の parse に失敗しました。";
@@ -1684,11 +1642,7 @@ var lastParsedRoot;
         return;
     }
 
-    var s = CL.readTextFileUTF8(outfilePath);
-    //var startTime = performance.now();
-    //lastParsedRoot = JSON.parse(s);
-    //var endTime = performance.now();
-    //alert(endTime - startTime);
+    var s = File.ReadAllText(outfilePath);
 
     // parse できるものを parse するならこちらの方が全然速い
     function parseJSON(str) {
@@ -1870,7 +1824,7 @@ var srcTexts;   // XXX: root.id 用に保存しておく…
         // 5: ユーザーによるキャンセル        
         if (root.children.length == 0) {
             message += "更新が必要なシートはありません\nJSONファイルを出力しますか？";
-            var btnr = showPopup(message, 0, "確認", ICON_QUESTN|BTN_OK_CANCL);
+            var btnr = Shell.Popup(message, "確認", ICON_QUESTN|BTN_OK_CANCL);
             if (btnr == BTNR_CANCL) {
                 WScript.Quit(5);
             }
@@ -1886,7 +1840,7 @@ var srcTexts;   // XXX: root.id 用に保存しておく…
 
         message += formattedString;
 
-        var btnr = showPopup(message, 0, "シート作成・更新", BTN_OK_CANCL);
+        var btnr = Shell.Popup(message, "シート作成・更新", BTN_OK_CANCL);
         if (btnr == BTNR_CANCL) {
             WScript.Quit(5);
         }
@@ -2064,8 +2018,8 @@ function formatPlaceholderWarning(entry) {
 }
 
 function getPlaceholderWarningsFilePath() {
-    var outputDirectory = fso.GetParentFolderName(outfilePath);
-    return fso.BuildPath(outputDirectory, PLACEHOLDER_WARNINGS_FILENAME);
+    var outputDirectory = FileSystem.GetParentFolderName(outfilePath);
+    return FileSystem.BuildPath(outputDirectory, PLACEHOLDER_WARNINGS_FILENAME);
 }
 
 function clearPlaceholderWarningsFile() {
@@ -2080,8 +2034,8 @@ function clearPlaceholderWarningsFile() {
 }
 
 function getPlaceholderWarningsCacheFilePath() {
-    var outputDirectory = fso.GetParentFolderName(outfilePath);
-    return fso.BuildPath(outputDirectory, PLACEHOLDER_WARNINGS_CACHE_FILENAME);
+    var outputDirectory = FileSystem.GetParentFolderName(outfilePath);
+    return FileSystem.BuildPath(outputDirectory, PLACEHOLDER_WARNINGS_CACHE_FILENAME);
 }
 
 function clearPlaceholderWarningsCacheFile() {
@@ -2102,7 +2056,7 @@ function loadPlaceholderWarningsCache() {
     }
 
     try {
-        var content = CL.readTextFileUTF8(cacheFilePath);
+        var content = File.ReadAllText(cacheFilePath);
         if (!content) {
             return {};
         }
@@ -2562,8 +2516,6 @@ function evaluateInScope(expr, scope) {
 // テンプレート埋め込み
 // まずはすべてのノードについて調べ、親に登録
 (function() {
-    var startTime = performance.now();
-
     // ===== Errors =====
     var TemplateError = function(errorMessage, node) {
         this.errorMessage = errorMessage;
@@ -3677,9 +3629,6 @@ function evaluateInScope(expr, scope) {
             delete node.id;
         }
     });
-
-    var endTime = performance.now();
-    //WScript.Echo(endTime - startTime);
 })();
 
 // imageFilePath をエントリープロジェクトからの相対に変換
@@ -3689,16 +3638,16 @@ forAllNodes_Recurse(root, null, -1, function(node, parent, index) {
     }
     var lineObj = node.lineObj;
     var projectDirectoryFromRoot = lineObj.projectDirectory;
-    var fileParentFolderAbs = sourceLocalPathToAbsolutePath(fso.GetParentFolderName(lineObj.filePath), projectDirectoryFromRoot);
+    var fileParentFolderAbs = sourceLocalPathToAbsolutePath(FileSystem.GetParentFolderName(lineObj.filePath), projectDirectoryFromRoot);
 
     // エントリープロジェクトからの相対パスを求める
     function getImageFilePathFromEntryProject(imageFilePath) {
         if (imageFilePath.charAt(0) != "/") {
             //if (imageDirectory) {
             //    // XXX: imageDirectory の仕様は廃止の方がいい
-            //    imageFilePath = fso.BuildPath(imageDirectory, imageFilePath);
+            //    imageFilePath = FileSystem.BuildPath(imageDirectory, imageFilePath);
             //}
-            imageFilePath = fso.BuildPath(fileParentFolderAbs, imageFilePath);
+            imageFilePath = FileSystem.BuildPath(fileParentFolderAbs, imageFilePath);
         }
         else {
             imageFilePath = getAbsoluteProjectPath(imageFilePath.slice(1));
@@ -3710,7 +3659,7 @@ forAllNodes_Recurse(root, null, -1, function(node, parent, index) {
     node.imageFilePath = getImageFilePathFromEntryProject(node.imageFilePath);
 
     // TODO: entry file のプロジェクトからの相対パスにする
-    //imageFilePath = fso.BuildPath(fso.GetParentFolderName(filePath), image);
+    //imageFilePath = FileSystem.BuildPath(FileSystem.GetParentFolderName(filePath), image);
     
 });
 
@@ -3943,44 +3892,8 @@ _.forEach(parsedSheetNodeInfos, function(info) {
     root.children.splice(info.index, 0, info.node);
 });
 
-//function binToHex(binStr) {
-//    var xmldom = new ActiveXObject("Microsoft.XMLDOM");
-//    var binObj= xmldom.createElement("binObj");
-//
-//    binObj.dataType = 'bin.hex';
-//    binObj.nodeTypedValue = binStr;
-//
-//    return String(binObj.text);
-//}
-// 文字コードを stream.charset にセットする文字列形式で返す
-// UTF-8 with BOM, UTF-16 BE, LE のみ判定。それ以外は shift JIS を返す
-//function GetCharsetFromTextfile(objSt, path)
-//{
-//    return "UTF-8";
-//
-//    objSt.type = adTypeBinary;
-//    objSt.Open();
-//    objSt.LoadFromFile(path);
-//    var bytes = objSt.Read(3);
-//    var strBOM = binToHex(bytes);
-//    objSt.Close();
-//
-//    if (strBOM === "efbbbf")
-//    {
-//        return "UTF-8";
-//    }
-//
-//    strBOM = strBOM.substr(0, 4);
-//    if (strBOM === "fffe" || strBOM === "feff")
-//    {
-//        return "UTF-16";
-//    }
-//
-//    return "Shift_JIS";
-//}
-
 function getAbsoluteProjectPath(projectPathFromRoot) {
-    return fso.BuildPath(conf.$rootDirectory, projectPathFromRoot);
+    return FileSystem.BuildPath(conf.$rootDirectory, projectPathFromRoot);
 }
 
 function getAbsoluteDirectory(projectPathFromRoot, directoryName) {
@@ -3990,40 +3903,40 @@ function getAbsoluteDirectory(projectPathFromRoot, directoryName) {
         return projectPathAbs;
     }    
 
-    return fso.BuildPath(projectPathAbs, directoryName);
+    return FileSystem.BuildPath(projectPathAbs, directoryName);
 }
 function getAbsoluteSourceDirectory(projectPathFromRoot) {
     return getAbsoluteDirectory(projectPathFromRoot, sourceDirectoryName);
 }
 
 // project local なファイルパスを絶対パスに変換
-function directoryLocalPathToAbsolutePath(filePathProjectLocal, projectPathFromRoot, directoryName) {
+function directoryLocalPathToAbsolutePath_(filePathProjectLocal, projectPathFromRoot, directoryName) {
     var directoryAbs = getAbsoluteDirectory(projectPathFromRoot, directoryName);
 
-    return fso.BuildPath(directoryAbs, filePathProjectLocal);
+    return FileSystem.BuildPath(directoryAbs, filePathProjectLocal);
 }
 function sourceLocalPathToAbsolutePath(filePathProjectLocal, projectPathFromRoot) {
     return directoryLocalPathToAbsolutePath(filePathProjectLocal, projectPathFromRoot, sourceDirectoryName);
 }
 function absolutePathToDirectoryLocalPath(filePath, projectPathFromRoot, directoryName) {
-    var directoryAbs = getAbsoluteDirectory(projectPathFromRoot, directoryName);
+    const directoryAbs = getAbsoluteDirectory(projectPathFromRoot, directoryName);
 
     return CL.getRelativePath(directoryAbs, filePath);
 }
 // ソースディレクトリからの相対に変換
-function absolutePathToSourceLocalPath(filePath, projectPathFromRoot) {
+function absolutePathToSourceLocalPath_(filePath, projectPathFromRoot) {
     return absolutePathToDirectoryLocalPath(filePath, projectPathFromRoot, sourceDirectoryName);
 }
 
 function getAbsoluteBackupDirectory(projectPathFromRoot) {
     var projectPathAbs = getAbsoluteProjectPath(projectPathFromRoot);
 
-    return fso.BuildPath(projectPathAbs, backupDirectoryName);
+    return FileSystem.BuildPath(projectPathAbs, backupDirectoryName);
 }
 function getAbsoluteBackupPath(filePathProjectLocal, projectPathFromRoot) {
     var backupDirectoryAbs = getAbsoluteBackupDirectory(projectPathFromRoot);
 
-    return fso.BuildPath(backupDirectoryAbs, filePathProjectLocal);
+    return FileSystem.BuildPath(backupDirectoryAbs, filePathProjectLocal);
 }
 
 (function(){
@@ -4036,37 +3949,37 @@ for (var key in srcTextsToRewrite) {
     var filePath = noIdLineData.filePath;
     var projectDirectory = noIdLineData.projectDirectory;
     var filePathAbs = sourceLocalPathToAbsolutePath(filePath, projectDirectory);
-    var entryFileFolderName = fso.GetParentFolderName(rootFilePath);
-    var folderName = fso.GetParentFolderName(filePath);
-    //var backupFolderName = fso.BuildPath(entryFileFolderName, "bak");
+    var entryFileFolderName = FileSystem.GetParentFolderName(rootFilePath);
+    var folderName = FileSystem.GetParentFolderName(filePath);
+    //var backupFolderName = FileSystem.BuildPath(entryFileFolderName, "bak");
     var backupFolderName = getAbsoluteBackupDirectory(projectDirectory);
-    backupFolderName = fso.BuildPath(backupFolderName, "txt");
+    backupFolderName = FileSystem.BuildPath(backupFolderName, "txt");
 
     // 何やってたか忘れたので一旦コメントアウト
     //if (folderName !== entryFileFolderName) {
     //    if (_.startsWith(folderName, entryFileFolderName)) {
     //        var backupSubFolderName = folderName.slice(entryFileFolderName.length + 1);
-    //        backupFolderName = fso.BuildPath(backupFolderName, backupSubFolderName);
+    //        backupFolderName = FileSystem.BuildPath(backupFolderName, backupSubFolderName);
     //    } else {
     //        // XXX: 何かした方が良いんだろうけど、とりあえず何もしない…
     //    }
     //}
 
     // 最初から filePath を使えば済む話？
-    var fileDirectoryAbs = fso.GetParentFolderName(filePathAbs);
+    var fileDirectoryAbs = FileSystem.GetParentFolderName(filePathAbs);
     var fileDirectoryFromSource = absolutePathToSourceLocalPath(fileDirectoryAbs, projectDirectory);
-    backupFolderName = fso.BuildPath(backupFolderName, fileDirectoryFromSource);
+    backupFolderName = FileSystem.BuildPath(backupFolderName, fileDirectoryFromSource);
     CL.createFolder(backupFolderName);
 
     //var backupPath = getAbsoluteBackupPath(filePath, projectDirectory);
     //alert(filePath + "\n" + projectDirectory + "\n" + backupPath);
     var backupFileName = CL.makeBackupFileName(filePathAbs, fso);
-    var backupFilePath = fso.BuildPath(backupFolderName, backupFileName);
+    var backupFilePath = FileSystem.BuildPath(backupFolderName, backupFileName);
 
-    fso.CopyFile(filePathAbs, backupFilePath);
+    FileSystem.CopyFile(filePathAbs, backupFilePath);
 
     // バックアップファイルを読んで、元ファイルを直接上書き更新
-    var s = CL.readTextFileUTF8(filePathAbs);
+    var s = File.ReadAllText(filePathAbs);
 
     // バックアップファイルを１行ずつ読んで、srcTextsToRewriteに行番号が存在すればそちらを、なければそのまま書き出し
     // XXX: あらかじめ改行でjoinして１回で書き込んだ場合との速度差はどの程度か？
@@ -4103,18 +4016,6 @@ Error(s);
 
 // TODO: leaf じゃない node に ID がふられてたら無駄なので削除
 
-
-//function getFileInfo(filePath)
-//{
-//    var fso = new ActiveXObject("Scripting.FileSystemObject");
-//    var file = fso.GetFile(filePath);
-//    var info = {
-//        fileName: fso.GetFileName(filePath),
-//        dateLastModified: new Date(file.DateLastModified).toString()
-//    };
-//
-//    return info;
-//}
 
 // TODO: root.id 廃止。 commit, update とかで使ってるので修正範囲は広い
 // TODO: commit, update とかは一旦すべて使わないことになったので、いろいろ気にせずやめても良い。無駄に時間食いすぎる

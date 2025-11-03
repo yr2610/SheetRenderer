@@ -405,8 +405,8 @@ function preProcessConditionalCompile(lines, defines, currentProjectDirectoryFro
         var path = includeFileInfo.filePath;
         var pathAbs = directoryLocalPathToAbsolutePath(path, includeProjectDirectoryFromRoot, sourceDirectoryName);
 
-        if (!fso.FileExists(pathAbs)) {
-            var sourceDirectory = fso.BuildPath(includeFileInfo.projectDirectory, sourceDirectoryName);
+        if (!FileSystem.FileExists(pathAbs)) {
+            var sourceDirectory = FileSystem.BuildPath(includeFileInfo.projectDirectory, sourceDirectoryName);
             //var relativeProjectPath = CL.getRelativePath(conf.$rootDirectory, includeFileInfo.sourceDirectory);
             //var relativePath = CL.getRelativePath(includeFileInfo.sourceDirectory, path);
             //var relativePath = includeFileString;
@@ -526,13 +526,13 @@ function parseIncludeFilePath(s, currentProjectPathFromRoot, currentFilePathAbs,
             var message = "外部参照では現在のファイルからの相対指定はできません";
             throw new IncludeFilePathError(message);
         }
-        //var directoryFromRoot = fso.GetParentFolderName(currentFilePathAbs);
-        var currentFileDirectoryAbs = fso.GetParentFolderName(currentFilePathAbs);
-        var pathAbs = fso.BuildPath(currentFileDirectoryAbs, localPath);
+        //var directoryFromRoot = FileSystem.GetParentFolderName(currentFilePathAbs);
+        var currentFileDirectoryAbs = FileSystem.GetParentFolderName(currentFilePathAbs);
+        var pathAbs = FileSystem.BuildPath(currentFileDirectoryAbs, localPath);
         var filePath = absolutePathToSourceLocalPath(pathAbs, currentProjectPathFromRoot);
         var result = {
             projectDirectory: currentProjectPathFromRoot,
-            //filePath: fso.BuildPath(directoryFromRoot, localPath)
+            //filePath: FileSystem.BuildPath(directoryFromRoot, localPath)
             filePath: filePath
         };
 
@@ -545,7 +545,7 @@ function parseIncludeFilePath(s, currentProjectPathFromRoot, currentFilePathAbs,
     }
     else {
         // root 指定の有無に関係なく root を優先して読む
-        //projectDirectoryFromRoot = fso.BuildPath(rootPathAbs, projectDirectoryFromRoot);
+        //projectDirectoryFromRoot = FileSystem.BuildPath(rootPathAbs, projectDirectoryFromRoot);
 
         var fromRoot = (includeMatch[2] != "");
         if (!fromRoot) {
@@ -555,11 +555,11 @@ function parseIncludeFilePath(s, currentProjectPathFromRoot, currentFilePathAbs,
 
     // source 直下からの相対
 
-    //var directoryFromRoot = fso.BuildPath(projectDirectoryFromRoot, sourceDirectoryName);
+    //var directoryFromRoot = FileSystem.BuildPath(projectDirectoryFromRoot, sourceDirectoryName);
 
     //var rootPathAbs = conf.$rootDirectory;
-    //var filePathAbs = fso.BuildPath(directoryFromRoot, localPath);
-    //filePathAbs = fso.BuildPath(rootPathAbs, filePathAbs);
+    //var filePathAbs = FileSystem.BuildPath(directoryFromRoot, localPath);
+    //filePathAbs = FileSystem.BuildPath(rootPathAbs, filePathAbs);
 
     var result = {
         projectDirectory: projectDirectoryFromRoot,
@@ -601,9 +601,9 @@ function preProcess_Recurse(filePath, currentProjectDirectoryFromRoot, defines, 
     //alert(currentProjectDirectoryFromRoot);
     var filePathAbs = directoryLocalPathToAbsolutePath(filePath, currentProjectDirectoryFromRoot, sourceDirectoryName);
 
-    var allLines = CL.readTextFileUTF8(filePathAbs);
+    var allLines = File.ReadAllText(filePathAbs);
 
-    //var path = fso.BuildPath(parentFolderName, image);
+    //var path = FileSystem.BuildPath(parentFolderName, image);
 
     //var lineArray = new ArrayReader(allLines.split(/\r\n|\r|\n/));
     // 空要素も結果に含めたいのでsplitには正規表現を使わないように
@@ -635,12 +635,12 @@ function preProcess_Recurse(filePath, currentProjectDirectoryFromRoot, defines, 
 // preprocess
 // include とかコメント削除とか
 // 入れ子の include にも対応
-function preProcess(filePathAbs) {
+function preProcess(filePathAbs, rootDirectory) {
     var defines = {};
 
     // メインソースファイルのフォルダを現在のプロジェクトフォルダとする
-    var entryProject = fso.GetParentFolderName(filePathAbs);
-    var projectPathFromRoot = CL.getRelativePath(conf.$rootDirectory, entryProject);
+    var entryProject = FileSystem.GetParentFolderName(filePathAbs);
+    var projectPathFromRoot = CL.getRelativePath(rootDirectory, entryProject);
     var filePath = absolutePathToSourceLocalPath(filePathAbs, projectPathFromRoot);
 
     // TODO: conf.yaml とかで global な変数を指定できるように
