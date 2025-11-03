@@ -47,6 +47,39 @@ function toKeySet(keys) {
 
 var DEFAULT_DROP_KEYS = toKeySet(DROP_KEYS_LIST);
 
+// 速い replacer（循環は parent/マップ系を落として断つ）
+function makeFastJSONReplacer(dropKeys) {
+  var set = dropKeys
+    ? (typeof dropKeys.length === "number" ? toKeySet(dropKeys) : dropKeys)
+    : DEFAULT_DROP_KEYS;
+
+  return function replacer(key, value) {
+    if (typeof key === "string" && key !== "") {
+      // 1) 明示ドロップ（循環を断つのが最重要）
+      if (set[key]) return undefined;
+
+      // 2) "__" / "$$" 接頭辞を高速判定（regex使わない）
+      var c0 = key.charCodeAt(0);
+      if (c0 === 95) { // '_'
+        if (key.length > 1 && key.charCodeAt(1) === 95) return undefined; // "__"
+      } else if (c0 === 36) { // '$'
+        if (key.length > 1 && key.charCodeAt(1) === 36) return undefined; // "$$"
+      }
+    }
+    if (typeof value === "function") return undefined;
+    return value;
+  };
+}
+
+var JSON_REPLACER = makeFastJSONReplacer();
+
+// デフォは2スペース。必要に応じて "\t" や 4 に変えてOK
+function stringifyPretty(obj, indent) {
+    if (indent === undefined) {
+        indent = 2;
+    }
+    return JSON.stringify(obj, JSON_REPLACER, indent);
+}
 
 function $templateObject(object, data) {
     var json = JSON.stringify(object);
@@ -172,40 +205,6 @@ function buildLoopMeta(k, total){
     $isOdd:   ((k % 2) === 1),
     $isEven:  ((k % 2) === 0)
   };
-}
-
-// 速い replacer（循環は parent/マップ系を落として断つ）
-function makeFastJSONReplacer(dropKeys) {
-  var set = dropKeys
-    ? (typeof dropKeys.length === "number" ? toKeySet(dropKeys) : dropKeys)
-    : DEFAULT_DROP_KEYS;
-
-  return function replacer(key, value) {
-    if (typeof key === "string" && key !== "") {
-      // 1) 明示ドロップ（循環を断つのが最重要）
-      if (set[key]) return undefined;
-
-      // 2) "__" / "$$" 接頭辞を高速判定（regex使わない）
-      var c0 = key.charCodeAt(0);
-      if (c0 === 95) { // '_'
-        if (key.length > 1 && key.charCodeAt(1) === 95) return undefined; // "__"
-      } else if (c0 === 36) { // '$'
-        if (key.length > 1 && key.charCodeAt(1) === 36) return undefined; // "$$"
-      }
-    }
-    if (typeof value === "function") return undefined;
-    return value;
-  };
-}
-
-var JSON_REPLACER = makeFastJSONReplacer();
-
-// デフォは2スペース。必要に応じて "\t" や 4 に変えてOK
-function stringifyPretty(obj, indent) {
-    if (indent === undefined) {
-        indent = 2;
-    }
-    return JSON.stringify(obj, JSON_REPLACER, indent);
 }
 
 function countLeadingSpaces(s) {

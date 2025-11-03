@@ -2651,6 +2651,9 @@ public class AddIn : IExcelAddIn
 {
     public void AutoOpen()
     {
+        Notifier.Initialize();
+        //Notifier.Info("アドイン起動", "準備が完了しました。");
+
         // アドインの実行ファイルの隣に scripts/ フォルダ置いてる前提
         var baseDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "scripts");
         JsHost.Init(baseDir);
@@ -2677,9 +2680,6 @@ public class AddIn : IExcelAddIn
 
             MessageBox.Show(details, "JS実行エラー");
         }
-
-        Notifier.Initialize();
-        //Notifier.Info("アドイン起動", "準備が完了しました。");
     }
 
     public void AutoClose()
