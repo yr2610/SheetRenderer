@@ -22,12 +22,21 @@ public static class JsHost
         _baseDir = baseDir ?? throw new ArgumentNullException(nameof(baseDir));
 
         _engine = new V8ScriptEngine();
-        _wscript = new WScriptPolyfill();
+        _wscript = new WScriptPolyfill(_engine);
         _engine.AddHostObject("WScript", _wscript);
         _engine.AddHostObject("FileSystem", new FileSystemObject());
 
         // ここで C# 側の橋渡しオブジェクトを公開したい場合は追加で AddHostObject する
         // 例: _engine.AddHostObject("HostCrypto", new CryptoBridge());
+
+        // 通知（どちらか1つでOK）
+        _engine.AddHostObject("Shell", new ShellBridge());     // Popup代替（MessageBox）
+        _engine.AddHostObject("Notifier", new NotifierBridge());  // バルーン
+
+        // .NETの型を直公開（Path / File / Directory）
+        _engine.AddHostType("Path", typeof(System.IO.Path));
+        _engine.AddHostType("File", typeof(System.IO.File));
+        _engine.AddHostType("Directory", typeof(System.IO.Directory));
     }
 
     // ② スクリプト読み込み（WSFの<script src="...">相当）
@@ -53,20 +62,58 @@ public static class JsHost
     }
 
     // ③ WScript.Arguments っぽいものをセット
-    public static void SetArguments(params string[] args)
-    {
-        EnsureInit();
-        _wscript.SetArguments(args);
-    }
+    //public static void SetArguments(params string[] args)
+    //{
+    //    EnsureInit();
+    //    _wscript.SetArguments(args);
+    //}
 
     // ④ JS側の関数を呼ぶ
     public static object Call(string functionName, params object[] args)
     {
         EnsureInit();
 
-        // C# から JS のグローバル関数を直接呼ぶ
-        // _engine.Script.<名前> は dynamic なのでこうやって呼べる
-        return _engine.Script[functionName].Invoke(false, args);
+        try
+        {
+
+            // C# から JS のグローバル関数を直接呼ぶ
+            // _engine.Script.<名前> は dynamic なのでこうやって呼べる
+            return _engine.Script[functionName].Invoke(false, args);
+        }
+        // 1) Quit(Interrupt) 専用ルート：最優先で捕まえる
+        catch (ScriptInterruptedException)
+        {
+            // Quit 判定は WScript 側に保持させた ExitCode フラグで行うのが確実
+            var code = _wscript.LastExitCode ?? 0;  // _wscript は AddHostObject した同一インスタンス
+            _wscript.LastExitCode = null;           // 次回のためにクリア
+            return new { Quit = true, ExitCode = code };
+        }
+        // 2) dynamic 経由のラップ
+        catch (System.Reflection.TargetInvocationException tie)
+        {
+            var ex = tie.InnerException;
+            while (ex != null)
+            {
+                if (ex is ScriptInterruptedException)
+                {
+                    var code = _wscript.LastExitCode ?? 0;
+                    _wscript.LastExitCode = null;
+                    return new { Quit = true, ExitCode = code };
+                }
+                if (ex is JsQuitException q)
+                {
+                    return new { Quit = true, ExitCode = q.ExitCode };
+                }
+                ex = ex.InnerException;
+            }
+            throw; // 純粋なエラーは上に投げる
+        }
+        // 3) ClearScript の一般的な例外（JS 例外など）
+        catch (ScriptEngineException see)
+        {
+            // ここでログしたり、ユーザー向けメッセージ整形したり
+            throw;
+        }
     }
 
     private static void EnsureInit()
@@ -80,7 +127,15 @@ public static class JsHost
 // WScriptもどき（最小）
 public class WScriptPolyfill
 {
+    private readonly V8ScriptEngine _engine;
+    public int? LastExitCode { get; set; }
+
     private string[] _args = new string[0];
+
+    public WScriptPolyfill(V8ScriptEngine engine)
+    {
+        _engine = engine;
+    }
 
     public void SetArguments(string[] args)
     {
@@ -92,17 +147,23 @@ public class WScriptPolyfill
         get { return new ArgumentsView(_args); }
     }
 
-    public void Echo(object msg)
-    {
-        // 必要ならロギング先を差し替える
-        System.Diagnostics.Debug.WriteLine(msg == null ? "" : msg.ToString());
-    }
+    //public void Echo(object msg)
+    //{
+    //    // 必要ならロギング先を差し替える
+    //    System.Diagnostics.Debug.WriteLine(msg == null ? "" : msg.ToString());
+    //}
+    public void Echo(object msg) => Console.Out.WriteLine(msg ?? "");
+
+    public void Error(object msg) => Console.Error.WriteLine(msg ?? "");
 
     public void Quit(int code = 0)
     {
+        LastExitCode = code;
+        _engine.Interrupt(); // ← JS を中断させる（ScriptInterruptedException が飛ぶ）
+
         // WSHだとWScript.Quit(code)でホスト終了だけど、
         // ここでは例外投げることでCall側に「失敗」として伝える案もある
-        throw new JsQuitException(code);
+        //throw new JsQuitException(code);
     }
 
     private class ArgumentsView

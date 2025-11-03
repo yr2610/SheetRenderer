@@ -2475,10 +2475,6 @@ namespace ExcelDnaTest
 
         public void OnTestButtonPressed(IRibbonControl control)
         {
-            // アドインの実行ファイルの隣に scripts/ フォルダ置いてる前提
-            var baseDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "scripts");
-            JsHost.Init(baseDir);
-
             string txtPath2;
             using (var ofd = new OpenFileDialog())
             {
@@ -2491,28 +2487,38 @@ namespace ExcelDnaTest
 
                 txtPath2 = ofd.FileName;
             }
+            FileLogger.InitializeForInput(txtPath2, timestamped: false);
+
             //JsHost.SetArguments("--in=C:\\tmp\\data.txt", "--out=C:\\tmp\\data.json");
-            JsHost.SetArguments(txtPath2);
 
-            // 最初に共通ライブラリを全部チャージ
-            JsHost.LoadModule(@"lib\lodash.min.js");
-            JsHost.LoadModule(@"lib\js-yaml.min.js");
-
-            JsHost.LoadModule(@"app\utilities.js");
-            JsHost.LoadModule(@"app\constants.js");
-            JsHost.LoadModule(@"app\CLCommon.js");
-            JsHost.LoadModule(@"app\preprocess.js");
-            JsHost.LoadModule(@"app\readconf.js");
             try
             {
-                JsHost.LoadModule(@"app\txt2json.js");
-
                 // parse_main.js の中の main() を呼ぶイメージ
-                var result = JsHost.Call("parse");
+                var result = JsHost.Call("parse", txtPath2);
             }
             catch (Microsoft.ClearScript.ScriptEngineException ex)
             {
+                // 内側の例外をたどって JsQuitException かチェック
+                var iex = ex.InnerException;
+                while (iex != null)
+                {
+                    if (iex is JsQuitException q)
+                    {
+                        // ここで「正常終了(Exit)扱い」にできる
+                        FileLogger.Error(ex.ToString());
+                        Notifier.Error("エラー", "中断されましました。クリックでログを開きます。");
+
+                        MessageBox.Show(iex.Message, "中断");
+                    }
+                    iex = iex.InnerException;
+                }
+
+
                 string details = ex.ErrorDetails;
+
+                FileLogger.Error(ex.ToString());
+                Notifier.Error("エラー", "パースでエラーが発生しました。クリックでログを開きます。");
+
                 MessageBox.Show(details, "JS実行エラー");
             }
             return;
@@ -2639,4 +2645,46 @@ namespace ExcelDnaTest
 
     }
 
+}
+
+public class AddIn : IExcelAddIn
+{
+    public void AutoOpen()
+    {
+        // アドインの実行ファイルの隣に scripts/ フォルダ置いてる前提
+        var baseDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "scripts");
+        JsHost.Init(baseDir);
+
+        // 最初に共通ライブラリを全部チャージ
+        JsHost.LoadModule(@"lib\lodash.min.js");
+        JsHost.LoadModule(@"lib\js-yaml.min.js");
+
+        JsHost.LoadModule(@"app\utilities.js");
+        JsHost.LoadModule(@"app\constants.js");
+        JsHost.LoadModule(@"app\CLCommon.js");
+        JsHost.LoadModule(@"app\preprocess.js");
+        JsHost.LoadModule(@"app\readconf.js");
+        try
+        {
+            JsHost.LoadModule(@"app\txt2json.js");
+        }
+        catch (Microsoft.ClearScript.ScriptEngineException ex)
+        {
+            string details = ex.ErrorDetails;
+
+            FileLogger.Error(ex.ToString());
+            Notifier.Error("エラー", "パースでエラーが発生しました。クリックでログを開きます。");
+
+            MessageBox.Show(details, "JS実行エラー");
+        }
+
+        Notifier.Initialize();
+        //Notifier.Info("アドイン起動", "準備が完了しました。");
+    }
+
+    public void AutoClose()
+    {
+        //Notifier.Info("アドイン終了", "シャットダウンします。");
+        Notifier.Dispose();
+    }
 }

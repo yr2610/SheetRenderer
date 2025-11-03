@@ -1,13 +1,12 @@
-﻿function readConfigFile(confFileName) {
-    var confFilePath = fso.BuildPath(fso.GetParentFolderName(filePath), confFileName);
-    if (!fso.FileExists(confFilePath)) {
+﻿function readConfigFile(confFilePath) {
+    if (!FileSystem.FileExists(confFilePath)) {
         return {};
     }
     var data = CL.readYAMLFile(confFilePath);
 
     var postProcess = [];
 
-    //var indexFilePath = fso.BuildPath(fso.GetParentFolderName(filePath), "index.yml");
+    //var indexFilePath = FileSystem.BuildPath(FileSystem.GetParentFolderName(filePath), "index.yml");
     //var index = CL.readYAMLFile(indexFilePath);
     //printJSON(index);
 
@@ -28,17 +27,17 @@
             return;
         }
 
-        data.$rootDirectory = fso.BuildPath(baseDirectory, data.$rootDirectory);
+        data.$rootDirectory = FileSystem.BuildPath(baseDirectory, data.$rootDirectory);
     }
 
     // 循環しないように
     // 循環の対処はしないので、無限ループになる
     function processIncludeFiles(data, baseFile) {
-        var baseDirectory = fso.GetParentFolderName(baseFile);
+        var baseDirectory = FileSystem.GetParentFolderName(baseFile);
 
         // XXX: ついでに template_dxl もここで処理
         //if (!_.isUndefined(data.$template_dxl)) {
-        //    xmlFilePath = fso.BuildPath(baseDirectory, data.$template_dxl);
+        //    xmlFilePath = FileSystem.BuildPath(baseDirectory, data.$template_dxl);
         //    delete data.$template_dxl;
         //}
 
@@ -52,7 +51,7 @@
             var includeFiles = data.$include;
             delete data.$include;
             _.forEach(includeFiles, function(value) {
-                var includeFilePath = fso.BuildPath(baseDirectory, value);
+                var includeFilePath = FileSystem.BuildPath(baseDirectory, value);
                 var includeData = CL.readYAMLFile(includeFilePath);
                 processIncludeFiles(includeData, includeFilePath);
                 //_.assign(data, includeData);  // 上書きする
