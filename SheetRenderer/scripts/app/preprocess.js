@@ -519,10 +519,10 @@ function parseIncludeFilePath(s, currentProjectPathFromRoot, currentFilePathAbs,
     var localPath = includeMatch[5];
     var projectDirectoryFromRoot = includeMatch[3];
     // 現在のファイル(include元)からの相対指定
-    var relativeFromCurrent = (includeMatch[4] != "");
+    var relativeFromCurrent = (includeMatch[4] !== undefined);
 
     if (relativeFromCurrent) {
-        if (projectDirectoryFromRoot != "") {
+        if (projectDirectoryFromRoot !== undefined) {
             var message = "外部参照では現在のファイルからの相対指定はできません";
             throw new IncludeFilePathError(message);
         }
@@ -540,14 +540,14 @@ function parseIncludeFilePath(s, currentProjectPathFromRoot, currentFilePathAbs,
     }
 
     // XXX: 当面は root 以下専用
-    if (projectDirectoryFromRoot == "") {
+    if (projectDirectoryFromRoot === undefined) {
         projectDirectoryFromRoot = currentProjectPathFromRoot;
     }
     else {
         // root 指定の有無に関係なく root を優先して読む
         //projectDirectoryFromRoot = FileSystem.BuildPath(rootPathAbs, projectDirectoryFromRoot);
 
-        var fromRoot = (includeMatch[2] != "");
+        var fromRoot = (includeMatch[2] !== undefined);
         if (!fromRoot) {
             // TODO: root 指定ナシの場合は include path も検索する
         }
@@ -573,7 +573,7 @@ function parseIncludeFilePath(s, currentProjectPathFromRoot, currentFilePathAbs,
 // 文字列以外を渡された場合の動作は不定
 // variables は include 元で定義済みの変数
 function parseIncludeParameters(s, variables) {
-    if (s == "") {
+    if (s === undefined) {
         return {};
     }
 

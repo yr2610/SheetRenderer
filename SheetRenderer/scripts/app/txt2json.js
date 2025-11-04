@@ -851,7 +851,7 @@ function parseHeading(lineObj) {
 }
 
 function parseUnorderedList(lineObj, line) {
-    if (typeof line === "undefined") {
+    if (line === undefined) {
         line = lineObj.line;
     }
     // 行頭に全角スペース、タブがないかのチェック
