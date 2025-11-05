@@ -238,10 +238,10 @@ function ensureMapEntry(store, key, initializer) {
 // reader: srcLines の reader
 // text:   先頭行の本文
 // baseline: 本文開始より右なら継続（UL: indent+2, OL: leading+2）
-// options: { trimLeft: true, structuralGuard: true, stripRight: true }
+// options: { trimEnd: true, structuralGuard: true, stripRight: true }
 function absorbContinuations(reader, text, baseline, options) {
     options = options || {};
-    var trimLeft = options.trimLeft !== false;
+    var trimEnd = options.trimEnd !== false;
     var useGuard = options.structuralGuard !== false;
     var stripRight = options.stripRight !== false;
 
@@ -303,7 +303,7 @@ function absorbContinuations(reader, text, baseline, options) {
             var hasPlus = /[ \t]+\+[ \t]*$/.test(raw);
             var content = hasPlus ? raw.replace(/[ \t]+\+[ \t]*$/, "") : raw;
 
-            var piece = trimLeft ? _.trimLeft(content) : content;
+            var piece = trimEnd ? _.trimEnd(content) : content;
             if (stripRight) {
                 piece = stripTrailingSpaces(piece);
             }
@@ -326,7 +326,7 @@ function absorbContinuations(reader, text, baseline, options) {
 
             var ls = countLeadingSpaces(s);
             if (s.trim().length === 0 || ls >= baseline) {
-                var seg = trimLeft ? _.trimLeft(s) : s;
+                var seg = trimEnd ? _.trimEnd(s) : s;
                 if (stripRight) {
                     seg = stripTrailingSpaces(seg);
                 }
@@ -774,7 +774,7 @@ function parseHeading(lineObj) {
     }
     else {
         var baseline = indent + 2; // 記号＋スペースぶん
-        text = absorbContinuations(srcLines, text, baseline, { trimLeft: true, structuralGuard: true });
+        text = absorbContinuations(srcLines, text, baseline, { trimEnd: true, structuralGuard: true });
 
         // １行のみ、行全体以外は対応しない
         var link = text.trim().match(/^\[(.+)\]\((.+)\)$/);
@@ -1047,7 +1047,7 @@ function parseUnorderedList(lineObj, line) {
 
     var leading = countLeadingSpaces(line);
     var baseline = leading + 2; // "n. " の見た目の最低値でOK
-    text = absorbContinuations(srcLines, text, baseline, { trimLeft: true, structuralGuard: true });
+    text = absorbContinuations(srcLines, text, baseline, { trimEnd: true, structuralGuard: true });
 
     var commentResult = parseComment(text, lineObj);
     var comment;
@@ -1131,6 +1131,54 @@ function parseUnorderedList(lineObj, line) {
     return ul;
 }
 
+// 行頭の (foo: 1, bar) 的な部分を parse
+function parseColumnValues(s, _isValueBase) {
+    var isValueBase = _.isUndefined(_isValueBase) ? true : _isValueBase;
+
+    var match = _.trimEnd(s).match(/^\((.+)\)\s+(.*)$/);
+    if (!match) {
+        match = _.trimEnd(s).match(/^\((.+)\)\s*$/);
+    }
+    if (!match) {
+        return null;
+    }
+
+    var remain = match[2];
+    var columnValues = [];
+    var params = match[1].split(',');
+    params.forEach(function(param) {
+        param = _.trim(param);
+        var keyMatch = param.match(/^[A-Za-z_]\w*$/);
+        if (keyMatch) {
+            var data = isValueBase ? { value: param } : { key: param };
+            columnValues.push(data);
+            return;
+        }
+        var keyValueMatch = param.match(/^([A-Za-z_]\w*)\s*:\s*(.*)$/);
+        if (keyValueMatch) {
+            var value = keyValueMatch[2];
+            if (value.slice(0, 1) === '"' && value.slice(-1) === '"') {
+                value = eval(keyValueMatch[2]);
+            }
+            columnValues.push({
+                key: keyValueMatch[1],
+                value: value
+            });
+            return;
+        }
+        var value = param;
+        if (value.slice(0, 1) === '"' && value.slice(-1) === '"') {
+            value = eval(param);
+        }
+        columnValues.push({ value: value });
+    });
+
+    return {
+        columnValues: columnValues,
+        remain: remain
+    }
+}
+
 //  ファイルの文字データを一行ずつ読む
 while (!srcLines.atEnd) {
     var lineObj = srcLines.read();
@@ -1209,7 +1257,7 @@ while (!srcLines.atEnd) {
             // プレーン行なら先頭空白数 + 1 くらいでも可（必要なら厳密化）。
             var leading = countLeadingSpaces(line);
             var baseline = leading + 1;
-            text = absorbContinuations(srcLines, text, baseline, { trimLeft: true, structuralGuard: true });
+            text = absorbContinuations(srcLines, text, baseline, { trimEnd: true, structuralGuard: true });
 
             if (parent.kind === kindH && parent.level === 1) {
                 var comment = undefined;
@@ -1396,53 +1444,6 @@ while (!srcLines.atEnd) {
         this.lineObj = lineObj;
     };
 
-    // 行頭の (foo: 1, bar) 的な部分を parse
-    function parseColumnValues(s, _isValueBase) {
-        var isValueBase = _.isUndefined(_isValueBase) ? true : _isValueBase;
-
-        var match = _.trimLeft(s).match(/^\((.+)\)\s+(.*)$/);
-        if (!match) {
-            match = _.trimLeft(s).match(/^\((.+)\)\s*$/);
-        }
-        if (!match) {
-            return null;
-        }
-        var remain = match[2];
-        var columnValues = [];
-        var params = match[1].split(',');
-        params.forEach(function(param) {
-            param = _.trim(param);
-            var keyMatch = param.match(/^[A-Za-z_]\w*$/);
-            if (keyMatch) {
-                var data = isValueBase ? { value: param } : { key: param };
-                columnValues.push(data);
-                return;
-            }
-            var keyValueMatch = param.match(/^([A-Za-z_]\w*)\s*:\s*(.*)$/);
-            if (keyValueMatch) {
-                var value = keyValueMatch[2];
-                if (value.slice(0, 1) === '"' && value.slice(-1) === '"') {
-                    value = eval(keyValueMatch[2]);
-                }
-                columnValues.push({
-                    key: keyValueMatch[1],
-                    value: value
-                });
-                return;
-            }
-            var value = param;
-            if (value.slice(0, 1) === '"' && value.slice(-1) === '"') {
-                value = eval(param);
-            }
-            columnValues.push({ value: value });
-        });
-
-        return {
-            columnValues: columnValues,
-            remain: remain
-        }
-    }
-
     try {
 
     // 初期値宣言
@@ -1476,7 +1477,7 @@ while (!srcLines.atEnd) {
 
     // デフォルト値を正規表現で指定
     (function() {
-        var match = _.trimRight(line).match(/^\/(.+)\/\s+(.+)$/);
+        var match = _.trimStart(line).match(/^\/(.+)\/\s+(.+)$/);
         if (!match) {
             return;
         }
