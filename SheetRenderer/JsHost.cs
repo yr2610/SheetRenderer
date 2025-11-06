@@ -37,6 +37,8 @@ public static class JsHost
         _engine.AddHostType("Path", typeof(System.IO.Path));
         _engine.AddHostType("File", typeof(System.IO.File));
         _engine.AddHostType("Directory", typeof(System.IO.Directory));
+
+        _engine.AddHostObject("Hash", new HashBridge());
     }
 
     // ② スクリプト読み込み（WSFの<script src="...">相当）

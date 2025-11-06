@@ -1636,55 +1636,21 @@ _.forEach(noIdNodes, function(infos) {
 
 var lastParsedRoot;
 
-(function() {
-    // 前回出力したJSONファイルがあれば読む
-    if (!FileSystem.FileExists(outfilePath)) {
-        return;
-    }
+// 前回出力したJSONファイルがあれば読む
+if (FileSystem.FileExists(outfilePath)) {
+    let s = File.ReadAllText(outfilePath);
 
-    var s = File.ReadAllText(outfilePath);
-
-    // parse できるものを parse するならこちらの方が全然速い
-    function parseJSON(str) {
-        if (str === "") str = '""';
-        eval("var p=" + str + ";");
-        return p;
-    }
-    lastParsedRoot = parseJSON(s);
-})();
-
-// 「byte配列」から「16進数文字列」
-function bytes2hex(bytes) {
-    var hex = null;
-    // 「DOMDocument」生成
-    var doc = new ActiveXObject("Msxml2.DOMDocument");
-    // 「DomNode」生成（hex）
-    var element = doc.createElement("hex");
-    // 「dataType」に「bin.hex」を設定
-    element.dataType = "bin.hex";
-    // 「nodeTypedValue」に「byte配列」を設定
-    element.nodeTypedValue = bytes;
-    // 「text」を取得
-    hex = element.text;
-    // 後処理
-    element = null;
-    doc = null;
-    return hex;
+    lastParsedRoot = JSON.parse(s);
 }
 
-function getHash(crypto, input) {
-    var encoding = new ActiveXObject("System.Text.UTF8Encoding");
-    var bytes = encoding.GetBytes_4(input);
-    var hash = crypto.ComputeHash_2(bytes);
-    return bytes2hex(hash);
-}
 function getMD5Hash(input) {
-    var crypto = new ActiveXObject("System.Security.Cryptography.MD5CryptoServiceProvider");
-    return getHash(crypto, input);
+    return Hash.md5(input);
 }
 function getSHA1Hash(input) {
-    var crypto = new ActiveXObject("System.Security.Cryptography.SHA1CryptoServiceProvider");
-    return getHash(crypto, input);
+    return Hash.sha1(input);
+}
+function getSHA256Hash(input) {
+    return Hash.sha256(input);
 }
 
 function getNormalizedInitialGlobalScopeJSON() {
@@ -1840,14 +1806,17 @@ var srcTexts;   // XXX: root.id 用に保存しておく…
 
         message += formattedString;
 
+        Shell.Popup("0");;;;;
         var btnr = Shell.Popup(message, "シート作成・更新", BTN_OK_CANCL);
         if (btnr == BTNR_CANCL) {
+            Shell.Popup("1");;;;;
             WScript.Quit(5);
         }
+        Shell.Popup("2");;;;;
     })();
 })();
 
-
+Shell.Popup("3");;;;;
 
 // group と depthInGroup を計算
 forAllNodes_Recurse(root, null, -1, function(node, parent, index) {
@@ -2173,7 +2142,7 @@ function savePlaceholderWarningsCache(groupedData) {
     }
 
     try {
-        CL.writeTextFileUTF8(JSON.stringify(data, null, 2), cacheFilePath);
+        File.WriteAllText(cacheFilePath, JSON.stringify(data, null, 2));
     } catch (e) {
         // ignore failures (e.g. read-only file)
     }
@@ -2249,7 +2218,7 @@ function finalizePlaceholderWarnings() {
     if (undefinedSections.length > 0) {
         var warningsFilePath = getPlaceholderWarningsFilePath();
         try {
-            CL.writeTextFileUTF8(undefinedSections.join("\n\n") + "\n", warningsFilePath);
+            File.WriteAllText(warningsFilePath, undefinedSections.join("\n\n") + "\n");
         } catch (e) {
             // ignore failures (e.g. read-only file)
         }
@@ -3989,7 +3958,7 @@ for (var key in srcTextsToRewrite) {
     });
     s = s.join("\n");
 
-    CL.writeTextFileUTF8(s, filePathAbs);
+    File.WriteAllText(filePathAbs, s);
 
     srcTextsToRewrite[key] = null;
 }
@@ -4059,7 +4028,7 @@ sJson = (function () {
 })();
 */
 
-CL.writeTextFileUTF8(sJson, outfilePath);
+File.WriteAllText(outfilePath, sJson);
 
 var strUpdatedSrcFiles = (function () {
     if (_.isEmpty(srcTextsToRewrite)) {
@@ -4074,20 +4043,15 @@ var strUpdatedSrcFiles = (function () {
     return message;
 })();
 
-var placeholderWarningsMessage = finalizePlaceholderWarnings();
-
-var cliMessageParts = [];
-
-// CScript 実行時は更新情報と警告のみ通知する
+// 更新情報を通知する
 if (strUpdatedSrcFiles) {
-    cliMessageParts.push(strUpdatedSrcFiles);
-}
-if (placeholderWarningsMessage) {
-    cliMessageParts.push(placeholderWarningsMessage);
+    Notifier.Info(strUpdatedSrcFiles);
 }
 
-if (cliMessageParts.length > 0) {
-    alert(cliMessageParts.join("\n\n---\n\n"));
+// 警告を通知
+var placeholderWarningsMessage = finalizePlaceholderWarnings();
+if (placeholderWarningsMessage) {
+    Notifier.Warn(placeholderWarningsMessage);
 }
     
 }
