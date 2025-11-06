@@ -133,6 +133,7 @@
     <Compile Include="ExcelExtensions.cs" />
     <Compile Include="FileLogger.cs" />
     <Compile Include="FileSystemObject.cs" />
+    <Compile Include="HashHelper.cs" />
     <Compile Include="JsHost.cs" />
     <Compile Include="Notifier.cs" />
     <Compile Include="NotifierBridge.cs" />
