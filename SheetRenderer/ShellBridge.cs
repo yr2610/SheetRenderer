@@ -1,57 +1,103 @@
-﻿using System.Windows.Forms;
+﻿using System;
+using System.Threading;
+using System.Windows.Forms;
 using ExcelDna.Integration;
 
 public sealed class ShellBridge
 {
+    // ExcelのUIスレッドID（AutoOpen等でInitializeOnExcelUiThreadを呼んでセット）
+    private static int _uiThreadId = -1;
+
     /// <summary>
-    /// VBScript / WSH の Shell.Popup に相当する実装。
-    /// https://learn.microsoft.com/en-us/previous-versions/windows/internet-explorer/aa767739(v=vs.85)
+    /// 必ずExcelのUIスレッドで呼ぶ（AutoOpenなど）
+    /// </summary>
+    public static void InitializeOnExcelUiThread()
+    {
+        _uiThreadId = Thread.CurrentThread.ManagedThreadId;
+    }
+
+    /// <summary>
+    /// WSH Shell.Popup 互換（timeoutは未対応）
+    /// 戻り値: vbOK=1, vbCancel=2, vbAbort=3, vbRetry=4, vbIgnore=5, vbYes=6, vbNo=7
     /// </summary>
     public int Popup(string text, string title = "情報", int type = 0)
     {
-        int result = 2; // vbCancel (既定)
-        ExcelAsyncUtil.QueueAsMacro(() =>
+        int ShowAndMap()
         {
-            var icon = MessageBoxIcon.None;
-            var buttons = MessageBoxButtons.OK;
+            var icon = MapIcon(type);
+            var buttons = MapButtons(type);
+            var dr = MessageBox.Show(text ?? "", title ?? "情報", buttons, icon);
+            return MapDialogResultToVb(dr);
+        }
 
-            // --- Icon 部分 ---
-            int iconBits = type & 0xF0;
-            switch (iconBits)
+        bool isUiThread = Thread.CurrentThread.ManagedThreadId == _uiThreadId;
+
+        // UIスレッドなら同期で即表示（絶対に待たない）
+        if (isUiThread || _uiThreadId == -1)   // 初期化前は保守的に直呼び
+        {
+            return ShowAndMap();
+        }
+
+        // 非UIスレッドならUIに投げて完了待ち（この待ちはUIをブロックしない）
+        int result = 2; // 既定: vbCancel
+        using (var done = new ManualResetEventSlim(false))
+        {
+            ExcelAsyncUtil.QueueAsMacro(() =>
             {
-                case 0x10: icon = MessageBoxIcon.Error; break;         // 16 = Stop
-                case 0x20: icon = MessageBoxIcon.Question; break;      // 32 = ?
-                case 0x30: icon = MessageBoxIcon.Exclamation; break;   // 48 = !
-                case 0x40: icon = MessageBoxIcon.Information; break;   // 64 = i
-            }
+                try { result = ShowAndMap(); }
+                finally { done.Set(); }
+            });
 
-            // --- Button 部分 ---
-            int buttonBits = type & 0x0F;
-            switch (buttonBits)
+            // 無限待ちは怖いのでタイムアウト保険（例: 60秒）
+            if (!done.Wait(TimeSpan.FromSeconds(60)))
             {
-                case 0x0: buttons = MessageBoxButtons.OK; break;
-                case 0x1: buttons = MessageBoxButtons.OKCancel; break;
-                case 0x2: buttons = MessageBoxButtons.AbortRetryIgnore; break;
-                case 0x3: buttons = MessageBoxButtons.YesNoCancel; break;
-                case 0x4: buttons = MessageBoxButtons.YesNo; break;
-                case 0x5: buttons = MessageBoxButtons.RetryCancel; break;
+                // 失敗時はvbCancel相当で返す or 例外を投げるなど運用方針に合わせて
+                return 2;
             }
-
-            var r = MessageBox.Show(text ?? "", title ?? "情報", buttons, icon);
-
-            // --- 戻り値をVB互換で返す ---
-            switch (r)
-            {
-                case DialogResult.OK: result = 1; break;       // vbOK
-                case DialogResult.Cancel: result = 2; break;   // vbCancel
-                case DialogResult.Abort: result = 3; break;    // vbAbort
-                case DialogResult.Retry: result = 4; break;    // vbRetry
-                case DialogResult.Ignore: result = 5; break;   // vbIgnore
-                case DialogResult.Yes: result = 6; break;      // vbYes
-                case DialogResult.No: result = 7; break;       // vbNo
-            }
-        });
-
+        }
         return result;
+    }
+
+    // --- WSH互換のビットマップ ---
+
+    private static MessageBoxIcon MapIcon(int type)
+    {
+        switch (type & 0xF0)   // 上位4bit: 16, 32, 48, 64
+        {
+            case 0x10: return MessageBoxIcon.Error;        // 16 = Stop/Critical
+            case 0x20: return MessageBoxIcon.Question;     // 32 = ?
+            case 0x30: return MessageBoxIcon.Exclamation;  // 48 = !
+            case 0x40: return MessageBoxIcon.Information;  // 64 = i
+            default: return MessageBoxIcon.None;
+        }
+    }
+
+    private static MessageBoxButtons MapButtons(int type)
+    {
+        switch (type & 0x0F)   // 下位4bit: 0..5
+        {
+            case 0x0: return MessageBoxButtons.OK;
+            case 0x1: return MessageBoxButtons.OKCancel;
+            case 0x2: return MessageBoxButtons.AbortRetryIgnore;
+            case 0x3: return MessageBoxButtons.YesNoCancel;
+            case 0x4: return MessageBoxButtons.YesNo;
+            case 0x5: return MessageBoxButtons.RetryCancel;
+            default: return MessageBoxButtons.OK;
+        }
+    }
+
+    private static int MapDialogResultToVb(DialogResult r)
+    {
+        switch (r)
+        {
+            case DialogResult.OK: return 1; // vbOK
+            case DialogResult.Cancel: return 2; // vbCancel
+            case DialogResult.Abort: return 3; // vbAbort
+            case DialogResult.Retry: return 4; // vbRetry
+            case DialogResult.Ignore: return 5; // vbIgnore
+            case DialogResult.Yes: return 6; // vbYes
+            case DialogResult.No: return 7; // vbNo
+            default: return 2;
+        }
     }
 }

@@ -1806,17 +1806,12 @@ var srcTexts;   // XXX: root.id 用に保存しておく…
 
         message += formattedString;
 
-        Shell.Popup("0");;;;;
         var btnr = Shell.Popup(message, "シート作成・更新", BTN_OK_CANCL);
         if (btnr == BTNR_CANCL) {
-            Shell.Popup("1");;;;;
             WScript.Quit(5);
         }
-        Shell.Popup("2");;;;;
     })();
 })();
-
-Shell.Popup("3");;;;;
 
 // group と depthInGroup を計算
 forAllNodes_Recurse(root, null, -1, function(node, parent, index) {
@@ -3632,7 +3627,6 @@ forAllNodes_Recurse(root, null, -1, function(node, parent, index) {
     
 });
 
-
 try {
 
 // initial values のデフォルト値の処理
@@ -4045,13 +4039,15 @@ var strUpdatedSrcFiles = (function () {
 
 // 更新情報を通知する
 if (strUpdatedSrcFiles) {
-    Notifier.Info(strUpdatedSrcFiles);
+    Notifier.Info("ファイル更新", strUpdatedSrcFiles);
 }
 
 // 警告を通知
 var placeholderWarningsMessage = finalizePlaceholderWarnings();
 if (placeholderWarningsMessage) {
-    Notifier.Warn(placeholderWarningsMessage);
+    Notifier.Warn("プレースホルダー警告", placeholderWarningsMessage);
 }
-    
+
+Notifier.Info("正常終了", "jsonファイルを出力しました\n" + outfilePath);
+
 }

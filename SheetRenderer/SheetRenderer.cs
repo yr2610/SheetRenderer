@@ -2654,6 +2654,9 @@ public class AddIn : IExcelAddIn
         Notifier.Initialize();
         //Notifier.Info("アドイン起動", "準備が完了しました。");
 
+        // ここはExcelのUIスレッド。必ず最初に記録しておく
+        ShellBridge.InitializeOnExcelUiThread();
+
         // アドインの実行ファイルの隣に scripts/ フォルダ置いてる前提
         var baseDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "scripts");
         JsHost.Init(baseDir);
