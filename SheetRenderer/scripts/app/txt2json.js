@@ -360,10 +360,7 @@ function computeRootId() {
     var scopeHash = root.globalScopeHash || "";
     k += scopeHash;
 
-//    var shaObj = new jsSHA("SHA-256", "TEXT", { encoding: "UTF8" });
-//    shaObj.update(k);
-//    root.id = shaObj.getHash("HEX");
-    root.id = getMD5Hash(k);
+    root.id = Hash.sha256(k);
 }
 
 // すべての ID を割り当て直す
@@ -1643,16 +1640,6 @@ if (FileSystem.FileExists(outfilePath)) {
     lastParsedRoot = JSON.parse(s);
 }
 
-function getMD5Hash(input) {
-    return Hash.md5(input);
-}
-function getSHA1Hash(input) {
-    return Hash.sha1(input);
-}
-function getSHA256Hash(input) {
-    return Hash.sha256(input);
-}
-
 function getNormalizedInitialGlobalScopeJSON() {
     if (typeof initialGlobalScope === "undefined" || !initialGlobalScope) {
         return "";
@@ -1679,7 +1666,7 @@ function computeInitialGlobalScopeHash() {
         return "";
     }
 
-    return getMD5Hash(normalized);
+    return Hash.sha256(normalized);
 }
 
 // preprocess 後、 id 付与後のソーステキストをシートごとにhashで持っておく
@@ -1727,8 +1714,7 @@ var srcTexts;   // XXX: root.id 用に保存しておく…
         var srcSheetText = result[v.id];
         var hashTargetText = (srcSheetText === undefined || srcSheetText === null) ? "" : srcSheetText;
 
-        //v.srcHash = getSHA1Hash(srcSheetText);
-        v.srcHash = getMD5Hash(hashTargetText);
+        v.srcHash = Hash.sha256(hashTargetText);
 
         function getParsedSheetNode(sheetNode) {
             if (!lastParsedRoot) {
@@ -3982,7 +3968,6 @@ Error(s);
 
 // TODO: root.id 廃止。 commit, update とかで使ってるので修正範囲は広い
 // TODO: commit, update とかは一旦すべて使わないことになったので、いろいろ気にせずやめても良い。無駄に時間食いすぎる
-// XXX: とりあえず SHA256 はとんでもなく時間かかるので MD5 に。JSON.stringfy がかかるのでソーステキストに
 computeRootId();
 
 
