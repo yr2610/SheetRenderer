@@ -94,7 +94,7 @@ function preProcessConditionalCompile(lines, defines, currentProjectDirectoryFro
     var states = []; // 入れ子対応のためスタックにしておく
 
     function currentCondtion() {
-        return !_.find(states, 'cond', false);
+        return states.every(s => s.cond);
         //for (var i = 0; i < states.length; i++) {
         //    if (!states[i].cond) {
         //        return false;
