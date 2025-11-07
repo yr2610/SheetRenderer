@@ -238,10 +238,10 @@ function ensureMapEntry(store, key, initializer) {
 // reader: srcLines の reader
 // text:   先頭行の本文
 // baseline: 本文開始より右なら継続（UL: indent+2, OL: leading+2）
-// options: { trimEnd: true, structuralGuard: true, stripRight: true }
+// options: { trimStart: true, structuralGuard: true, stripRight: true }
 function absorbContinuations(reader, text, baseline, options) {
     options = options || {};
-    var trimEnd = options.trimEnd !== false;
+    var trimStart = options.trimStart !== false;
     var useGuard = options.structuralGuard !== false;
     var stripRight = options.stripRight !== false;
 
@@ -303,7 +303,7 @@ function absorbContinuations(reader, text, baseline, options) {
             var hasPlus = /[ \t]+\+[ \t]*$/.test(raw);
             var content = hasPlus ? raw.replace(/[ \t]+\+[ \t]*$/, "") : raw;
 
-            var piece = trimEnd ? _.trimEnd(content) : content;
+            var piece = trimStart ? _.trimStart(content) : content;
             if (stripRight) {
                 piece = stripTrailingSpaces(piece);
             }
@@ -326,13 +326,14 @@ function absorbContinuations(reader, text, baseline, options) {
 
             var ls = countLeadingSpaces(s);
             if (s.trim().length === 0 || ls >= baseline) {
-                var seg = trimEnd ? _.trimEnd(s) : s;
+                var seg = trimStart ? _.trimStart(s) : s;
                 if (stripRight) {
                     seg = stripTrailingSpaces(seg);
                 }
-                // 行頭スペース除去
-                seg = seg.replace(/^\s+/, "");
-                text = stripTrailingSpaces(text);
+                // 直前行の末尾空白だけ削る（改行は保持＝空行は維持）
+                if (stripRight) {
+                    text = stripTrailingSpaces(text);
+                }
                 text += "\n" + seg;
                 continue;
             }
@@ -773,7 +774,7 @@ function parseHeading(lineObj) {
     }
     else {
         var baseline = indent + 2; // 記号＋スペースぶん
-        text = absorbContinuations(srcLines, text, baseline, { trimEnd: true, structuralGuard: true });
+        text = absorbContinuations(srcLines, text, baseline, { trimStart: true, structuralGuard: true });
 
         // １行のみ、行全体以外は対応しない
         var link = text.trim().match(/^\[(.+)\]\((.+)\)$/);
@@ -1046,7 +1047,7 @@ function parseUnorderedList(lineObj, line) {
 
     var leading = countLeadingSpaces(line);
     var baseline = leading + 2; // "n. " の見た目の最低値でOK
-    text = absorbContinuations(srcLines, text, baseline, { trimEnd: true, structuralGuard: true });
+    text = absorbContinuations(srcLines, text, baseline, { trimStart: true, structuralGuard: true });
 
     var commentResult = parseComment(text, lineObj);
     var comment;
@@ -1134,9 +1135,9 @@ function parseUnorderedList(lineObj, line) {
 function parseColumnValues(s, _isValueBase) {
     var isValueBase = _.isUndefined(_isValueBase) ? true : _isValueBase;
 
-    var match = _.trimEnd(s).match(/^\((.+)\)\s+(.*)$/);
+    var match = _.trimStart(s).match(/^\((.+)\)\s+(.*)$/);
     if (!match) {
-        match = _.trimEnd(s).match(/^\((.+)\)\s*$/);
+        match = _.trimStart(s).match(/^\((.+)\)\s*$/);
     }
     if (!match) {
         return null;
@@ -1256,7 +1257,7 @@ while (!srcLines.atEnd) {
             // プレーン行なら先頭空白数 + 1 くらいでも可（必要なら厳密化）。
             var leading = countLeadingSpaces(line);
             var baseline = leading + 1;
-            text = absorbContinuations(srcLines, text, baseline, { trimEnd: true, structuralGuard: true });
+            text = absorbContinuations(srcLines, text, baseline, { trimStart: true, structuralGuard: true });
 
             if (parent.kind === kindH && parent.level === 1) {
                 var comment = undefined;
@@ -1476,7 +1477,7 @@ while (!srcLines.atEnd) {
 
     // デフォルト値を正規表現で指定
     (function() {
-        var match = _.trimStart(line).match(/^\/(.+)\/\s+(.+)$/);
+        var match = _.trimEnd(line).match(/^\/(.+)\/\s+(.+)$/);
         if (!match) {
             return;
         }
