@@ -330,10 +330,9 @@ function absorbContinuations(reader, text, baseline, options) {
                 if (stripRight) {
                     seg = stripTrailingSpaces(seg);
                 }
-                // 直前行の末尾空白だけ削る（改行は保持＝空行は維持）
-                if (stripRight) {
-                    text = stripTrailingSpaces(text);
-                }
+                // 行頭スペース除去
+                seg = seg.replace(/^\s+/, "");
+                text = stripTrailingSpaces(text);
                 text += "\n" + seg;
                 continue;
             }
@@ -408,7 +407,7 @@ if (typeof(global) === 'undefined') {
     global = Function('return this')();
 }
 
-var outFilename = FileSystem.GetBaseName(filePath) + ".json";
+var outFilename = Path.GetFileNameWithoutExtension(filePath) + ".json";
 var outfilePath = FileSystem.BuildPath(FileSystem.GetParentFolderName(filePath), outFilename);
 
 // バックアップ置き場
@@ -466,7 +465,7 @@ function readVarsFile(varsFileName) {
 
 var confFileName = "conf.yml";
 (function() {
-    var baseName = FileSystem.GetBaseName(filePath);
+    var baseName = Path.GetFileNameWithoutExtension(filePath);
     baseName = baseName.replace(/_index$/, "");
     if (baseName != "index") {
         confFileName = baseName + "_" + confFileName;
@@ -491,7 +490,7 @@ var confGlobalScope = (function(original) {
 
 let varsFileName = "vars.yml";
 (function() {
-    var baseName = FileSystem.GetBaseName(filePath);
+    var baseName = Path.GetFileNameWithoutExtension(filePath);
     baseName = baseName.replace(/_index$/, "");
     if (baseName != "index") {
         varsFileName = baseName + "_" + varsFileName;
@@ -3936,7 +3935,7 @@ for (var key in srcTextsToRewrite) {
 
     //var backupPath = getAbsoluteBackupPath(filePath, projectDirectory);
     //alert(filePath + "\n" + projectDirectory + "\n" + backupPath);
-    var backupFileName = CL.makeBackupFileName(filePathAbs, fso);
+    var backupFileName = CL.makeBackupFileName(filePathAbs);
     var backupFilePath = FileSystem.BuildPath(backupFolderName, backupFileName);
 
     FileSystem.CopyFile(filePathAbs, backupFilePath);
