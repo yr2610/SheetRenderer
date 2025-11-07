@@ -32,14 +32,23 @@ public class FileSystemObject
     }
 
     // FSO: GetBaseName("a/b.txt") -> "b"（拡張子抜きのファイル名）
-    public string GetBaseName(string path)
-    {
-        return Path.GetFileNameWithoutExtension(path);
-    }
+    //public string GetBaseName(string path)
+    //{
+    //    return Path.GetFileNameWithoutExtension(path);
+    //}
 
     public string GetAbsolutePathName(string path)
     {
         return Path.GetFullPath(path);
+    }
+
+    public string GetLastWriteTimeString(string path)
+    {
+        if (!File.Exists(path))
+            throw new FileNotFoundException("File not found", path);
+
+        // ISO 8601 形式で文字列化（JavaScriptで確実にパース可能）
+        return File.GetLastWriteTime(path).ToString("yyyy-MM-ddTHH:mm:ss");
     }
 
     public void CreateFolder(string path)

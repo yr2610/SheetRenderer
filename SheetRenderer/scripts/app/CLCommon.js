@@ -351,9 +351,9 @@ CL.moveFile = function (filePath, relativeFolderPath) {
 // DateLastModified をつけたファイル名を生成
 CL.makeBackupFileName = function (filePath) {
   var fso = FileSystem;
-  var file = fso.GetFile(filePath);
-  var lastModifiedDate = CL.yyyymmddhhmmss(new Date(file.DateLastModified)).slice(2);
-  var backupFileName = fso.GetBaseName(filePath) + "-bak" + lastModifiedDate + "." + fso.GetExtensionName(filePath);
+  let lastWriteTime = FileSystem.GetLastWriteTimeString(filePath);
+  var lastModifiedDate = CL.yyyymmddhhmmss(new Date(lastWriteTime)).slice(2);
+  var backupFileName = Path.GetFileNameWithoutExtension(filePath) + "-bak" + lastModifiedDate + "." + FileSystem.GetExtensionName(filePath);
 
   return backupFileName;
 };
