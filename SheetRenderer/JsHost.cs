@@ -39,6 +39,7 @@ public static class JsHost
         _engine.AddHostType("Directory", typeof(System.IO.Directory));
 
         _engine.AddHostObject("Hash", new HashBridge());
+        _engine.AddHostObject("Yaml", new YamlBridge(_engine));
     }
 
     // ② スクリプト読み込み（WSFの<script src="...">相当）
