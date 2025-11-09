@@ -7,7 +7,7 @@
     var postProcess = [];
 
     //var indexFilePath = FileSystem.BuildPath(FileSystem.GetParentFolderName(filePath), "index.yml");
-    //var index = CL.readYAMLFile(indexFilePath);
+    //var index = Yaml.LoadFile(indexFilePath);
     //printJSON(index);
 
     function processFunctions(data) {

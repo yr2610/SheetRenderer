@@ -46,102 +46,11 @@ CL.decompressJSON = function (json) {
   };
 };
 
-CL.readJSONFile = function (jsonFilePath) {
-  var s = File.ReadAllText(jsonFilePath);
-
-  return CL.decompressJSON(s).object;
-};
-CL.ReadJSONFile = CL.readJSONFile;
-
 CL.readYAMLFile = function (yamlFilePath) {
-  var s = File.ReadAllText(yamlFilePath);
-
-  return jsyaml.load(s);
+  //var s = File.ReadAllText(yamlFilePath);
+  //return jsyaml.load(s);
+  return Yaml.LoadFile(yamlFilePath);
 };
-
-CL.readJSONFromSheet = function (jsonSheet) {
-  var jsonLastCell = getLastCellInColumn(jsonSheet, 1);
-  var json;
-
-  if (jsonLastCell.Row >= 2) {
-    json = jsonSheet.Range(jsonSheet.Cells(1, 1), jsonLastCell).Value.toArray().join("\n");
-  }
-  else {
-    json = jsonLastCell.Value;
-  }
-
-  return JSON.parse(json);
-};
-CL.ReadJSONFromSheet = CL.readJSONFromSheet;
-
-CL.writeJSONToSheet = function (object, sheet) {
-  var sJSON = JSON.stringify(object, undefined, 4);
-  var sJSONArray = sJSON.split("\n");
-  var excelArray = jsArray1dColumnMajorToSafeArray2d(sJSONArray, sJSONArray.length);
-
-  // まずクリア
-  sheet.Cells.ClearContents();
-
-  sheet.Cells(1, 1).Resize(sJSONArray.length, 1) = excelArray;
-};
-CL.WriteJSONToSheet = CL.writeJSONToSheet;
-
-
-// 2d 配列を転置したものを返す
-CL.array2dTransposed = function (array) {
-  var n1 = array[0].length;
-  var n2 = array.length;
-
-  var a = new Array(n1);
-  for (var i = 0; i < n1; i++) {
-    a[i] = new Array(n2);
-  }
-
-  for (var i = 0; i < n1; i++) {
-    for (var j = 0; j < n2; j++) {
-      a[i][j] = array[j][i];
-    }
-  }
-
-  return a;
-};
-CL.Array2dTransposed = CL.array2dTransposed;
-
-// excel の Range.Value.toArray() で取得した配列を a[row(y)][column(x)] な配列に変換
-// 処理的にはどうってことないはずなので扱いやすい形に変換してしまう
-CL.rangeToValueArray2d = function (range) {
-  var rows = range.Rows.Count;
-  var array = range.Value.toArray();
-  var a = new Array(rows);
-
-  for (var y = 0; y < rows; y++) {
-    a[y] = [];
-  }
-  for (var i = 0; i < array.length;) {
-    for (var y = 0; y < rows; y++) {
-      a[y].push(array[i++]);
-    }
-  }
-
-  return a;
-};
-CL.RangeToValueArray2d = CL.rangeToValueArray2d;
-
-// excel の Range.Value.toArray() で取得した配列を a[column(x)][row(y)] な配列に変換
-CL.rangeToValueArray2dColumnMajor = function (range) {
-  var columns = range.Columns.Count;
-  var rows = range.Rows.Count;
-  var array = range.Value.toArray();
-  var a = new Array(columns);
-
-  for (var x = 0, i = 0; x < columns; x++ , i += rows) {
-    a[x] = array.slice(i, i + rows);
-  }
-
-  return a;
-};
-CL.RangeToValueArray2dColumnMajor = CL.rangeToValueArray2dColumnMajor;
-
 
 // fun は true を返せばそれ以降の traverse を打ち切る
 CL.forAllNodes = function (node, parent, fun) {

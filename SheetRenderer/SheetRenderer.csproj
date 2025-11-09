@@ -142,6 +142,7 @@
     </Compile>
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="ShellBridge.cs" />
+    <Compile Include="YamlBridge.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="app.config" />
