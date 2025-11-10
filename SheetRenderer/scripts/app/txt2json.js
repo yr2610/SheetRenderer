@@ -170,6 +170,8 @@ let directoryLocalPathToAbsolutePath;
 let filePath;
 let rootFilePath;
 
+let $abspath;
+
 function parse(filePath_) {
     filePath = filePath_;
 
@@ -505,7 +507,7 @@ var entryProjectFromRoot = CL.getRelativePath(conf.$rootDirectory, entryProject)
 
 // XXX: entry source からの相対パスを root からの絶対パスに変換
 // XXX: 名前が機能を十分に説明してないけど、基本的に source 以下のファイル以外を変換するケースはないと思うので…
-function $abspath(path) {
+$abspath = function (path) {
     var entrySourceDirectoryFromRoot = FileSystem.BuildPath(entryProjectFromRoot, sourceDirectoryName);
     return "/" + FileSystem.BuildPath(entrySourceDirectoryFromRoot, path);
 }
