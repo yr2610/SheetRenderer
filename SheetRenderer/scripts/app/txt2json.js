@@ -1341,8 +1341,8 @@ while (!srcLines.atEnd) {
         var o;
 
         try {
-            //o = jsyaml.load(s);
-            o = Yaml.Load(s);
+            o = jsyaml.load(s);
+            //o = Yaml.Load(s);
         }
         catch (e) {
             var errorMessage = "YAML の parse に失敗しました。";
