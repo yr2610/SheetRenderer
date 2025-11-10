@@ -47,9 +47,9 @@ CL.decompressJSON = function (json) {
 };
 
 CL.readYAMLFile = function (yamlFilePath) {
-  //var s = File.ReadAllText(yamlFilePath);
-  //return jsyaml.load(s);
-  return Yaml.LoadFile(yamlFilePath);
+  var s = File.ReadAllText(yamlFilePath);
+  return jsyaml.load(s);
+  //return Yaml.LoadFile(yamlFilePath);
 };
 
 // fun は true を返せばそれ以降の traverse を打ち切る
