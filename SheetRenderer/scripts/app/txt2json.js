@@ -2494,10 +2494,6 @@ function evaluateInScope(expr, scope) {
         }
 
         var referableParams = {};
-        // まずグローバル（あれば）
-        if (typeof globalScope !== "undefined") {
-          _.defaults(referableParams, globalScope);
-        }
         if (!_.isUndefined(currentParameters)) {
             var scopeCursor = currentParameters;
             while (scopeCursor && scopeCursor !== Object.prototype) {
@@ -2512,6 +2508,11 @@ function evaluateInScope(expr, scope) {
             if (!_.isUndefined(parent.params)) {
                 _.defaults(referableParams, parent.params);
             }
+        }
+
+        // もっとも外側のスコープは最後に適用し、ローカルの値を優先する
+        if (typeof globalScope !== "undefined") {
+          _.defaults(referableParams, globalScope);
         }
 
         // ★ 呼び出し引数の“丸ごと”参照を提供（互換用）
