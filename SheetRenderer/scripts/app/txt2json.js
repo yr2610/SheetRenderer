@@ -617,6 +617,8 @@ function getProjectLocalPath(filePath, projectDirectory) {
 
 // IDがふられてないノード
 var noIdNodes = {};
+// 同じファイルの同じ行に出現したノードには同じ ID を割り当てるためのキャッシュ
+var uidByLocation = Object.create(null);
 
 // tree 構築後じゃないと leaf かどうかの判別ができないのと、入力済の ID 間での重複チェックをしたいので、貯めといて最後に ID を割り当てる
 function AddNoIdNode(node, lineObj, lineNum, newSrcText) {
@@ -639,6 +641,11 @@ function AddNoIdNode(node, lineObj, lineNum, newSrcText) {
     };
 
     list.push(data);
+}
+
+function buildLocationKey(lineObj) {
+    var projectKey = buildProjectKey(lineObj.projectDirectory, lineObj.filePath);
+    return projectKey + ":" + lineObj.lineNum;
 }
 
 var srcTextsToRewrite = {};
@@ -1617,11 +1624,23 @@ _.forEach(noIdNodes, function(infos) {
         return false;
     });
 
-    // TODO: 複数箇所で include されてる時に異なる id が振られないように
     _.forEach(infos, function(info) {
         var node = info.node;
         var uidList = FindUidList(node.parent);
-        var uid = createUid(8, uidList);
+        var locationKey = buildLocationKey(info.lineObj);
+        var uid = uidByLocation[locationKey];
+
+        if (_.isUndefined(uid)) {
+            // 行単位で未割り当てなら新しい ID を生成
+            uid = createUid(8, uidList || {});
+            uidByLocation[locationKey] = uid;
+        }
+
+        if (uidList) {
+            // このシート内での重複チェック用リストにも登録しておく
+            uidList[uid] = info.lineObj;
+        }
+
         node.id = uid;
 
         // ID 挿入して書き換え
