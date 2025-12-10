@@ -258,7 +258,7 @@ namespace ExcelDnaTest
                             </splitButton>
                             <button id='button3' label='シート更新' size='large' imageMso='TableSharePointListsRefreshList' onAction='OnUpdateCurrentSheetButtonPressed' getEnabled='GetUpdateCurrentSheetButtonEnabled'/>
                             <splitButton id='splitButtonTest' size='large'>
-                              <button id='buttonTest' label='test' imageMso='HappyFace' onAction='OnTestButtonPressed'/>
+                              <button id='buttonTest' label='Parse' screentip='Parse' imageMso='HappyFace' onAction='OnTestButtonPressed'/>
                               <menu id='menuTest'>
                                 <button id='buttonTestSelectSource' label='ソースファイル選択' onAction='OnTestSelectSourceButtonPressed'/>
                               </menu>
