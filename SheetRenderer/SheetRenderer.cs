@@ -257,7 +257,12 @@ namespace ExcelDnaTest
                               </menu>
                             </splitButton>
                             <button id='button3' label='シート更新' size='large' imageMso='TableSharePointListsRefreshList' onAction='OnUpdateCurrentSheetButtonPressed' getEnabled='GetUpdateCurrentSheetButtonEnabled'/>
-                            <button id='buttonTest' label='test' size='large' imageMso='HappyFace' onAction='OnTestButtonPressed'/>
+                            <splitButton id='splitButtonTest' size='large'>
+                              <button id='buttonTest' label='test' imageMso='HappyFace' onAction='OnTestButtonPressed'/>
+                              <menu id='menuTest'>
+                                <button id='buttonTestSelectSource' label='ソースファイル選択' onAction='OnTestSelectSourceButtonPressed'/>
+                              </menu>
+                            </splitButton>
                           </group>
                         </tab>
                       </tabs>
@@ -337,6 +342,28 @@ namespace ExcelDnaTest
             }
 
             return storedPath;
+        }
+
+        static string GetStoredSourceFilePathFromWorkbook(Excel.Workbook workbook)
+        {
+            if (workbook == null)
+            {
+                return null;
+            }
+
+            var renderLog = workbook.GetCustomProperty<RenderLog>("RenderLog");
+            if (renderLog == null)
+            {
+                return null;
+            }
+
+            string storedSourceFilePath = NormalizeSourceFilePath(renderLog.SourceFilePath);
+            if (!File.Exists(storedSourceFilePath))
+            {
+                return null;
+            }
+
+            return storedSourceFilePath;
         }
 
         // JsonNode から指定した名前のオブジェクトの直下のプロパティをすべて Dictionary<string, string> として返却する
@@ -2473,19 +2500,38 @@ namespace ExcelDnaTest
             return workbook;
         }
 
+        string SelectSourceFileForParse(bool forceSelectNew)
+        {
+            if (!forceSelectNew)
+            {
+                Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
+                var workbook = excelApp.ActiveWorkbook as Excel.Workbook;
+                string storedSourceFilePath = GetStoredSourceFilePathFromWorkbook(workbook);
+                if (storedSourceFilePath != null)
+                {
+                    return storedSourceFilePath;
+                }
+            }
+
+            return OpenSourceFile();
+        }
+
         public void OnTestButtonPressed(IRibbonControl control)
         {
-            string txtPath2;
-            using (var ofd = new OpenFileDialog())
+            ExecuteParse(forceSelectNew: false);
+        }
+
+        public void OnTestSelectSourceButtonPressed(IRibbonControl control)
+        {
+            ExecuteParse(forceSelectNew: true);
+        }
+
+        void ExecuteParse(bool forceSelectNew)
+        {
+            string txtPath2 = SelectSourceFileForParse(forceSelectNew);
+            if (txtPath2 == null)
             {
-                ofd.Title = "ソースとなるテキストファイルを選択";
-                ofd.Filter = "テキストファイル (*.txt)|*.txt|すべてのファイル (*.*)|*.*";
-                ofd.CheckFileExists = true;
-
-                if (ofd.ShowDialog() != DialogResult.OK)
-                    return; // キャンセル時は終了
-
-                txtPath2 = ofd.FileName;
+                return;
             }
             FileLogger.InitializeForInput(txtPath2, timestamped: false);
 
