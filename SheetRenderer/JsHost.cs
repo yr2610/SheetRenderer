@@ -37,6 +37,7 @@ public static class JsHost
         _engine.AddHostType("Path", typeof(System.IO.Path));
         _engine.AddHostType("File", typeof(System.IO.File));
         _engine.AddHostType("Directory", typeof(System.IO.Directory));
+        _engine.AddHostType("FileLogger", typeof(FileLogger));
 
         _engine.AddHostObject("Hash", new HashBridge());
         _engine.AddHostObject("Yaml", new YamlBridge(_engine));
