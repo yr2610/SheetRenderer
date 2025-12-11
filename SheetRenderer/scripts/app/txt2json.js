@@ -1772,52 +1772,36 @@ var srcTexts;   // XXX: root.id 用に保存しておく…
         return node != null;
     });
 
-    // 更新の場合はメッセージを表示
+    // 更新の場合はログにのみ記録（ダイアログは表示しない）
     (function () {
         if (!lastParsedRoot) {
             // 完全新規っぽい場合は何も表示しない
             return;
         }
 
-        var message = "";
+        var messages = [];
 
         if (removedNodesFromLastParse.length > 0) {
-            message += "次のシートが削除されました。\n\n";
             var removedNodesString = _.map(removedNodesFromLastParse, function(sheetNode) {
                 return '* ' + sheetNode.text;
             }).join('\n');
-            message += removedNodesString;
-            message += "\n\n";
+            messages.push("次のシートが削除されました。\n\n" + removedNodesString);
         }
 
-        // キャンセル時には一般的によく使われるとされている値を返しておく
-        // 1: 一般的なエラー
-        // 2: コマンドライン引数のエラー
-        // 3: ファイルが見つからない
-        // 4: アクセス権限のエラー
-        // 5: ユーザーによるキャンセル        
         if (root.children.length == 0) {
-            message += "更新が必要なシートはありません\nJSONファイルを出力しますか？";
-            var btnr = Shell.Popup(message, "確認", ICON_QUESTN|BTN_OK_CANCL);
-            if (btnr == BTNR_CANCL) {
-                WScript.Quit(5);
-            }
+            messages.push("更新が必要なシートはありません");
+            FileLogger.Info(messages.join("\n\n"));
             return;
         }
 
-        message += "以下のシートを作成・更新します\n\n";
-        
         // 抽出した要素のtextプロパティに先頭に「*」をつけて改行で連結
         var formattedString = _.map(root.children, function(sheetNode) {
             return '* ' + sheetNode.text;
         }).join('\n');
 
-        message += formattedString;
+        messages.push("以下のシートを作成・更新します\n\n" + formattedString);
 
-        var btnr = Shell.Popup(message, "シート作成・更新", BTN_OK_CANCL);
-        if (btnr == BTNR_CANCL) {
-            WScript.Quit(5);
-        }
+        FileLogger.Info(messages.join("\n\n"));
     })();
 })();
 
@@ -4047,7 +4031,7 @@ var strUpdatedSrcFiles = (function () {
 
 // 更新情報を通知する
 if (strUpdatedSrcFiles) {
-    Notifier.Info("ファイル更新", strUpdatedSrcFiles);
+    FileLogger.Info("ファイル更新: " + strUpdatedSrcFiles);
 }
 
 // 警告を通知
