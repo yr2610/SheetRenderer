@@ -540,6 +540,10 @@ var root = {
 };
 stack.push(root);
 
+var lastLineWasHeading = false;
+var hasUlUnderCurrentHeading = false;
+var currentHeadingNode = root;
+
 // conf から機能を持った変数を移行
 (function() {
     if (!_.isUndefined(conf.$templateValues)) {
@@ -1192,9 +1196,19 @@ while (!srcLines.atEnd) {
 
     try {
         if (parseHeading(lineObj)) {
+            lastLineWasHeading = true;
+            currentHeadingNode = stack.peek();
+            hasUlUnderCurrentHeading = false;
             continue;
         }
         if (parseUnorderedList(lineObj, line)) {
+            lastLineWasHeading = false;
+            var headingNodeForUl = FindParentNode(stack.peek(), function(node) {
+                return node.kind === kindH;
+            });
+            if (headingNodeForUl && headingNodeForUl === currentHeadingNode) {
+                hasUlUnderCurrentHeading = true;
+            }
             continue;
         }
     }
@@ -1205,6 +1219,7 @@ while (!srcLines.atEnd) {
     // "*.", "-.", "+." はチェック項目列の見出しとする
     var headerList = line.match(/^(?:\s*)([\*\+\-])\.\s+(.*)\s*$/);
     if (headerList) {
+        lastLineWasHeading = false;
         //var level = headerList[1].length;
         var marker = headerList[1];
         var text = headerList[2];
@@ -1254,6 +1269,7 @@ while (!srcLines.atEnd) {
     // 数字は unique ID として扱う
     var ol = line.match(/^\s*(\d+)\.\s+(.*)$/);
     if (ol) {
+        lastLineWasHeading = false;
         (function() {
             var number = parseInt(ol[1], 10);
             var text = ol[2];
@@ -1441,9 +1457,50 @@ while (!srcLines.atEnd) {
     */
 
     // 自由にプロパティを追加できるようにしてしまう…
-    var property = line.match(/^\s*\[(.+)\]:\s+(.+)$/);
+    var property = line.match(/^(\s*)\[(.+)\]:\s+(.+)$/);
     if (property) {
-        stack.peek().variables[_.trim(property[1])] = _.trim(property[2]);
+        var indent = property[1].length;
+        var key = _.trim(property[2]);
+        var value = _.trim(property[3]);
+        var target = stack.peek();
+
+        if (indent === 0) {
+            for (var i = stack.__a.length - 1; i >= 0; i--) {
+                var elem = stack.__a[i];
+                if (elem.kind === kindH) {
+                    target = elem;
+                    break;
+                }
+            }
+        }
+        else if (lastLineWasHeading && !hasUlUnderCurrentHeading) {
+            var headingNodeForProperty = currentHeadingNode;
+            if (!headingNodeForProperty) {
+                for (var i = stack.__a.length - 1; i >= 0; i--) {
+                    var headingCandidate = stack.__a[i];
+                    if (headingCandidate.kind === kindH) {
+                        headingNodeForProperty = headingCandidate;
+                        break;
+                    }
+                }
+            }
+            if (headingNodeForProperty) {
+                target = headingNodeForProperty;
+            }
+            FileLogger.Warn("Indented property after heading ignored; attached to heading at "
+                + lineObj.filePath + ":" + lineObj.lineNum);
+        }
+
+        if (_.isUndefined(target.variables)) {
+            target.variables = {};
+        }
+
+        if (!_.isUndefined(target.variables[key])) {
+            FileLogger.Warn("Duplicate variable '" + key + "' overwritten at " + lineObj.filePath + ":" + lineObj.lineNum);
+        }
+
+        target.variables[key] = value;
+        lastLineWasHeading = false;
     }
 
     var ColumnValueError = function(errorMessage, lineObj) {
@@ -1528,6 +1585,8 @@ while (!srcLines.atEnd) {
             }
         })(e.errorMessage, e.lineObj);
     }
+
+    lastLineWasHeading = false;
 
 }
 
