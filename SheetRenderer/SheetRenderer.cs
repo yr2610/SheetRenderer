@@ -261,6 +261,7 @@ namespace ExcelDnaTest
                               <button id='buttonTest' label='Parse' screentip='Parse' imageMso='HappyFace' onAction='OnTestButtonPressed'/>
                               <menu id='menuTest'>
                                 <button id='buttonTestSelectSource' label='ソースファイル選択' onAction='OnTestSelectSourceButtonPressed'/>
+                                <button id='buttonParseSelectSourceWithPost' label='Parse+後処理 (ソース選択)' onAction='OnParseSelectSourceButtonPressed'/>
                               </menu>
                             </splitButton>
                           </group>
@@ -2518,15 +2519,20 @@ namespace ExcelDnaTest
 
         public void OnTestButtonPressed(IRibbonControl control)
         {
-            ExecuteParse(forceSelectNew: false);
+            ExecuteParsePipeline(forceSelectNew: false, runPostProcess: false);
         }
 
         public void OnTestSelectSourceButtonPressed(IRibbonControl control)
         {
-            ExecuteParse(forceSelectNew: true);
+            ExecuteParsePipeline(forceSelectNew: true, runPostProcess: false);
         }
 
-        void ExecuteParse(bool forceSelectNew)
+        public void OnParseSelectSourceButtonPressed(IRibbonControl control)
+        {
+            ExecuteParsePipeline(forceSelectNew: true, runPostProcess: true);
+        }
+
+        void ExecuteParsePipeline(bool forceSelectNew, bool runPostProcess)
         {
             string txtPath2 = SelectSourceFileForParse(forceSelectNew);
             if (txtPath2 == null)
@@ -2540,7 +2546,7 @@ namespace ExcelDnaTest
             try
             {
                 // parse_main.js の中の main() を呼ぶイメージ
-                var result = JsHost.Call("parse", txtPath2);
+                JsHost.Call("parse", txtPath2);
             }
             catch (Microsoft.ClearScript.ScriptEngineException ex)
             {
@@ -2566,6 +2572,30 @@ namespace ExcelDnaTest
                 Notifier.Error("エラー", "パースでエラーが発生しました。クリックでログを開きます。");
 
                 MessageBox.Show(details, "JS実行エラー");
+                return;
+            }
+
+            if (!runPostProcess)
+            {
+                return;
+            }
+
+            string jsonPath = Path.ChangeExtension(txtPath2, ".json");
+            if (!File.Exists(jsonPath))
+            {
+                FileLogger.Warn($"jsonファイルが見つかりません: {jsonPath}");
+                return;
+            }
+
+            try
+            {
+                TimeAssigner.Assign(jsonPath);
+            }
+            catch (Exception ex)
+            {
+                FileLogger.Error(ex.ToString());
+                Notifier.Error("エラー", "後処理でエラーが発生しました。クリックでログを開きます。");
+                MessageBox.Show(ex.Message, "後処理エラー");
             }
             return;
 
