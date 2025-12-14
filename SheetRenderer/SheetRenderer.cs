@@ -259,8 +259,8 @@ namespace ExcelDnaTest
                             <button id='button3' label='シート更新' size='large' imageMso='TableSharePointListsRefreshList' onAction='OnUpdateCurrentSheetButtonPressed' getEnabled='GetUpdateCurrentSheetButtonEnabled'/>
                           </group>
                           <group id='groupDebug' label='Debug'>
-                            <button id='buttonDebugParse' label='Parse (Debug)' screentip='ParseOnly' imageMso='HappyFace' onAction='OnDebugParseButtonPressed'/>
-                            <button id='buttonDebugRender' label='Render Only (Debug)' screentip='RenderOnly' imageMso='HappyFace' onAction='OnRenderOnlyDebugButtonPressed'/>
+                            <button id='buttonDebugParse' label='Parse' screentip='ParseOnly' imageMso='HappyFace' onAction='OnDebugParseButtonPressed'/>
+                            <button id='buttonDebugRender' label='Render' screentip='RenderOnly' imageMso='HappyFace' onAction='OnRenderOnlyDebugButtonPressed'/>
                           </group>
                         </tab>
                       </tabs>
@@ -2783,7 +2783,7 @@ namespace ExcelDnaTest
             {
                 excelApp.StatusBar = false;
             }
-        }
+            return;
 
 #if false
             try
@@ -2819,94 +2819,8 @@ namespace ExcelDnaTest
             }
             return;
 #endif
-            try
-            {
-                string wsfPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "scripts", "parse.wsf");
-
-                if (!File.Exists(wsfPath))
-                {
-                    MessageBox.Show(
-                        $"WSF が見つかりませんでした。\n{wsfPath}",
-                        "test", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                    return;
-                }
-
-                // 1) OpenFileDialogでtxtファイルを選択
-                string txtPath;
-                using (var ofd = new OpenFileDialog())
-                {
-                    ofd.Title = "ソースとなるテキストファイルを選択";
-                    ofd.Filter = "テキストファイル (*.txt)|*.txt|すべてのファイル (*.*)|*.*";
-                    ofd.CheckFileExists = true;
-
-                    if (ofd.ShowDialog() != DialogResult.OK)
-                        return; // キャンセル時は終了
-
-                    txtPath = ofd.FileName;
-                }
-
-                // 2) cscript.exe のパス（Excelのbit数に合う実体）
-                string cscript = Path.Combine(Environment.SystemDirectory, "cscript.exe");
-
-                // 3) 引数を組み立て（非対話・ロゴ非表示）
-                var args = new StringBuilder();
-                args.Append("//nologo //B ");
-                // 必要ならジョブ名: args.Append("//job:\"Main\" ");
-                args.Append("\"").Append(wsfPath).Append("\" ");
-                args.Append("\"").Append(txtPath).Append("\" "); // 選んだtxtファイルパスを渡す
-                // 将来のために非対話フラグも渡しておく（スクリプト側で無視されてもOK）
-                //args.Append(" --noninteractive");
-
-                var psi = new ProcessStartInfo
-                {
-                    FileName = cscript,
-                    Arguments = args.ToString(),
-                    WorkingDirectory = Path.GetDirectoryName(wsfPath),
-                    UseShellExecute = false,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    CreateNoWindow = true
-                };
-
-                string stdout, stderr;
-                int exitCode;
-
-                using (var p = Process.Start(psi))
-                {
-                    // ここでは単純に同期読み取り
-                    stdout = p.StandardOutput.ReadToEnd();
-                    stderr = p.StandardError.ReadToEnd();
-                    p.WaitForExit();
-                    exitCode = p.ExitCode;
-                }
-
-                // 4) 結果ダイアログ（長すぎる場合は少し詰める）
-                string Trunc(string s, int max) =>
-                    string.IsNullOrEmpty(s) ? "" : (s.Length <= max ? s : s.Substring(0, max) + " ...");
-
-                var msg = new StringBuilder();
-                msg.AppendLine("parse.wsf 実行が完了しました。")
-                   .AppendLine($"ExitCode: {exitCode}")
-                   .AppendLine()
-                   .AppendLine("[stdout]")
-                   .AppendLine(Trunc(stdout, 800))
-                   .AppendLine()
-                   .AppendLine("[stderr]")
-                   .AppendLine(Trunc(stderr, 800));
-
-                MessageBox.Show(msg.ToString(), "test", MessageBoxButtons.OK,
-                                exitCode == 0 ? MessageBoxIcon.Information : MessageBoxIcon.Exclamation);
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show("実行中にエラーが発生しました。\n\n" + ex, "test",
-                                MessageBoxButtons.OK, MessageBoxIcon.Error);
-            }
         }
-
-
     }
-
 }
 
 public class AddIn : IExcelAddIn
