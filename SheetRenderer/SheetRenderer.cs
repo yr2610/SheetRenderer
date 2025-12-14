@@ -257,13 +257,10 @@ namespace ExcelDnaTest
                               </menu>
                             </splitButton>
                             <button id='button3' label='シート更新' size='large' imageMso='TableSharePointListsRefreshList' onAction='OnUpdateCurrentSheetButtonPressed' getEnabled='GetUpdateCurrentSheetButtonEnabled'/>
-                            <splitButton id='splitButtonTest' size='large'>
-                              <button id='buttonTest' label='Parse' screentip='Parse' imageMso='HappyFace' onAction='OnTestButtonPressed'/>
-                              <menu id='menuTest'>
-                                <button id='buttonTestSelectSource' label='ソースファイル選択' onAction='OnTestSelectSourceButtonPressed'/>
-                                <button id='buttonParseSelectSourceWithPost' label='Parse+後処理 (ソース選択)' onAction='OnParseSelectSourceButtonPressed'/>
-                              </menu>
-                            </splitButton>
+                          </group>
+                          <group id='groupDebug' label='Debug'>
+                            <button id='buttonDebugParse' label='Parse (Debug)' screentip='ParseOnly' imageMso='HappyFace' onAction='OnDebugParseButtonPressed'/>
+                            <button id='buttonDebugRender' label='Render Only (Debug)' screentip='RenderOnly' imageMso='HappyFace' onAction='OnRenderOnlyDebugButtonPressed'/>
                           </group>
                         </tab>
                       </tabs>
@@ -324,6 +321,45 @@ namespace ExcelDnaTest
         static string TxtToJsonPath(string txtPath)
         {
             return Path.ChangeExtension(txtPath, ".json");
+        }
+
+        static string SelectSourceFileForRender(WorkbookInfo workbookInfo)
+        {
+            string projectId = workbookInfo.ProjectId;
+
+            var lastRenderLog = workbookInfo.LastRenderLog;
+            bool isSameUser = lastRenderLog.User == Environment.UserName;
+            string storedSourceFilePath = NormalizeSourceFilePath(lastRenderLog.SourceFilePath);
+            bool sourceFileExists = File.Exists(storedSourceFilePath);
+            string txtFilePath;
+
+            if (!isSameUser || !sourceFileExists)
+            {
+                string message = !isSameUser
+                    ? "最後に更新された環境と異なります。"
+                    : "ソースファイルが見つかりません。";
+
+                DialogResult fileSelectionResult = MessageBox.Show(
+                    $"{message}\nProject ID が「{projectId}」の TXT を選択し直してください。", "確認",
+                    MessageBoxButtons.OKCancel);
+
+                if (fileSelectionResult != DialogResult.OK)
+                {
+                    return null;
+                }
+
+                txtFilePath = OpenSourceFile();
+                if (txtFilePath == null)
+                {
+                    return null;
+                }
+            }
+            else
+            {
+                txtFilePath = storedSourceFilePath;
+            }
+
+            return txtFilePath;
         }
 
         static string NormalizeSourceFilePath(string storedPath)
@@ -1154,7 +1190,7 @@ namespace ExcelDnaTest
             return clonedNode.ComputeSha256();
         }
 
-        async Task UpdateAllSheets(Excel.Workbook workbook)
+        async Task UpdateAllSheets(Excel.Workbook workbook, string txtFilePathOverride = null, string jsonFilePathOverride = null)
         {
             Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
 
@@ -1169,43 +1205,42 @@ namespace ExcelDnaTest
 
             string projectId = workbookInfo.ProjectId;
 
-            // lastRenderLog.User が今のユーザーと異なる、もしくは lastRenderLog.SourceFilePath が見つからない場合、前回生成時の環境と異なるとみなしてファイル選択させる
-            var lastRenderLog = workbookInfo.LastRenderLog;
-            bool isSameUser = lastRenderLog.User == Environment.UserName;
-            string storedSourceFilePath = NormalizeSourceFilePath(lastRenderLog.SourceFilePath);
-            bool sourceFileExists = File.Exists(storedSourceFilePath);
-            string txtFilePath;
-
-            if (!isSameUser || !sourceFileExists)
+            string txtFilePath = txtFilePathOverride;
+            if (txtFilePath == null)
             {
-                string message = !isSameUser
-                    ? "最後に更新された環境と異なります。"
-                    : "ソースファイルが見つかりません。";
+                var lastRenderLog = workbookInfo.LastRenderLog;
+                bool isSameUser = lastRenderLog.User == Environment.UserName;
+                string storedSourceFilePath = NormalizeSourceFilePath(lastRenderLog.SourceFilePath);
+                bool sourceFileExists = File.Exists(storedSourceFilePath);
 
-                DialogResult fileSelectionResult = MessageBox.Show(
-                    $"{message}\nProject ID が「{projectId}」の TXT を選択し直してください。", "確認",
-                    MessageBoxButtons.OKCancel);
-
-                if (fileSelectionResult != DialogResult.OK)
+                if (!isSameUser || !sourceFileExists)
                 {
-                    return;
+                    string message = !isSameUser
+                        ? "最後に更新された環境と異なります。"
+                        : "ソースファイルが見つかりません。";
+
+                    DialogResult fileSelectionResult = MessageBox.Show(
+                        $"{message}\nProject ID が「{projectId}」の TXT を選択し直してください。", "確認",
+                        MessageBoxButtons.OKCancel);
+
+                    if (fileSelectionResult != DialogResult.OK)
+                    {
+                        return;
+                    }
+
+                    txtFilePath = OpenSourceFile();
+                    if (txtFilePath == null)
+                    {
+                        return;
+                    }
                 }
-
-                txtFilePath = OpenSourceFile();
-                // キャンセルされたら何もしない
-                if (txtFilePath == null)
+                else
                 {
-                    return;
+                    txtFilePath = storedSourceFilePath;
                 }
             }
-            else
-            {
-                // RenderLog.SourceFilePath は TXT を想定
-                txtFilePath = storedSourceFilePath;
-            }
 
-            // TXT → JSON 兄弟パスに変換
-            string jsonFilePath = TxtToJsonPath(txtFilePath);
+            string jsonFilePath = jsonFilePathOverride ?? TxtToJsonPath(txtFilePath);
 
             // JSON が無ければメッセージ出して中断
             if (!File.Exists(jsonFilePath))
@@ -1569,26 +1604,29 @@ namespace ExcelDnaTest
             return false;
         }
 
-        async Task CreateNewWorkbook()
+        async Task CreateNewWorkbook(string txtFilePath = null, string jsonFilePath = null)
         {
-            DialogResult fileSelectionResult = MessageBox.Show(
-                "ファイルを新規作成します。\nソースの TXT を選択してください。",
-                "確認", MessageBoxButtons.OKCancel);
-            if (fileSelectionResult != DialogResult.OK)
-            {
-                return;
-            }
-
-            // TXT を選ぶ
-            var txtFilePath = OpenSourceFile();
-            // キャンセルされたら何もしない
             if (txtFilePath == null)
             {
-                return;
+                DialogResult fileSelectionResult = MessageBox.Show(
+                    "ファイルを新規作成します。\nソースの TXT を選択してください。",
+                    "確認", MessageBoxButtons.OKCancel);
+                if (fileSelectionResult != DialogResult.OK)
+                {
+                    return;
+                }
+
+                txtFilePath = OpenSourceFile();
+                if (txtFilePath == null)
+                {
+                    return;
+                }
             }
 
-            // 兄弟 JSON を決定
-            string jsonFilePath = TxtToJsonPath(txtFilePath);
+            if (jsonFilePath == null)
+            {
+                jsonFilePath = TxtToJsonPath(txtFilePath);
+            }
 
             // JSON が存在しなければ中断
             if (!File.Exists(jsonFilePath))
@@ -1772,27 +1810,93 @@ namespace ExcelDnaTest
         {
             Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
             var sheet = excelApp.ActiveSheet as Excel.Worksheet;
+            Excel.Workbook workbook = sheet == null ? null : sheet.Parent as Excel.Workbook;
+            string txtFilePath = null;
+            string jsonFilePath = null;
+            bool isNewWorkbook = sheet == null;
 
-            // アクティブなシートがない時は新規作成
-            if (sheet == null)
+            try
             {
-                await CreateNewWorkbook();
-            }
-            else
-            {
-                Excel.Workbook workbook = sheet.Parent as Excel.Workbook;
+                excelApp.StatusBar = "Parsing...";
 
-                await UpdateAllSheets(workbook);
-            }
+                if (isNewWorkbook)
+                {
+                    DialogResult fileSelectionResult = MessageBox.Show(
+                        "ファイルを新規作成します。\nソースの TXT を選択してください。",
+                        "確認", MessageBoxButtons.OKCancel);
+                    if (fileSelectionResult != DialogResult.OK)
+                    {
+                        return;
+                    }
 
-            excelApp.EnableEvents = true;
-            if (excelApp.ActiveWorkbook != null)
-            {
-                excelApp.Calculation = Excel.XlCalculation.xlCalculationAutomatic;
+                    txtFilePath = OpenSourceFile();
+                    if (txtFilePath == null)
+                    {
+                        return;
+                    }
+                }
+                else
+                {
+                    WorkbookInfo workbookInfo = WorkbookInfo.CreateFromWorkbook(workbook);
+
+                    if (workbookInfo == null)
+                    {
+                        string projectName = Assembly.GetExecutingAssembly().GetName().Name;
+                        MessageBox.Show($"{projectName} で生成されたブックではありません。");
+                        return;
+                    }
+
+                    txtFilePath = SelectSourceFileForRender(workbookInfo);
+                    if (txtFilePath == null)
+                    {
+                        return;
+                    }
+                }
+
+                FileLogger.InitializeForInput(txtFilePath, timestamped: false);
+
+                bool parseSucceeded = RunParsePipeline(txtFilePath, true);
+                if (!parseSucceeded)
+                {
+                    return;
+                }
+
+                jsonFilePath = TxtToJsonPath(txtFilePath);
+                if (!File.Exists(jsonFilePath))
+                {
+                    FileLogger.Warn($"jsonファイルが見つかりません: {jsonFilePath}");
+                    return;
+                }
+
+                excelApp.StatusBar = "Rendering...";
+
+                Stopwatch renderStopwatch = Stopwatch.StartNew();
+                FileLogger.Info("Render started.");
+
+                if (isNewWorkbook)
+                {
+                    await CreateNewWorkbook(txtFilePath, jsonFilePath);
+                }
+                else
+                {
+                    await UpdateAllSheets(workbook, txtFilePath, jsonFilePath);
+                }
+
+                renderStopwatch.Stop();
+                FileLogger.Info($"Render finished ({renderStopwatch.ElapsedMilliseconds} ms).");
             }
-            excelApp.ScreenUpdating = true;
-            excelApp.DisplayAlerts = true;
-            excelApp.AutomationSecurity = Office.MsoAutomationSecurity.msoAutomationSecurityByUI;
+            finally
+            {
+                excelApp.StatusBar = false;
+                excelApp.EnableEvents = true;
+                if (excelApp.ActiveWorkbook != null)
+                {
+                    excelApp.Calculation = Excel.XlCalculation.xlCalculationAutomatic;
+                }
+                excelApp.ScreenUpdating = true;
+                excelApp.DisplayAlerts = true;
+                excelApp.AutomationSecurity = Office.MsoAutomationSecurity.msoAutomationSecurityByUI;
+            }
         }
 
         static void RenderIndexSheet(IEnumerable<JsonNode> sheetNodes, Dictionary<string, string> confData, Excel.Worksheet dstSheet, SheetValuesInfo sheetValuesInfo = null)
@@ -2517,54 +2621,34 @@ namespace ExcelDnaTest
             return OpenSourceFile();
         }
 
-        public void OnTestButtonPressed(IRibbonControl control)
+        void ApplyPostProcess(string jsonPath)
         {
-            ExecuteParsePipeline(forceSelectNew: false, runPostProcess: false);
+            TimeAssigner.Assign(jsonPath);
         }
 
-        public void OnTestSelectSourceButtonPressed(IRibbonControl control)
+        bool RunParsePipeline(string txtFilePath, bool runPostProcess)
         {
-            ExecuteParsePipeline(forceSelectNew: true, runPostProcess: false);
-        }
-
-        public void OnParseSelectSourceButtonPressed(IRibbonControl control)
-        {
-            ExecuteParsePipeline(forceSelectNew: true, runPostProcess: true);
-        }
-
-        void ExecuteParsePipeline(bool forceSelectNew, bool runPostProcess)
-        {
-            string txtPath2 = SelectSourceFileForParse(forceSelectNew);
-            if (txtPath2 == null)
-            {
-                return;
-            }
-            FileLogger.InitializeForInput(txtPath2, timestamped: false);
-
-            //JsHost.SetArguments("--in=C:\\tmp\\data.txt", "--out=C:\\tmp\\data.json");
+            Stopwatch stopwatch = Stopwatch.StartNew();
+            FileLogger.Info("Parse started.");
 
             try
             {
-                // parse_main.js の中の main() を呼ぶイメージ
-                JsHost.Call("parse", txtPath2);
+                JsHost.Call("parse", txtFilePath);
             }
             catch (Microsoft.ClearScript.ScriptEngineException ex)
             {
-                // 内側の例外をたどって JsQuitException かチェック
                 var iex = ex.InnerException;
                 while (iex != null)
                 {
                     if (iex is JsQuitException q)
                     {
-                        // ここで「正常終了(Exit)扱い」にできる
                         FileLogger.Error(ex.ToString());
                         Notifier.Error("エラー", "中断されましました。クリックでログを開きます。");
 
-                        MessageBox.Show(iex.Message, "中断");
+                        MessageBox.Show(q.Message, "中断");
                     }
                     iex = iex.InnerException;
                 }
-
 
                 string details = ex.ErrorDetails;
 
@@ -2572,32 +2656,129 @@ namespace ExcelDnaTest
                 Notifier.Error("エラー", "パースでエラーが発生しました。クリックでログを開きます。");
 
                 MessageBox.Show(details, "JS実行エラー");
-                return;
+                return false;
             }
 
-            if (!runPostProcess)
+            string jsonPath = Path.ChangeExtension(txtFilePath, ".json");
+            if (runPostProcess)
+            {
+                if (!File.Exists(jsonPath))
+                {
+                    FileLogger.Warn($"jsonファイルが見つかりません: {jsonPath}");
+                    return false;
+                }
+
+                try
+                {
+                    ApplyPostProcess(jsonPath);
+                }
+                catch (Exception ex)
+                {
+                    FileLogger.Error(ex.ToString());
+                    Notifier.Error("エラー", "後処理でエラーが発生しました。クリックでログを開きます。");
+                    MessageBox.Show(ex.Message, "後処理エラー");
+                    return false;
+                }
+            }
+
+            stopwatch.Stop();
+            FileLogger.Info($"Parse finished ({stopwatch.ElapsedMilliseconds} ms).");
+            return true;
+        }
+
+        public void OnDebugParseButtonPressed(IRibbonControl control)
+        {
+            string txtPath2 = OpenSourceFile();
+            if (txtPath2 == null)
+            {
+                return;
+            }
+            FileLogger.InitializeForInput(txtPath2, timestamped: false);
+            RunParsePipeline(txtPath2, false);
+        }
+
+        static string SelectInputFileForRenderOnly()
+        {
+            using (OpenFileDialog openFileDialog = new OpenFileDialog())
+            {
+                openFileDialog.Filter = "JSON または Text (*.json;*.txt)|*.json;*.txt|JSON (*.json)|*.json|Text (*.txt)|*.txt|すべてのファイル (*.*)|*.*";
+                openFileDialog.Title = "レンダーに使用するファイルを選択してください";
+
+                return (openFileDialog.ShowDialog() == DialogResult.OK)
+                    ? openFileDialog.FileName
+                    : null;
+            }
+        }
+
+        public async void OnRenderOnlyDebugButtonPressed(IRibbonControl control)
+        {
+            string selectedPath = SelectInputFileForRenderOnly();
+            if (selectedPath == null)
             {
                 return;
             }
 
-            string jsonPath = Path.ChangeExtension(txtPath2, ".json");
-            if (!File.Exists(jsonPath))
+            string txtFilePath = selectedPath;
+            string jsonFilePath = selectedPath;
+
+            if (string.Equals(Path.GetExtension(selectedPath), ".json", StringComparison.OrdinalIgnoreCase))
             {
-                FileLogger.Warn($"jsonファイルが見つかりません: {jsonPath}");
+                txtFilePath = NormalizeSourceFilePath(selectedPath);
+            }
+            else
+            {
+                jsonFilePath = TxtToJsonPath(txtFilePath);
+            }
+
+            if (!File.Exists(jsonFilePath))
+            {
+                MessageBox.Show(
+                    $"JSON ファイルが見つかりません。\n期待したパス:\n{jsonFilePath}",
+                    "JSON 不在", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
+            }
+
+            Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
+            var sheet = excelApp.ActiveSheet as Excel.Worksheet;
+            bool isNewWorkbook = sheet == null;
+            Excel.Workbook workbook = isNewWorkbook ? null : sheet.Parent as Excel.Workbook;
+
+            if (!isNewWorkbook)
+            {
+                WorkbookInfo workbookInfo = WorkbookInfo.CreateFromWorkbook(workbook);
+                if (workbookInfo == null)
+                {
+                    string projectName = Assembly.GetExecutingAssembly().GetName().Name;
+                    MessageBox.Show($"{projectName} で生成されたブックではありません。");
+                    return;
+                }
             }
 
             try
             {
-                TimeAssigner.Assign(jsonPath);
+                excelApp.StatusBar = "Rendering...";
+                FileLogger.InitializeForInput(txtFilePath, timestamped: false);
+
+                Stopwatch renderStopwatch = Stopwatch.StartNew();
+                FileLogger.Info("Render started.");
+
+                if (isNewWorkbook)
+                {
+                    await CreateNewWorkbook(txtFilePath, jsonFilePath);
+                }
+                else
+                {
+                    await UpdateAllSheets(workbook, txtFilePath, jsonFilePath);
+                }
+
+                renderStopwatch.Stop();
+                FileLogger.Info($"Render finished ({renderStopwatch.ElapsedMilliseconds} ms).");
             }
-            catch (Exception ex)
+            finally
             {
-                FileLogger.Error(ex.ToString());
-                Notifier.Error("エラー", "後処理でエラーが発生しました。クリックでログを開きます。");
-                MessageBox.Show(ex.Message, "後処理エラー");
+                excelApp.StatusBar = false;
             }
-            return;
+        }
 
 #if false
             try
