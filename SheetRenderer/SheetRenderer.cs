@@ -261,7 +261,7 @@ namespace ExcelDnaTest
                               <button id='buttonTest' label='Parse' screentip='Parse' imageMso='HappyFace' onAction='OnTestButtonPressed'/>
                               <menu id='menuTest'>
                                 <button id='buttonTestSelectSource' label='ソースファイル選択' onAction='OnTestSelectSourceButtonPressed'/>
-                                <button id='buttonParseSelectSourceWithPost' label='Parse+後処理 (ソース選択)' onAction='OnParseSelectSourceButtonPressed'/>
+                                <button id='buttonParseSelectSourceWithPost' label='Parseのみ' onAction='OnParseSelectSourceButtonPressed'/>
                               </menu>
                             </splitButton>
                           </group>
@@ -2519,7 +2519,7 @@ namespace ExcelDnaTest
 
         public void OnTestButtonPressed(IRibbonControl control)
         {
-            ExecuteParsePipeline(forceSelectNew: false, runPostProcess: false);
+            ExecuteParsePipeline(forceSelectNew: false, runPostProcess: true);
         }
 
         public void OnTestSelectSourceButtonPressed(IRibbonControl control)
@@ -2529,7 +2529,7 @@ namespace ExcelDnaTest
 
         public void OnParseSelectSourceButtonPressed(IRibbonControl control)
         {
-            ExecuteParsePipeline(forceSelectNew: true, runPostProcess: true);
+            ExecuteParsePipeline(forceSelectNew: false, runPostProcess: false);
         }
 
         void ExecuteParsePipeline(bool forceSelectNew, bool runPostProcess)
