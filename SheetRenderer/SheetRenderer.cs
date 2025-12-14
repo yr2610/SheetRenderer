@@ -2683,6 +2683,11 @@ namespace ExcelDnaTest
 
             stopwatch.Stop();
             FileLogger.Info($"Parse finished ({stopwatch.ElapsedMilliseconds} ms).");
+
+            if (!runPostProcess)
+            {
+                Notifier.Info("正常終了", $"jsonファイルを出力しました\n{jsonPath}");
+            }
             return true;
         }
 
