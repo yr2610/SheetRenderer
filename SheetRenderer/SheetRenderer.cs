@@ -845,7 +845,7 @@ namespace ExcelDnaTest
 
         }
 
-        async Task ForceUpdateSheet(Excel.Worksheet sheet)
+        async Task ForceUpdateSheet(Excel.Worksheet sheet, string txtFilePathOverride = null)
         {
             Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
             Excel.Workbook workbook = sheet.Parent as Excel.Workbook;
@@ -871,36 +871,39 @@ namespace ExcelDnaTest
             bool isSameUser = lastRenderLog.User == Environment.UserName;
             string storedSourceFilePath = NormalizeSourceFilePath(lastRenderLog.SourceFilePath);
             bool sourceFileExists = File.Exists(storedSourceFilePath);
-            string txtFilePath;
+            string txtFilePath = txtFilePathOverride;
 
-            if (!isSameUser || !sourceFileExists)
+            if (txtFilePath == null)
             {
-                string message = null;
-                if (!isSameUser)
+                if (!isSameUser || !sourceFileExists)
                 {
-                    message = "最後に更新された環境と異なります。";
-                }
-                else if (!sourceFileExists)
-                {
-                    message = "ソースファイルが見つかりません。";
-                }
+                    string message = null;
+                    if (!isSameUser)
+                    {
+                        message = "最後に更新された環境と異なります。";
+                    }
+                    else if (!sourceFileExists)
+                    {
+                        message = "ソースファイルが見つかりません。";
+                    }
 
-                DialogResult fileSelectionResult = MessageBox.Show($"{message}\nProject ID が「{projectId}」の TXT を選択し直してください。", "確認", MessageBoxButtons.OKCancel);
-                if (fileSelectionResult != DialogResult.OK)
-                {
-                    return;
-                }
+                    DialogResult fileSelectionResult = MessageBox.Show($"{message}\nProject ID が「{projectId}」の TXT を選択し直してください。", "確認", MessageBoxButtons.OKCancel);
+                    if (fileSelectionResult != DialogResult.OK)
+                    {
+                        return;
+                    }
 
-                txtFilePath = OpenSourceFile();
-                // キャンセルされたら何もしない
-                if (txtFilePath == null)
-                {
-                    return;
+                    txtFilePath = OpenSourceFile();
+                    // キャンセルされたら何もしない
+                    if (txtFilePath == null)
+                    {
+                        return;
+                    }
                 }
-            }
-            else
-            {
-                txtFilePath = storedSourceFilePath;
+                else
+                {
+                    txtFilePath = storedSourceFilePath;
+                }
             }
 
             string jsonFilePath = TxtToJsonPath(txtFilePath);
@@ -1088,12 +1091,25 @@ namespace ExcelDnaTest
                 return;
             }
 
+            string txtFilePath = SelectSourceFileForParse(false);
+            if (txtFilePath == null)
+            {
+                return;
+            }
+
+            FileLogger.InitializeForInput(txtFilePath, timestamped: false);
+            bool parseSucceeded = RunParsePipeline(txtFilePath, true);
+            if (!parseSucceeded)
+            {
+                return;
+            }
+
             excelApp.ScreenUpdating = false;
             excelApp.Calculation = Excel.XlCalculation.xlCalculationManual;
             excelApp.EnableEvents = false;
             MacroControl.DisableMacros(excelApp);
 
-            await ForceUpdateSheet(sheet);
+            await ForceUpdateSheet(sheet, txtFilePath);
 
             excelApp.StatusBar = false;
             excelApp.ScreenUpdating = true;
