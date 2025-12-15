@@ -1,187 +1,248 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Dynamic;
 using System.IO;
-using System.Text;
 using Newtonsoft.Json;
-using Newtonsoft.Json.Linq;
+using Newtonsoft.Json.Converters;
+using Newtonsoft.Json.Serialization;
 
 public static class TimeAssigner
 {
+    // ========= public API =========
+
     public static void Assign(string jsonFilePath)
     {
-        if (string.IsNullOrWhiteSpace(jsonFilePath))
+        if (string.IsNullOrEmpty(jsonFilePath))
         {
-            throw new ArgumentException("jsonFilePath is required.", nameof(jsonFilePath));
+            throw new ArgumentException(nameof(jsonFilePath));
         }
 
-        if (!File.Exists(jsonFilePath))
-        {
-            throw new FileNotFoundException("JSON ファイルが存在しません。", jsonFilePath);
-        }
+        string json = File.ReadAllText(jsonFilePath);
 
-        JObject root;
-        using (var reader = new StreamReader(jsonFilePath, Encoding.UTF8))
-        using (var jsonReader = new JsonTextReader(reader))
-        {
-            root = JObject.Load(jsonReader);
-        }
+        dynamic root = JsonConvert.DeserializeObject<ExpandoObject>(
+            json,
+            new ExpandoObjectConverter()
+        );
 
         Apply(root);
 
-        using (var writer = new StreamWriter(jsonFilePath, false, new UTF8Encoding(false)))
-        using (var jsonWriter = new JsonTextWriter(writer) { Formatting = Formatting.Indented })
+        var settings = new JsonSerializerSettings
         {
-            root.WriteTo(jsonWriter);
+            Formatting = Formatting.Indented,
+            ContractResolver = new DefaultContractResolver
+            {
+                NamingStrategy = new CamelCaseNamingStrategy()
+            }
+        };
+
+        string output = JsonConvert.SerializeObject(root, settings);
+        File.WriteAllText(jsonFilePath, output);
+    }
+
+    public static void Apply(dynamic root)
+    {
+        foreach (var node in root.children)
+        {
+            SheetCalcTime(node);
         }
     }
 
-    public static void Apply(JObject root)
+    private static void SheetCalcTime(dynamic node)
     {
-        if (root == null)
-        {
-            throw new ArgumentNullException(nameof(root));
-        }
+        InitializeParent(node, null);
 
-        AssignRecursive(
-            node: root,
-            inheritedDefaultTime: null
-        );
+        ForAllNodesRecurse(node, (Action<dynamic>)(n => InitializeTotalTimeNode(n)));
+        ForAllNodesRecurse(node, (Action<dynamic>)(n => Pre(n)));
+        ForAllNodesRecurse(node, (Action<dynamic>)(n => AffectTime(n)));
+
+        DeletePropertyForAllNodes(node, "affectNodes");
+        DeletePropertyForAllNodes(node, "exclusionTime");
+        DeletePropertyForAllNodes(node, "parent");
+
+        DeleteVariablesForAllNodes(node, new List<string> { "default_time", "time" });
     }
 
-    private static void AssignRecursive(
-        JObject node,
-        int? inheritedDefaultTime
-    )
+    private static void InitializeTotalTimeNode(dynamic n)
     {
-        // 1) このノードの variables を読む
-        var variables = node["variables"] as JObject;
+        if (IsLeaf(n)) return;
 
-        int? ownTime = variables?["time"]?.Value<int?>();
-        int? ownDefaultTime = variables?["default_time"]?.Value<int?>();
-
-        // default_time は親 → 子へ継承
-        int? effectiveDefaultTime = ownDefaultTime ?? inheritedDefaultTime;
-
-        // 2) 子ノードを取得
-        var children = node["children"] as JArray;
-
-        bool hasChildren = children != null && children.Count > 0;
-
-        // 3) 葉ノードの場合
-        if (!hasChildren)
+        var time = GetTime(n);
+        if (time != null)
         {
-            int? estimated =
-                ownTime ??
-                effectiveDefaultTime;
+            n.affectNodes = new List<dynamic>();
+            n.exclusionTime = 0;
+        }
+    }
 
-            if (estimated.HasValue)
+    private static void Pre(dynamic n)
+    {
+        if (IsLeaf(n))
+        {
+            string result = null;
+            object resultValue = null;
+
+            if (n.initialValues != null &&
+                ((IDictionary<string, object>)n.initialValues)
+                    .TryGetValue("result", out resultValue))
             {
-                SetEstimatedTime(node, estimated.Value);
-            }
-            else
-            {
-                WarnNoEstimatedTime(node);
+                result = resultValue as string;
             }
 
-            CleanupVariables(node);
-            return;
+            if (!string.IsNullOrEmpty(result) && result.StartsWith("-"))
+            {
+                return;
+            }
         }
 
-        // 4) 非leafノード
-        int totalAssigned = 0;
-        var leafNodes = new List<JObject>();
+        int? time = GetTime(n);
+        var parent = n.parent;
 
-        foreach (var child in children)
+        while (parent != null)
         {
-            if (child is JObject childObj)
+            int? totalTime = GetTime(parent);
+            if (totalTime != null)
             {
-                AssignRecursive(childObj, effectiveDefaultTime);
-
-                int? childTime = GetEstimatedTime(childObj);
-                if (childTime.HasValue)
+                if (time == null)
                 {
-                    totalAssigned += childTime.Value;
+                    if (IsLeaf(n))
+                    {
+                        parent.affectNodes.Add(n);
+                    }
                 }
                 else
                 {
-                    leafNodes.Add(childObj);
+                    parent.exclusionTime += time.Value;
                 }
+                return;
             }
-        }
 
-        // 5) このノードに time が指定されている場合、未割当 leaf に配分
-        if (ownTime.HasValue && leafNodes.Count > 0)
-        {
-            int remain = ownTime.Value - totalAssigned;
-            if (remain > 0)
+            if (IsLeaf(n) && time == null)
             {
-                int perNode = remain / leafNodes.Count;
-
-                foreach (var leaf in leafNodes)
+                int? defaultTime = GetDefaultTime(parent);
+                if (defaultTime != null)
                 {
-                    SetEstimatedTime(leaf, perNode);
+                    SetEstimatedTime(n, defaultTime.Value);
+                    time = defaultTime;
                 }
             }
-            else if (remain < 0)
+
+            parent = parent.parent;
+        }
+    }
+
+    private static void AffectTime(dynamic n)
+    {
+        int? time = GetTime(n);
+        if (time == null) return;
+
+        if (IsLeaf(n))
+        {
+            SetEstimatedTime(n, time.Value);
+            return;
+        }
+
+        int adjustedTime = Math.Max(0, time.Value - (int)n.exclusionTime);
+        int leafTime = adjustedTime / n.affectNodes.Count;
+        int remain = adjustedTime % n.affectNodes.Count;
+
+        foreach (var affectNode in n.affectNodes)
+        {
+            int actualLeafTime = leafTime;
+            if (remain-- > 0)
             {
-                FileLogger.Warn($"子ノードの時間合計が上限を超えています (id={GetNodeId(node)}, remain={remain}).");
+                actualLeafTime++;
             }
+            SetEstimatedTime(affectNode, actualLeafTime);
         }
-
-        CleanupVariables(node);
     }
 
-    private static void SetEstimatedTime(JObject node, int time)
+    private static void InitializeParent(dynamic node, dynamic parent)
     {
-        var initialValues = node["initialValues"] as JObject;
-        if (initialValues == null)
+        node.parent = parent;
+        foreach (var child in node.children)
         {
-            initialValues = new JObject();
-            node["initialValues"] = initialValues;
+            InitializeParent(child, node);
         }
+    }
 
-        int? existing = initialValues["estimated_time"]?.Value<int?>();
-        if (existing.HasValue && existing.Value != time)
+    private static void DeletePropertyForAllNodes(dynamic node, string name)
+    {
+        ForAllNodesRecurse(node, (Action<dynamic>)(n =>
         {
-            FileLogger.Warn(
-                $"既存の estimated_time を上書きしました (id={GetNodeId(node)}, before={existing.Value}, after={time}).");
-        }
-
-        initialValues["estimated_time"] = time;
+            var dict = (IDictionary<string, object>)n;
+            if (dict.ContainsKey(name))
+            {
+                dict.Remove(name);
+            }
+        }));
     }
 
-    private static int? GetEstimatedTime(JObject node)
+    private static void DeleteVariablesForAllNodes(dynamic node, List<string> names)
     {
-        return node["initialValues"]?["estimated_time"]?.Value<int?>();
-    }
-
-    private static void CleanupVariables(JObject node)
-    {
-        var variables = node["variables"] as JObject;
-        if (variables == null) return;
-
-        variables.Remove("time");
-        variables.Remove("default_time");
-
-        if (!variables.HasValues)
+        ForAllNodesRecurse(node, (Action<dynamic>)(n =>
         {
-            node.Remove("variables");
-        }
+            if (n.variables == null) return;
+
+            var vars = (IDictionary<string, object>)n.variables;
+            foreach (var name in names)
+            {
+                if (vars.ContainsKey(name))
+                {
+                    vars.Remove(name);
+                }
+            }
+        }));
     }
 
-    private static void WarnNoEstimatedTime(JObject node)
+    private static void SetEstimatedTime(dynamic node, int time)
     {
-        FileLogger.Warn($"推定時間を割り当てできませんでした (id={GetNodeId(node)}).");
-    }
-
-    private static string GetNodeId(JObject node)
-    {
-        var id = node["id"];
-        if (id == null)
+        if (node.initialValues == null)
         {
-            return "(no id)";
+            node.initialValues = new ExpandoObject();
+        }
+        node.initialValues.estimated_time = time;
+    }
+
+    private static int? GetNumber(dynamic node, string name)
+    {
+        if (node.variables == null) return null;
+
+        object value;
+        if (((IDictionary<string, object>)node.variables)
+            .TryGetValue(name, out value))
+        {
+            if (value is string s)
+            {
+                int n;
+                if (int.TryParse(s, out n)) return n;
+            }
+            return value as int?;
         }
 
-        return id.ToString();
+        return null;
+    }
+
+    private static int? GetTime(dynamic node)
+    {
+        return GetNumber(node, "time");
+    }
+
+    private static int? GetDefaultTime(dynamic node)
+    {
+        return GetNumber(node, "default_time");
+    }
+
+    private static bool IsLeaf(dynamic node)
+    {
+        return node.children == null || node.children.Count == 0;
+    }
+
+    private static void ForAllNodesRecurse(dynamic node, Action<dynamic> action)
+    {
+        action(node);
+        foreach (var child in node.children)
+        {
+            ForAllNodesRecurse(child, action);
+        }
     }
 }
