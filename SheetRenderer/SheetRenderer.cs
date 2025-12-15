@@ -1609,6 +1609,7 @@ namespace ExcelDnaTest
                         var missingImagePathsInSheet = RenderSheet(sheetNode, confData, jsonFilePath, newSheet, sheetValuesInfo);
 
                         missingImagePaths.AddRange(missingImagePathsInSheet);
+                        string sheetName = newSheet.Name;
                         var viewState = FindViewState(sheetViewStates, id, sheetName);
                         ApplyViewState(excelApp, newSheet, viewState);
                         newSheet.SetCustomProperty(sheetHashCustomPropertyName, newSheetHash);
