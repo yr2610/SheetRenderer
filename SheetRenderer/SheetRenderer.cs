@@ -1683,7 +1683,8 @@ namespace ExcelDnaTest
                     Excel.Worksheet newSheet = workbook.Sheets[workbook.Sheets.Count];
                     newSheet.Name = newSheetName;
 
-                    sheetValuesById?.TryGetValue(sheetId, out var sheetValuesInfo);
+                    SheetValuesInfo sheetValuesInfo = null;
+                    sheetValuesById?.TryGetValue(sheetId, out sheetValuesInfo);
 
                     var missingImagePathsInSheet = RenderSheet(sheetNode, confData, jsonFilePath, newSheet, sheetValuesInfo);
 
