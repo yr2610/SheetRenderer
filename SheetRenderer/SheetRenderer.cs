@@ -846,6 +846,15 @@ namespace ExcelDnaTest
 
         }
 
+        class SheetViewState
+        {
+            public string SheetId { get; set; }
+            public string SheetName { get; set; }
+            public (int row, int column)? ActiveCellPosition { get; set; }
+            public (int horizontalScroll, int verticalScroll)? ScrollPosition { get; set; }
+            public double Zoom { get; set; }
+        }
+
         async Task ForceUpdateSheet(Excel.Worksheet sheet, string txtFilePathOverride = null)
         {
             Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
@@ -1118,6 +1127,112 @@ namespace ExcelDnaTest
             excelApp.EnableEvents = true;
             MacroControl.EnableMacros(excelApp);
 
+        }
+
+        Dictionary<string, SheetViewState> CaptureViewStatesForUpdate(
+            Excel.Application excelApp,
+            Excel.Workbook workbook,
+            JsonArray sheetNodes,
+            Dictionary<string, string> sheetNamesById,
+            Excel.Worksheet originalActiveSheet,
+            (int row, int column)? originalActiveCellPosition,
+            (int horizontalScroll, int verticalScroll)? originalScrollPosition,
+            double originalZoom)
+        {
+            var viewStates = new Dictionary<string, SheetViewState>();
+
+            foreach (JsonNode sheetNode in sheetNodes)
+            {
+                string id = sheetNode["id"].ToString();
+
+                if (!sheetNamesById.ContainsKey(id))
+                {
+                    continue;
+                }
+
+                string sheetName = sheetNamesById[id];
+                Excel.Worksheet sheet = workbook.Sheets[sheetName];
+
+                try
+                {
+                    sheet.Activate();
+
+                    var viewState = new SheetViewState
+                    {
+                        SheetId = id,
+                        SheetName = sheetName,
+                        ActiveCellPosition = excelApp.GetActiveCellPosition(),
+                        ScrollPosition = excelApp.GetScrollPosition(),
+                        Zoom = excelApp.GetActiveSheetZoom(),
+                    };
+
+                    viewStates[id] = viewState;
+                }
+                catch (Exception ex)
+                {
+                    FileLogger.Warn($"Failed to capture view state for sheet '{sheetName}': {ex}");
+                }
+            }
+
+            try
+            {
+                if (originalActiveSheet != null)
+                {
+                    originalActiveSheet.Activate();
+                    excelApp.SetActiveCellPosition(originalActiveCellPosition);
+                    excelApp.SetActiveSheetZoom(originalZoom);
+                    excelApp.SetScrollPosition(originalScrollPosition);
+                }
+            }
+            catch (Exception ex)
+            {
+                FileLogger.Warn($"Failed to restore original active sheet after view state capture: {ex}");
+            }
+
+            return viewStates;
+        }
+
+        SheetViewState FindViewState(Dictionary<string, SheetViewState> viewStates, string sheetId, string sheetName)
+        {
+            if (sheetId != null)
+            {
+                if (viewStates.TryGetValue(sheetId, out SheetViewState viewStateById))
+                {
+                    return viewStateById;
+                }
+            }
+
+            if (sheetName != null)
+            {
+                return viewStates.Values.FirstOrDefault(state => state.SheetName == sheetName);
+            }
+
+            return null;
+        }
+
+        void ApplyViewState(Excel.Application excelApp, Excel.Worksheet sheet, SheetViewState viewState)
+        {
+            if (viewState == null)
+            {
+                return;
+            }
+
+            try
+            {
+                sheet.Activate();
+
+                excelApp.SetActiveCellPosition(viewState.ActiveCellPosition);
+                excelApp.SetActiveSheetZoom(viewState.Zoom);
+                excelApp.SetScrollPosition(viewState.ScrollPosition);
+
+                var nudgeZoom = excelApp.ActiveWindow.Zoom + 1;
+                excelApp.ActiveWindow.Zoom = nudgeZoom;
+                excelApp.ActiveWindow.Zoom = viewState.Zoom;
+            }
+            catch (Exception ex)
+            {
+                FileLogger.Warn($"Failed to apply view state for sheet '{sheet.Name}': {ex}");
+            }
         }
 
         static SortedSet<string> CollectImageFilePaths(JsonNode node)
@@ -1408,6 +1523,16 @@ namespace ExcelDnaTest
                 originalSheetsById.Add(id, sheet);
             }
 
+            var sheetViewStates = CaptureViewStatesForUpdate(
+                excelApp,
+                workbook,
+                sheetNodes,
+                originalSheetNamesById,
+                activeSheet,
+                activeCellPosition,
+                scrollPosition,
+                activeSheetZoom);
+
             // すべてのシートが一時的な名前に変更された後、最終的な名前にリネーム
             foreach (var renameInfo in sheetsToRename)
             {
@@ -1484,6 +1609,8 @@ namespace ExcelDnaTest
                         var missingImagePathsInSheet = RenderSheet(sheetNode, confData, jsonFilePath, newSheet, sheetValuesInfo);
 
                         missingImagePaths.AddRange(missingImagePathsInSheet);
+                        var viewState = FindViewState(sheetViewStates, id, sheetName);
+                        ApplyViewState(excelApp, newSheet, viewState);
                         newSheet.SetCustomProperty(sheetHashCustomPropertyName, newSheetHash);
                         newSheetImageHash = await newSheetImageHashTask;
                         newSheet.SetCustomProperty(sheetImageHashCustomPropertyName, newSheetImageHash);
