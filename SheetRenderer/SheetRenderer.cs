@@ -254,6 +254,7 @@ namespace ExcelDnaTest
                               <button id='button2' label='ファイル更新' imageMso='TableDrawTable' onAction='OnRenderButtonPressed'/>
                               <menu id='menu1'>
                                 <button id='button2a' label='ファイル新規作成' onAction='OnCreateNewButtonPressed'/>
+                                <button id='button2b' label='再生成' onAction='OnRegenerateWorkbookPressed'/>
                               </menu>
                             </splitButton>
                             <button id='button3' label='シート更新' size='large' imageMso='TableSharePointListsRefreshList' onAction='OnUpdateCurrentSheetButtonPressed' getEnabled='GetUpdateCurrentSheetButtonEnabled'/>
@@ -1620,6 +1621,280 @@ namespace ExcelDnaTest
             return false;
         }
 
+        async Task<List<(string filePath, string sheetName, string address)>> RenderWorkbook(
+            Excel.Workbook workbook,
+            JsonNode jsonObject,
+            Dictionary<string, string> confData,
+            string jsonFilePath,
+            Dictionary<string, SheetValuesInfo> sheetValuesById)
+        {
+            Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
+
+            string indexSheetName = workbook.GetCustomProperty(indexSheetNameCustomPropertyName);
+            string templateSheetName = workbook.GetCustomProperty(templateSheetNameCustomPropertyName);
+
+            if (indexSheetName == null)
+            {
+                MessageBox.Show($"カスタムプロパティに {indexSheetNameCustomPropertyName} が設定されていません。");
+                return new List<(string filePath, string sheetName, string address)>();
+            }
+            if (templateSheetName == null)
+            {
+                MessageBox.Show($"カスタムプロパティに {templateSheetNameCustomPropertyName} が設定されていません。");
+                return new List<(string filePath, string sheetName, string address)>();
+            }
+
+            excelApp.DisplayAlerts = false;
+            excelApp.ScreenUpdating = false;
+            excelApp.Calculation = Excel.XlCalculation.xlCalculationManual;
+            excelApp.EnableEvents = false;
+            excelApp.AutomationSecurity = Office.MsoAutomationSecurity.msoAutomationSecurityForceDisable;
+
+            JsonArray sheetNodes = jsonObject["children"].AsArray();
+
+            Excel.Worksheet templateSheet = workbook.Sheets[templateSheetName];
+            var templateSheetVisible = templateSheet.Visible;
+            templateSheet.Visible = Excel.XlSheetVisibility.xlSheetVisible;
+
+            List<(string filePath, string sheetName, string address)> missingImagePaths = new List<(string filePath, string sheetName, string address)>();
+
+            // +1 は index シート
+            progressBarForm = new ProgressBarForm(sheetNodes.Count + 1);
+            progressBarForm.Show();
+
+            await Task.Run(async () =>
+            {
+                foreach (JsonNode sheetNode in sheetNodes)
+                {
+                    // 画像の hash 計算を開始しておく
+                    var newSheetImageHashTask = ComputeImagesHash(jsonFilePath, sheetNode);
+
+                    // シートの JsonNode の hash 計算を開始しておく
+                    var sheetHashTask = Task.Run(() => ComputeSheetHash(sheetNode));
+
+                    string newSheetName = sheetNode["text"].ToString();
+                    string sheetId = sheetNode["id"].ToString();
+
+                    // プログレスバーを更新
+                    progressBarForm.Invoke(new Action<string>(progressBarForm.UpdateSheetName), newSheetName);
+
+                    // シートをコピーしてリネーム
+                    templateSheet.Copy(After: workbook.Sheets[workbook.Sheets.Count]);
+                    Excel.Worksheet newSheet = workbook.Sheets[workbook.Sheets.Count];
+                    newSheet.Name = newSheetName;
+
+                    sheetValuesById?.TryGetValue(sheetId, out var sheetValuesInfo);
+
+                    var missingImagePathsInSheet = RenderSheet(sheetNode, confData, jsonFilePath, newSheet, sheetValuesInfo);
+
+                    // シートの JsonNode の hash をカスタムプロパティに保存
+                    string sheetHash = await sheetHashTask;
+                    newSheet.SetCustomProperty(sheetHashCustomPropertyName, sheetHash);
+
+                    var newSheetImageHash = await newSheetImageHashTask;
+                    newSheet.SetCustomProperty(sheetImageHashCustomPropertyName, newSheetImageHash);
+
+                    missingImagePaths.AddRange(missingImagePathsInSheet);
+
+                }
+
+                // プログレスバーを更新
+                progressBarForm.Invoke(new Action<string>(progressBarForm.UpdateSheetName), indexSheetName);
+
+                Excel.Worksheet indexSheet = workbook.Sheets[indexSheetName];
+
+                // 新規作成時は index sheet のテンプレセルの情報を保存しておく
+                var indexSheetTemplateCells = GetTemplateCells(indexSheet);
+                var serializer = new SerializerBuilder()
+                    .WithNamingConvention(NullNamingConvention.Instance)
+                    .Build();
+                var indexSheetTemplateCellsYaml = serializer.Serialize(indexSheetTemplateCells);
+
+                indexSheet.SetCustomProperty(indexSheetTemplateCellsCustomPropertyName, indexSheetTemplateCellsYaml);
+
+                RenderIndexSheet(sheetNodes, confData, indexSheet, null);
+
+                // 最後にindexシートを選択状態にしておく
+                indexSheet.Activate();
+
+                templateSheet.Visible = templateSheetVisible;
+
+                // 処理が完了したらフォームを閉じる
+                progressBarForm.Invoke(new Action(progressBarForm.CloseForm));
+            });
+
+            progressBarForm.Close();
+
+            var originalZoom = excelApp.ActiveWindow.Zoom;
+
+            excelApp.EnableEvents = true;
+            excelApp.Calculation = Excel.XlCalculation.xlCalculationAutomatic;
+            excelApp.ActiveWindow.Zoom = originalZoom + 1;
+            excelApp.ScreenUpdating = true;
+            excelApp.ActiveWindow.Zoom = originalZoom;
+            excelApp.DisplayAlerts = true;
+            excelApp.AutomationSecurity = Office.MsoAutomationSecurity.msoAutomationSecurityByUI;
+
+            return missingImagePaths;
+        }
+
+        static string CreateBackupFilePath(string originalPath)
+        {
+            string directory = Path.GetDirectoryName(originalPath);
+            string fileNameWithoutExtension = Path.GetFileNameWithoutExtension(originalPath);
+            string extension = Path.GetExtension(originalPath);
+            string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+
+            return Path.Combine(directory, $"{fileNameWithoutExtension}.backup_{timestamp}{extension}");
+        }
+
+        static string CreateTemporaryRegenerationPath(string originalPath)
+        {
+            string directory = Path.GetDirectoryName(originalPath);
+            string fileNameWithoutExtension = Path.GetFileNameWithoutExtension(originalPath);
+            string extension = Path.GetExtension(originalPath);
+
+            return Path.Combine(directory, $"{fileNameWithoutExtension}.__regen__{extension}");
+        }
+
+        static Dictionary<string, SheetValuesInfo> SnapshotSheetValuesById(Excel.Workbook workbook)
+        {
+            var result = new Dictionary<string, SheetValuesInfo>();
+
+            foreach (Excel.Worksheet sheet in workbook.Sheets)
+            {
+                string sheetId = sheet.GetCustomProperty(sheetIdCustomPropertyName);
+                if (string.IsNullOrEmpty(sheetId))
+                {
+                    continue;
+                }
+
+                var sheetValuesInfo = SheetValuesInfo.CreateFromSheet(sheet);
+                result[sheetId] = sheetValuesInfo;
+            }
+
+            return result;
+        }
+
+        async Task RegenerateWorkbook(Excel.Workbook originalWorkbook, WorkbookInfo workbookInfo, string txtFilePath, string jsonFilePath)
+        {
+            Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
+
+            if (originalWorkbook.Saved == false)
+            {
+                DialogResult yesNoCancel = MessageBox.Show($"再生成の前にファイルの変更内容を保存しますか？", "確認", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Exclamation);
+
+                switch (yesNoCancel)
+                {
+                    case DialogResult.Yes:
+                        originalWorkbook.Save();
+                        break;
+                    case DialogResult.No:
+                        break;
+                    case DialogResult.Cancel:
+                        return;
+                }
+            }
+
+            string jsonString = File.ReadAllText(jsonFilePath);
+            JsonNode jsonObject = JsonNode.Parse(jsonString);
+            var confData = GetPropertiesFromJsonNode(jsonObject, "variables");
+
+            if (confData["project"] != workbookInfo.ProjectId)
+            {
+                MessageBox.Show($"Project ID({workbookInfo.ProjectId})が異なります。");
+                return;
+            }
+
+            var sheetValuesById = SnapshotSheetValuesById(originalWorkbook);
+
+            string originalPath = originalWorkbook.FullName;
+            string tempPath = CreateTemporaryRegenerationPath(originalPath);
+
+            if (File.Exists(tempPath))
+            {
+                File.Delete(tempPath);
+            }
+
+            string templateFilePath = GetAbsolutePathFromExecutingDirectory(templateFileName);
+            Excel.Workbook newWorkbook = null;
+
+            try
+            {
+                newWorkbook = CreateCopiedWorkbook(excelApp, templateFilePath, tempPath);
+
+                var missingImagePaths = await RenderWorkbook(newWorkbook, jsonObject, confData, jsonFilePath, sheetValuesById);
+
+                // RenderLog は TXT を保存
+                RenderLog renderLog = new RenderLog
+                {
+                    SourceFilePath = txtFilePath,   // TXT を保存
+                    User = Environment.UserName
+                };
+                newWorkbook.SetCustomProperty("RenderLog", renderLog);
+
+                string projectId = confData["project"];
+                newWorkbook.SetCustomProperty(ssProjectIdCustomPropertyName, projectId);
+
+                newWorkbook.Save();
+
+                newWorkbook.Close(false);
+
+                string backupPath = CreateBackupFilePath(originalPath);
+
+                originalWorkbook.Close(false);
+
+                File.Move(originalPath, backupPath);
+
+                try
+                {
+                    File.Move(tempPath, originalPath);
+                }
+                catch
+                {
+                    File.Move(backupPath, originalPath);
+                    throw;
+                }
+
+                Excel.Workbook reopenedWorkbook = excelApp.Workbooks.Open(originalPath);
+                reopenedWorkbook.Activate();
+
+                if (missingImagePaths.Any())
+                {
+                    ShowMissingImageFilesDialog(missingImagePaths);
+                }
+            }
+            catch (Exception ex)
+            {
+                FileLogger.Error($"RegenerateWorkbook failed: {ex}");
+                MessageBox.Show($"再生成に失敗しました: {ex.Message}", "再生成", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            finally
+            {
+                if (newWorkbook != null)
+                {
+                    try
+                    {
+                        newWorkbook.Close(false);
+                    }
+                    catch
+                    {
+                    }
+                }
+
+                if (File.Exists(tempPath))
+                {
+                    try
+                    {
+                        File.Delete(tempPath);
+                    }
+                    catch
+                    {
+                    }
+                }
+            }
+        }
+
         async Task CreateNewWorkbook(string txtFilePath = null, string jsonFilePath = null)
         {
             if (txtFilePath == null)
@@ -1698,92 +1973,7 @@ namespace ExcelDnaTest
                 return;
             }
 
-            excelApp.DisplayAlerts = false;
-            excelApp.ScreenUpdating = false;
-            excelApp.Calculation = Excel.XlCalculation.xlCalculationManual;
-            excelApp.EnableEvents = false;
-            excelApp.AutomationSecurity = Office.MsoAutomationSecurity.msoAutomationSecurityForceDisable;
-
-            // 特定のプロパティ（items）を配列としてアクセス
-            JsonArray sheetNodes = jsonObject["children"].AsArray();
-
-            List<string> sheetNames = new List<string>();
-            Excel.Worksheet sheet = workbook.Sheets[templateSheetName];
-
-            List<(string filePath, string sheetName, string address)> missingImagePaths = new List<(string filePath, string sheetName, string address)>();
-
-            // +1 は index シート
-            progressBarForm = new ProgressBarForm(sheetNodes.Count + 1);
-            progressBarForm.Show();
-
-            await Task.Run(async () =>
-            {
-                foreach (JsonNode sheetNode in sheetNodes)
-                {
-                    // 画像の hash 計算を開始しておく
-                    var newSheetImageHashTask = ComputeImagesHash(jsonFilePath, sheetNode);
-
-                    // シートの JsonNode の hash 計算を開始しておく
-                    var sheetHashTask = Task.Run(() => ComputeSheetHash(sheetNode));
-
-                    string newSheetName = sheetNode["text"].ToString();
-
-                    // プログレスバーを更新
-                    progressBarForm.Invoke(new Action<string>(progressBarForm.UpdateSheetName), newSheetName);
-
-                    // シートをコピーしてリネーム
-                    sheet.Copy(After: workbook.Sheets[workbook.Sheets.Count]);
-                    Excel.Worksheet newSheet = workbook.Sheets[workbook.Sheets.Count];
-                    newSheet.Name = newSheetName;
-
-                    var missingImagePathsInSheet = RenderSheet(sheetNode, confData, jsonFilePath, newSheet, null);
-
-                    // シートの JsonNode の hash をカスタムプロパティに保存
-                    string sheetHash = await sheetHashTask;
-                    newSheet.SetCustomProperty(sheetHashCustomPropertyName, sheetHash);
-
-                    var newSheetImageHash = await newSheetImageHashTask;
-                    newSheet.SetCustomProperty(sheetImageHashCustomPropertyName, newSheetImageHash);
-
-                    missingImagePaths.AddRange(missingImagePathsInSheet);
-
-                    sheetNames.Add(newSheetName);
-                }
-
-                // プログレスバーを更新
-                progressBarForm.Invoke(new Action<string>(progressBarForm.UpdateSheetName), indexSheetName);
-
-                Excel.Worksheet indexSheet = workbook.Sheets[indexSheetName];
-
-                // 新規作成時は index sheet のテンプレセルの情報を保存しておく
-                var indexSheetTemplateCells = GetTemplateCells(indexSheet);
-                var serializer = new SerializerBuilder()
-                    .WithNamingConvention(NullNamingConvention.Instance)
-                    .Build();
-                var indexSheetTemplateCellsYaml = serializer.Serialize(indexSheetTemplateCells);
-
-                indexSheet.SetCustomProperty(indexSheetTemplateCellsCustomPropertyName, indexSheetTemplateCellsYaml);
-
-                RenderIndexSheet(sheetNodes, confData, indexSheet, null);
-
-                // 最後にindexシートを選択状態にしておく
-                indexSheet.Activate();
-
-                // 処理が完了したらフォームを閉じる
-                progressBarForm.Invoke(new Action(progressBarForm.CloseForm));
-            });
-
-            progressBarForm.Close();
-
-            var originalZoom = excelApp.ActiveWindow.Zoom;
-
-            excelApp.EnableEvents = true;
-            excelApp.Calculation = Excel.XlCalculation.xlCalculationAutomatic;
-            excelApp.ActiveWindow.Zoom = originalZoom + 1;
-            excelApp.ScreenUpdating = true;
-            excelApp.ActiveWindow.Zoom = originalZoom;
-            excelApp.DisplayAlerts = true;
-            excelApp.AutomationSecurity = Office.MsoAutomationSecurity.msoAutomationSecurityByUI;
+            var missingImagePaths = await RenderWorkbook(workbook, jsonObject, confData, jsonFilePath, null);
 
             if (missingImagePaths.Any())
             {
@@ -1820,6 +2010,65 @@ namespace ExcelDnaTest
             excelApp.ScreenUpdating = true;
             excelApp.DisplayAlerts = true;
             excelApp.AutomationSecurity = Office.MsoAutomationSecurity.msoAutomationSecurityByUI;
+        }
+
+        public async void OnRegenerateWorkbookPressed(IRibbonControl control)
+        {
+            Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
+            Excel.Workbook workbook = excelApp.ActiveWorkbook as Excel.Workbook;
+
+            if (workbook == null)
+            {
+                MessageBox.Show("アクティブなブックが見つかりません。");
+                return;
+            }
+
+            WorkbookInfo workbookInfo = WorkbookInfo.CreateFromWorkbook(workbook);
+
+            if (workbookInfo == null)
+            {
+                string projectName = Assembly.GetExecutingAssembly().GetName().Name;
+                MessageBox.Show($"{projectName} で生成されたブックではありません。");
+                return;
+            }
+
+            string txtFilePath = SelectSourceFileForRender(workbookInfo);
+            if (txtFilePath == null)
+            {
+                return;
+            }
+
+            FileLogger.InitializeForInput(txtFilePath, timestamped: false);
+
+            string jsonFilePath = TxtToJsonPath(txtFilePath);
+
+            if (File.Exists(jsonFilePath))
+            {
+                try
+                {
+                    File.Delete(jsonFilePath);
+                }
+                catch (Exception ex)
+                {
+                    FileLogger.Error($"json の削除に失敗しました: {ex}");
+                    MessageBox.Show($"json の削除に失敗しました。\n{ex.Message}");
+                    return;
+                }
+            }
+
+            bool parseSucceeded = RunParsePipeline(txtFilePath, true);
+            if (!parseSucceeded)
+            {
+                return;
+            }
+
+            if (!File.Exists(jsonFilePath))
+            {
+                FileLogger.Warn($"jsonファイルが見つかりません: {jsonFilePath}");
+                return;
+            }
+
+            await RegenerateWorkbook(workbook, workbookInfo, txtFilePath, jsonFilePath);
         }
 
         public async void OnRenderButtonPressed(IRibbonControl control)
