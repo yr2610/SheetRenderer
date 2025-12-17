@@ -1870,11 +1870,19 @@ namespace ExcelDnaTest
         static string CreateBackupFilePath(string originalPath)
         {
             string directory = Path.GetDirectoryName(originalPath);
+            string bakDirectory = Path.Combine(directory, "bak");
+
+            // bak フォルダがなければ作成（既にあっても例外は出ない）
+            Directory.CreateDirectory(bakDirectory);
+
             string fileNameWithoutExtension = Path.GetFileNameWithoutExtension(originalPath);
             string extension = Path.GetExtension(originalPath);
             string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
 
-            return Path.Combine(directory, $"{fileNameWithoutExtension}.backup_{timestamp}{extension}");
+            return Path.Combine(
+                bakDirectory,
+                $"{fileNameWithoutExtension}.backup_{timestamp}{extension}"
+            );
         }
 
         static string CreateTemporaryRegenerationPath(string originalPath)
