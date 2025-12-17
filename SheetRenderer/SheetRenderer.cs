@@ -2295,7 +2295,10 @@ namespace ExcelDnaTest
 
         static void RenderIndexSheet(IEnumerable<JsonNode> sheetNodes, Dictionary<string, string> confData, Excel.Worksheet dstSheet, SheetValuesInfo sheetValuesInfo = null)
         {
-            var sheetNameListRange = dstSheet.GetNamedRange("SS_SHEETNAMELIST").RefersToRange;
+            var namedRange = dstSheet.GetNamedRange("SS_SHEETNAMELIST");
+            var sheetNameListRange = namedRange.RefersToRange;
+            var sheetNames = ExtractPropertyValues(sheetNodes, "text");
+            var sheetNamesCount = sheetNames.Count();
 
             int indexStartRow = sheetNameListRange.Row;
             int indexRowCount = sheetNameListRange.Rows.Count;
@@ -2304,13 +2307,24 @@ namespace ExcelDnaTest
             string idColumnAddress = "T";
             int idColumn = dstSheet.ColumnAddressToIndex(idColumnAddress);
 
+            if (sheetNamesCount > 1 && indexRowCount < sheetNamesCount)
+            {
+                Excel.Range startCell = sheetNameListRange.Cells[1, 1];
+                Excel.Range resizedRange = startCell.Resize[sheetNamesCount, 1];
+                string resizedAddress = resizedRange.get_Address(true, true, Excel.XlReferenceStyle.xlA1, true);
+                FileLogger.Info($"Healed SS_SHEETNAMELIST range: {indexRowCount} -> {sheetNamesCount} (start {startCell.Address[true, true]})");
+                namedRange.RefersTo = $"={resizedAddress}";
+                sheetNameListRange = namedRange.RefersToRange;
+                indexStartRow = sheetNameListRange.Row;
+                indexRowCount = sheetNameListRange.Rows.Count;
+                indexEndRow = sheetNameListRange.Rows[indexRowCount].Row;
+                indexStartColumn = sheetNameListRange.Column;
+            }
+
             string syncStartColumnAddress = "Q";
             int syncStartColumn = dstSheet.ColumnAddressToIndex(syncStartColumnAddress);
             int syncStartColumnCount = 1;
             int[] syncIgnoreColumnOffsets = { };
-
-            var sheetNames = ExtractPropertyValues(sheetNodes, "text");
-            var sheetNamesCount = sheetNames.Count();
 
             // 行が足りなければ挿入
             if (sheetNamesCount > indexRowCount)
