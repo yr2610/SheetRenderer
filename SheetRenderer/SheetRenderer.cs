@@ -2295,10 +2295,7 @@ namespace ExcelDnaTest
 
         static void RenderIndexSheet(IEnumerable<JsonNode> sheetNodes, Dictionary<string, string> confData, Excel.Worksheet dstSheet, SheetValuesInfo sheetValuesInfo = null)
         {
-            var sheetNameListName = dstSheet.GetNamedRange("SS_SHEETNAMELIST");
-            var sheetNameListRange = sheetNameListName.RefersToRange;
-            var sheetNames = ExtractPropertyValues(sheetNodes, "text");
-            var sheetNamesCount = sheetNames.Count();
+            var sheetNameListRange = dstSheet.GetNamedRange("SS_SHEETNAMELIST").RefersToRange;
 
             int indexStartRow = sheetNameListRange.Row;
             int indexRowCount = sheetNameListRange.Rows.Count;
@@ -2307,24 +2304,13 @@ namespace ExcelDnaTest
             string idColumnAddress = "T";
             int idColumn = dstSheet.ColumnAddressToIndex(idColumnAddress);
 
-            if (sheetNamesCount > 1 && indexRowCount < sheetNamesCount)
-            {
-                Excel.Range startCell = sheetNameListRange.Cells[1, 1];
-                Excel.Range resizedRange = startCell.Resize[sheetNamesCount, 1];
-                string resizedAddress = resizedRange.get_Address(true, true, Excel.XlReferenceStyle.xlA1, true);
-                FileLogger.Info($"Healed SS_SHEETNAMELIST range: {indexRowCount} -> {sheetNamesCount} (start {startCell.Address[true, true]})");
-                sheetNameListName.RefersTo = $"={resizedAddress}";
-                sheetNameListRange = sheetNameListName.RefersToRange;
-                indexStartRow = sheetNameListRange.Row;
-                indexRowCount = sheetNameListRange.Rows.Count;
-                indexEndRow = sheetNameListRange.Rows[indexRowCount].Row;
-                indexStartColumn = sheetNameListRange.Column;
-            }
-
             string syncStartColumnAddress = "Q";
             int syncStartColumn = dstSheet.ColumnAddressToIndex(syncStartColumnAddress);
             int syncStartColumnCount = 1;
             int[] syncIgnoreColumnOffsets = { };
+
+            var sheetNames = ExtractPropertyValues(sheetNodes, "text");
+            var sheetNamesCount = sheetNames.Count();
 
             // 行が足りなければ挿入
             if (sheetNamesCount > indexRowCount)
@@ -2363,7 +2349,7 @@ namespace ExcelDnaTest
 
             // 名前付き範囲として追加
             var rangeforNamedRange = dstSheet.GetRange(indexStartRow, syncStartColumn, sheetNamesCount, syncStartColumnCount);
-            var syncRangeName = dstSheet.Names.Add(Name: ssSheetRangeName, RefersTo: rangeforNamedRange);
+            var namedRange = dstSheet.Names.Add(Name: ssSheetRangeName, RefersTo: rangeforNamedRange);
             RangeInfo rangeInfo = new RangeInfo
             {
                 IdColumnOffset = idColumn - syncStartColumn,
@@ -2373,7 +2359,7 @@ namespace ExcelDnaTest
                 .WithNamingConvention(CamelCaseNamingConvention.Instance)
                 .Build();
 
-            syncRangeName.Comment = serializer.Serialize(rangeInfo);
+            namedRange.Comment = serializer.Serialize(rangeInfo);
 
             if (sheetValuesInfo != null)
             {
