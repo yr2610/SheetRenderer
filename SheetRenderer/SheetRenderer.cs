@@ -1435,6 +1435,24 @@ namespace ExcelDnaTest
             }
             var context = SynchronizationContext.Current;
 
+            var indexSheet = workbook.Sheets[workbookInfo.IndexSheetName] as Excel.Worksheet;
+            var sheetIds = GetSheetIdsFromIndexSheet(indexSheet).Select(item => item.ToString()).ToList();
+            var sheetNameRange = GetSheetNamesRangeFromIndexSheet(indexSheet);
+            var sheetNames = sheetNameRange.GetColumnValues(0).Select(item => item.ToString()).ToList();
+
+            // 特定のプロパティ（items）を配列としてアクセス
+            JsonArray sheetNodes = jsonObject["children"].AsArray();
+
+            int currentSheetCount = sheetNames.Count;
+            int newSheetCount = sheetNodes.Count;
+
+            if (currentSheetCount == 1 && newSheetCount > 1)
+            {
+                FileLogger.Info($"Auto-switch to regeneration: 1 -> {newSheetCount}");
+                await RegenerateWorkbook(workbook, workbookInfo, txtFilePath, jsonFilePath);
+                return;
+            }
+
             excelApp.DisplayAlerts = false;
             excelApp.ScreenUpdating = false;
             excelApp.Calculation = Excel.XlCalculation.xlCalculationManual;
@@ -1450,15 +1468,8 @@ namespace ExcelDnaTest
             string originalActiveSheetName = activeSheet.Name;
 
             // 今開いている book の id を index sheet から取得
-            var indexSheet = workbook.Sheets[workbookInfo.IndexSheetName] as Excel.Worksheet;
-            var sheetIds = GetSheetIdsFromIndexSheet(indexSheet).Select(item => item.ToString()).ToList();
-            var sheetNameRange = GetSheetNamesRangeFromIndexSheet(indexSheet);
-            var sheetNames = sheetNameRange.GetColumnValues(0).Select(item => item.ToString()).ToList();
             Dictionary<string, string> originalSheetNamesById = sheetIds.Zip(sheetNames, (id, name) => new { id, name })
                                                                          .ToDictionary(x => x.id, x => x.name);
-
-            // 特定のプロパティ（items）を配列としてアクセス
-            JsonArray sheetNodes = jsonObject["children"].AsArray();
 
             Dictionary<string, string> newSheetNamesById = sheetNodes.ToDictionary(
                 item => item["id"].ToString(),
