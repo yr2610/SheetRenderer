@@ -249,19 +249,19 @@ namespace ExcelDnaTest
                     <ribbon>
                       <tabs>
                         <tab id='tab1' label='{projectName}'>
-                          <group id='group1' label='Render'>
+                          <group id='group1' label='生成'>
                             <splitButton id='splitButton1' size='large'>
-                              <button id='button2' label='ファイル更新' imageMso='TableDrawTable' onAction='OnRenderButtonPressed'/>
+                              <button id='button2' label='更新' screentip='ファイル内の全シートを更新します' imageMso='TableDrawTable' onAction='OnRenderButtonPressed'/>
                               <menu id='menu1'>
-                                <button id='button2a' label='ファイル新規作成' onAction='OnCreateNewButtonPressed'/>
+                                <button id='button2a' label='新規作成' onAction='OnCreateNewButtonPressed'/>
                                 <button id='button2b' label='再生成' onAction='OnRegenerateWorkbookPressed'/>
                               </menu>
                             </splitButton>
-                            <button id='button3' label='シート更新' size='large' imageMso='TableSharePointListsRefreshList' onAction='OnUpdateCurrentSheetButtonPressed' getEnabled='GetUpdateCurrentSheetButtonEnabled'/>
+                            <button id='button3' label='シート更新' screentip='表示中のシートのみ更新します' size='large' imageMso='TableSharePointListsRefreshList' onAction='OnUpdateCurrentSheetButtonPressed' getEnabled='GetUpdateCurrentSheetButtonEnabled'/>
                           </group>
-                          <group id='groupDebug' label='Debug'>
-                            <button id='buttonDebugParse' label='Parse' screentip='ParseOnly' imageMso='HappyFace' onAction='OnDebugParseButtonPressed'/>
-                            <button id='buttonDebugRender' label='Render' screentip='RenderOnly' imageMso='HappyFace' onAction='OnRenderOnlyDebugButtonPressed'/>
+                          <group id='groupDebug' label='DevTools'>
+                            <button id='buttonDebugParse' label='Parse' screentip='Parseのみ（開発用）' imageMso='ControlToolboxOutlook' onAction='OnDebugParseButtonPressed'/>
+                            <button id='buttonDebugRender' label='Render' screentip='Renderのみ（開発用）' imageMso='ControlToolboxOutlook' onAction='OnRenderOnlyDebugButtonPressed'/>
                           </group>
                         </tab>
                       </tabs>
