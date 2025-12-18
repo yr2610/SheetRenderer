@@ -1092,6 +1092,11 @@ function parseUnorderedList(lineObj, line) {
 
     text = text.trim();
 
+    if (text.length === 0) {
+        var errorMessage = "テキストが指定されていません";
+        throw new ParseError(errorMessage, lineObj);
+    }
+
     if (/\t/.test(text)) {
         var errorMessage = "テキストにタブ文字が含まれています";
         throw new ParseError(errorMessage, lineObj);
