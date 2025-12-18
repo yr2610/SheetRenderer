@@ -917,6 +917,12 @@ function parseUnorderedList(lineObj, line) {
         throw new ParseError(errorMessage, lineObj);
     }
 
+    var uidOnlyMatch = text.match(/^\[#([\w\-]+)\]\s*$/);
+    if (uidOnlyMatch) {
+        var errorMessage = "テキストが指定されていません";
+        throw new ParseError(errorMessage, lineObj);
+    }
+
     var uidMatch = text.match(/^\[#([\w\-]+)\]\s+(.+)$/);
     var uid = undefined;
     if (uidMatch) {
@@ -1092,7 +1098,7 @@ function parseUnorderedList(lineObj, line) {
 
     text = text.trim();
 
-    if (text.length === 0) {
+    if (!text) {
         var errorMessage = "テキストが指定されていません";
         throw new ParseError(errorMessage, lineObj);
     }
