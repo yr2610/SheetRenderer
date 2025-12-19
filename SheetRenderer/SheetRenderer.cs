@@ -761,6 +761,25 @@ namespace ExcelDnaTest
             return set1.Count == set2.Count && !set1.Except(set2).Any();
         }
 
+        // JsHost.Call の戻り値が「Quit を表す匿名型」かどうかを判定する
+        static bool IsQuitResult(object result)
+        {
+            if (result == null)
+            {
+                return false;
+            }
+
+            var type = result.GetType();
+            var quitProp = type.GetProperty("Quit", BindingFlags.Instance | BindingFlags.Public);
+            if (quitProp == null || quitProp.PropertyType != typeof(bool))
+            {
+                return false;
+            }
+
+            var value = quitProp.GetValue(result, null);
+            return value is bool b && b;
+        }
+
         class WorkbookInfo
         {
             public string ProjectId { get; set; }
@@ -3046,7 +3065,11 @@ namespace ExcelDnaTest
 
             try
             {
-                JsHost.Call("parse", txtFilePath);
+                var result = JsHost.Call("parse", txtFilePath);
+                if (IsQuitResult(result))
+                {
+                    return false;
+                }
             }
             catch (Microsoft.ClearScript.ScriptEngineException ex)
             {
