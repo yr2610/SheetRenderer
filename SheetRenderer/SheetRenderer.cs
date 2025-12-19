@@ -2225,6 +2225,7 @@ namespace ExcelDnaTest
             var sheet = excelApp.ActiveSheet as Excel.Worksheet;
             Excel.Workbook workbook = sheet == null ? null : sheet.Parent as Excel.Workbook;
             string txtFilePath = null;
+            string jsonFilePath = null;
             bool isNewWorkbook = sheet == null;
 
             try
@@ -2273,7 +2274,7 @@ namespace ExcelDnaTest
                     return;
                 }
 
-                string jsonFilePath = TxtToJsonPath(txtFilePath);
+                jsonFilePath = TxtToJsonPath(txtFilePath);
                 if (!File.Exists(jsonFilePath))
                 {
                     FileLogger.Warn($"jsonファイルが見つかりません: {jsonFilePath}");
