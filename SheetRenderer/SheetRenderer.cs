@@ -1949,18 +1949,7 @@ namespace ExcelDnaTest
 
             if (originalWorkbook.Saved == false)
             {
-                DialogResult yesNoCancel = MessageBox.Show($"再生成の前にファイルの変更内容を保存しますか？", "確認", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Exclamation);
-
-                switch (yesNoCancel)
-                {
-                    case DialogResult.Yes:
-                        originalWorkbook.Save();
-                        break;
-                    case DialogResult.No:
-                        break;
-                    case DialogResult.Cancel:
-                        return;
-                }
+                originalWorkbook.Save();
             }
 
             string jsonString = File.ReadAllText(jsonFilePath);
