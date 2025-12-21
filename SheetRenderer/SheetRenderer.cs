@@ -259,6 +259,14 @@ namespace ExcelDnaTest
                             </splitButton>
                             <button id='button3' label='シート更新' screentip='表示中のシートのみ更新します' size='large' imageMso='TableSharePointListsRefreshList' onAction='OnUpdateCurrentSheetButtonPressed' getEnabled='GetUpdateCurrentSheetButtonEnabled'/>
                           </group>
+                          <group id='groupSync' label='同期'>
+                          <button id='buttonPill'
+                                  label='Pull'
+                                  screentip='リポジトリの最新内容を取得して反映します'
+                                  size='large'
+                                  imageMso='RefreshAll'
+                                  onAction='OnPullButtonPressed'/>
+                          </group>
                           <group id='groupDebug' label='DevTools'>
                             <button id='buttonDebugParse' label='Parse' screentip='Parseのみ（開発用）' imageMso='ControlToolboxOutlook' onAction='OnDebugParseButtonPressed'/>
                             <button id='buttonDebugRender' label='Render' screentip='Renderのみ（開発用）' imageMso='ControlToolboxOutlook' onAction='OnRenderOnlyDebugButtonPressed'/>
@@ -3245,6 +3253,12 @@ namespace ExcelDnaTest
             return;
 #endif
         }
+
+        public void OnPullButtonPressed(IRibbonControl control)
+        {
+            MessageBox.Show("同期：最新を反映（仮）");
+        }
+
     }
 }
 
