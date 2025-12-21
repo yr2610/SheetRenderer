@@ -30,6 +30,8 @@ using ExcelDna.Integration.CustomUI;
 using Excel = Microsoft.Office.Interop.Excel;
 using Office = Microsoft.Office.Core;
 
+using System.Net.Http;
+
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 
@@ -3254,9 +3256,47 @@ namespace ExcelDnaTest
 #endif
         }
 
-        public void OnPullButtonPressed(IRibbonControl control)
+        private const string GitLabProjectId = "123456"; // TODO: Replace with actual project ID.
+        private const string GitLabFilePath = "path/to/entry.txt"; // TODO: Replace with actual file path.
+        private const string GitLabRefName = "main"; // TODO: Replace with actual ref/branch name.
+        private const string GitLabPrivateToken = "REPLACE_WITH_TOKEN"; // TODO: Store securely.
+
+        public async void OnPullButtonPressed(IRibbonControl control)
         {
-            MessageBox.Show("同期：最新を反映（仮）");
+            await DownloadEntryFileForPullAsync();
+        }
+
+        private async Task DownloadEntryFileForPullAsync()
+        {
+            try
+            {
+                using (var httpClient = new HttpClient())
+                {
+                    httpClient.DefaultRequestHeaders.Add("PRIVATE-TOKEN", GitLabPrivateToken);
+
+                    string encodedFilePath = Uri.EscapeDataString(GitLabFilePath);
+                    string encodedRef = Uri.EscapeDataString(GitLabRefName);
+                    string requestUri = $"https://gitlab.com/api/v4/projects/{GitLabProjectId}/repository/files/{encodedFilePath}/raw?ref={encodedRef}";
+
+                    HttpResponseMessage response = await httpClient.GetAsync(requestUri);
+
+                    if (response.IsSuccessStatusCode)
+                    {
+                        string content = await response.Content.ReadAsStringAsync();
+                        string preview = content.Length > 200 ? content.Substring(0, 200) : content;
+                        MessageBox.Show($"Entry file downloaded successfully. Preview:\n{preview}", "Pull");
+                        // TODO: Caching, parsing, and rendering will be added in later steps.
+                        return;
+                    }
+
+                    string errorContent = await response.Content.ReadAsStringAsync();
+                    MessageBox.Show($"Failed to download entry file. Status: {(int)response.StatusCode} {response.ReasonPhrase}\n{errorContent}", "Pull Error");
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Error during pull: {ex.Message}", "Pull Error");
+            }
         }
 
     }
