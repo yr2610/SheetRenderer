@@ -30,6 +30,7 @@ using ExcelDna.Integration.CustomUI;
 using Excel = Microsoft.Office.Interop.Excel;
 using Office = Microsoft.Office.Core;
 
+using System.Net;
 using System.Net.Http;
 
 using YamlDotNet.Serialization;
@@ -3268,10 +3269,17 @@ namespace ExcelDnaTest
 
         private async Task DownloadEntryFileForPullAsync()
         {
+            //ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12
+            //                                     | SecurityProtocolType.Tls11
+            //                                     | SecurityProtocolType.Tls;
+            ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12 | SecurityProtocolType.Tls13;
+
             try
             {
                 using (var httpClient = new HttpClient())
                 {
+                    httpClient.DefaultRequestHeaders.Add("User-Agent", "C# App");
+
                     httpClient.DefaultRequestHeaders.Add("PRIVATE-TOKEN", GitLabPrivateToken);
 
                     string encodedFilePath = Uri.EscapeDataString(GitLabFilePath);
