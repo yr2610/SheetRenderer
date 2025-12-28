@@ -2627,17 +2627,21 @@ function evaluateInScope(expr, scope) {
             return paramsArray[0];
         }
 
-        // ここでマージしたものを展開してしまう？
-        // 一番長い配列を調べて展開。配列なら index でアクセス。objectならそのまま。先頭から _.defaults() でマージして push
-        var maxArrayElem = _.max(paramsArray, function(elem) {
-            return _.isArray(elem) ? elem.length : 0;
-        });
-        var maxArrayLength = _.isArray(maxArrayElem) ? maxArrayElem.length : 1;
-        if (maxArrayLength == 0) {
-            // TODO: 例外投げる
+        // ★「最初に出てきた配列」の長さに合わせて展開
+        var firstArrayLength = 0;
+        for (var ai = 0; ai < paramsArray.length; ai++) {
+            if (_.isArray(paramsArray[ai])) {
+                firstArrayLength = paramsArray[ai].length;
+                break;
+            }
         }
+        if (firstArrayLength === 0) {
+            // 配列が1つも無い → 本来ここには来ない想定だが、防御的に 1 回だけ展開
+            firstArrayLength = 1;
+        }
+
         var mergedArray = [];
-        _.forEach(_.range(maxArrayLength), function(i) {
+        _.forEach(_.range(firstArrayLength), function(i) {
             var o = {};
             _.forEach(paramsArray, function(elem) {
                 if (_.isArray(elem)) {
@@ -2654,7 +2658,7 @@ function evaluateInScope(expr, scope) {
                     // o はこの関数で作った object なので clone 不要
                     // 関数の中で直接書き換えてもOK
                     o = elem(o);
-                } else {
+                } else if (elem) {
                     _.defaults(o, elem);
                 }
             });
