@@ -2443,14 +2443,18 @@ function replacePlaceholdersInNode(node, scope, defaultParamKey) {
     var defaultToken = defaultParamKey ? "{{" + defaultParamKey + "}}" : null;
     var RE_EMPTY = /\{\{\s*\}\}/g;
     var RE_EXPR  = /\{\{\s*([^\}]+)\s*\}\}/g;
+    var MAX_PLACEHOLDER_EXPANSION_DEPTH = 20;
 
+    // 1パス分だけ {{}} を展開
     function applyOnce(s) {
         if (s === void 0 || s === null) return void 0;
 
-        if (defaultToken) s = s.replace(RE_EMPTY, defaultToken);
+        if (defaultToken) {
+            s = s.replace(RE_EMPTY, defaultToken);
+        }
 
         var toDelete = false;
-        var out = s.replace(RE_EXPR, function(__, expr){
+        var out = s.replace(RE_EXPR, function(__, expr) {
             if (toDelete) return "";
 
             var hit = evalPlaceholderToken(expr, scope, node);
@@ -2464,11 +2468,40 @@ function replacePlaceholdersInNode(node, scope, defaultParamKey) {
         return toDelete ? void 0 : out;
     }
 
+    // 文字列が安定するまで（or 限度まで）繰り返し展開
+    function applyRecursively(s) {
+        if (s === void 0 || s === null) return void 0;
+
+        var prev = s;
+        var i;
+
+        for (i = 0; i < MAX_PLACEHOLDER_EXPANSION_DEPTH; i++) {
+            var next = applyOnce(prev);
+
+            // ノード削除指定
+            if (next === void 0) return void 0;
+
+            // 変化がなくなったら終了
+            if (next === prev) return next;
+
+            prev = next;
+        }
+
+        // ここまで来る = まだ変化し続けている → 循環疑い
+        throw new ParseError(
+            "プレースホルダー展開が " + MAX_PLACEHOLDER_EXPANSION_DEPTH +
+            " 回を超えました。循環参照の可能性があります。",
+            node && node.lineObj
+        );
+    }
+
     // text/comment/image に適用
-    node.text = applyOnce(node.text);
+    node.text = applyRecursively(node.text);
     if (node.text === void 0) return false; // ノード削除
-    node.comment = applyOnce(node.comment);
-    node.imageFilePath = applyOnce(node.imageFilePath);
+
+    node.comment = applyRecursively(node.comment);
+    node.imageFilePath = applyRecursively(node.imageFilePath);
+
     return true;
 }
 
