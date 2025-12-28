@@ -2627,16 +2627,46 @@ function evaluateInScope(expr, scope) {
             return paramsArray[0];
         }
 
-        // ★「最初に出てきた配列」の長さに合わせて展開
-        var firstArrayLength = 0;
-        for (var ai = 0; ai < paramsArray.length; ai++) {
-            if (_.isArray(paramsArray[ai])) {
-                firstArrayLength = paramsArray[ai].length;
-                break;
+        // ここでマージしたものを展開してしまう？
+        // ★ 「最初に出てきた配列」の長さを基準にする
+        var firstArrayLength = -1;
+        var arrayCount = 0;
+
+        _.forEach(paramsArray, function (elem) {
+            if (!_.isArray(elem)) {
+                return; // 配列じゃない param はそのまま
             }
-        }
-        if (firstArrayLength === 0) {
-            // 配列が1つも無い → 本来ここには来ない想定だが、防御的に 1 回だけ展開
+
+            arrayCount++;
+
+            var len = elem.length;
+
+            if (firstArrayLength < 0) {
+                // 基準となる配列
+                firstArrayLength = len;
+                return;
+            }
+
+            // ★ 長さ 1 の配列は「定数としてブロードキャスト扱いでセーフ」
+            if (len === 1) {
+                return;
+            }
+
+            // ★ それ以外で長さが違うのはエラー
+            if (len !== firstArrayLength) {
+                throw new Error(
+                    "テンプレパラメータの配列長が一致していません。\n" +
+                    "基準長: " + firstArrayLength + " / 不一致: " + len + "\n" +
+                    "（長さ 1 の配列のみ定数扱いで許容されます）\n" +
+                    "呼び出し: " + (node && node.text ? node.text : "(不明)") + "\n" +
+                    "paramsStr: " + paramsStr
+                );
+            }
+
+        });
+
+        if (firstArrayLength < 0) {
+            // 配列が 1 本も無い → 防御的 fallback（1回展開）
             firstArrayLength = 1;
         }
 
