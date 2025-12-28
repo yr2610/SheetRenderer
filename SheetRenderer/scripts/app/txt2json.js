@@ -2632,24 +2632,24 @@ function evaluateInScope(expr, scope) {
         var firstArrayLength = -1;
         var arrayCount = 0;
 
-        _.forEach(paramsArray, function (elem) {
+        for (const elem of paramsArray) {
             if (!_.isArray(elem)) {
-                return; // 配列じゃない param はそのまま
+                continue; // 配列じゃない param はそのまま
             }
 
             arrayCount++;
 
-            var len = elem.length;
+            const len = elem.length;
 
             if (firstArrayLength < 0) {
                 // 基準となる配列
                 firstArrayLength = len;
-                return;
+                continue;
             }
 
             // ★ 長さ 1 の配列は「定数としてブロードキャスト扱いでセーフ」
             if (len === 1) {
-                return;
+                continue;
             }
 
             // ★ それ以外で長さが違うのはエラー
@@ -2663,7 +2663,7 @@ function evaluateInScope(expr, scope) {
                 );
             }
 
-        });
+        };
 
         if (firstArrayLength < 0) {
             // 配列が 1 本も無い → 防御的 fallback（1回展開）
