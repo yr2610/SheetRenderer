@@ -2703,32 +2703,47 @@ function evaluateInScope(expr, scope) {
             firstArrayLength = 1;
         }
 
-        var mergedArray = [];
-        _.forEach(_.range(firstArrayLength), function(i) {
-            var o = {};
-            _.forEach(paramsArray, function(elem) {
-                if (_.isArray(elem)) {
+        const mergedArray = [];
+
+        for (let i = 0; i < firstArrayLength; i++) {
+            let o = {};
+            let skip = false;
+
+            for (const elem of paramsArray) {
+                if (Array.isArray(elem)) {
                     if (i < elem.length) {
-                        if (_.isObject(elem[i])) {
-                            _.defaults(o, elem[i]);
+                        const v = elem[i];
+                        if (v !== null && typeof v === "object") {
+                            _.defaults(o, v);
                         } else {
-                            _.defaults(o, {$value: elem[i]});
+                            _.defaults(o, { $value: v });
                         }
                     }
+                    continue;
                 }
-                // 関数が渡された場合、引数に渡された順に実行
-                else if (_.isFunction(elem)) {
-                    // o はこの関数で作った object なので clone 不要
-                    // 関数の中で直接書き換えてもOK
-                    o = elem(o);
-                } else if (elem) {
-                    _.defaults(o, elem);
+
+                if (typeof elem === "function") {
+                    const r = elem(o);
+
+                    // ★ 仕様追加：null でスキップ（undefined はスキップにしない）
+                    if (r === null) {
+                        skip = true;
+                        break;
+                    }
+
+                    o = r;
+                    continue;
                 }
-            });
-            mergedArray.push(o);
-        });
-        // ほぼ意味ないけど、要素数1の場合はobjectを返す
-        return (mergedArray.length == 1) ? mergedArray[0] : mergedArray;
+
+                _.defaults(o, elem);
+            }
+
+            if (!skip) {
+                mergedArray.push(o);
+            }
+        }
+
+        return (mergedArray.length === 1) ? mergedArray[0] : mergedArray;
     }
 
     // ===== Tree Utilities =====
