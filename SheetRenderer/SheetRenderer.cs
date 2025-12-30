@@ -3257,6 +3257,7 @@ namespace ExcelDnaTest
 #endif
         }
 
+        private const string GitLabBaseUrl = "https://gitlab.com";
         private const string GitLabProjectId = "123456"; // TODO: Replace with actual project ID.
         private const string GitLabFilePath = "path/to/entry.txt"; // TODO: Replace with actual file path.
         private const string GitLabRefName = "main"; // TODO: Replace with actual ref/branch name.
@@ -3264,49 +3265,177 @@ namespace ExcelDnaTest
 
         public async void OnPullButtonPressed(IRibbonControl control)
         {
-            await DownloadEntryFileForPullAsync();
-        }
-
-        private async Task DownloadEntryFileForPullAsync()
-        {
-            //ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12
-            //                                     | SecurityProtocolType.Tls11
-            //                                     | SecurityProtocolType.Tls;
-            ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12 | SecurityProtocolType.Tls13;
-
             try
             {
-                using (var httpClient = new HttpClient())
-                {
-                    httpClient.DefaultRequestHeaders.Add("User-Agent", "C# App");
-
-                    httpClient.DefaultRequestHeaders.Add("PRIVATE-TOKEN", GitLabPrivateToken);
-
-                    string encodedFilePath = Uri.EscapeDataString(GitLabFilePath);
-                    string encodedRef = Uri.EscapeDataString(GitLabRefName);
-                    string requestUri = $"https://gitlab.com/api/v4/projects/{GitLabProjectId}/repository/files/{encodedFilePath}/raw?ref={encodedRef}";
-
-                    HttpResponseMessage response = await httpClient.GetAsync(requestUri);
-
-                    if (response.IsSuccessStatusCode)
-                    {
-                        string content = await response.Content.ReadAsStringAsync();
-                        string preview = content.Length > 200 ? content.Substring(0, 200) : content;
-                        MessageBox.Show($"Entry file downloaded successfully. Preview:\n{preview}", "Pull");
-                        // TODO: Caching, parsing, and rendering will be added in later steps.
-                        return;
-                    }
-
-                    string errorContent = await response.Content.ReadAsStringAsync();
-                    MessageBox.Show($"Failed to download entry file. Status: {(int)response.StatusCode} {response.ReasonPhrase}\n{errorContent}", "Pull Error");
-                }
+                string content = await DownloadFileContentForDebugAsync().ConfigureAwait(false);
+                System.Windows.Forms.MessageBox.Show(
+                    content.Length > 200 ? content.Substring(0, 200) : content,
+                    "Downloaded (first 200 chars)");
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Error during pull: {ex.Message}", "Pull Error");
+                System.Windows.Forms.MessageBox.Show(ex.ToString(), "Error");
             }
         }
 
+        private async Task<string> DownloadFileContentForDebugAsync()
+        {
+            ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;
+
+            string directoryPath = GetDirectoryPath(GitLabFilePath);
+            string fileName = GetFileName(GitLabFilePath);
+
+            string blobSha = await FindBlobShaByTreeAsync(GitLabProjectId, GitLabRefName, directoryPath, fileName).ConfigureAwait(false);
+            if (string.IsNullOrEmpty(blobSha))
+            {
+                throw new Exception("Blob SHA not found. file_path=" + GitLabFilePath);
+            }
+
+            string content = await DownloadBlobRawAsync(GitLabProjectId, blobSha).ConfigureAwait(false);
+            return content;
+        }
+
+        private async Task<string> FindBlobShaByTreeAsync(string projectId, string refName, string directoryPath, string fileName)
+        {
+            ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;
+
+            string encodedPath = Uri.EscapeDataString(directoryPath);
+            string encodedRef = Uri.EscapeDataString(refName);
+
+            string url =
+                GitLabBaseUrl + "/api/v4/projects/" + projectId +
+                "/repository/tree?ref=" + encodedRef +
+                "&path=" + encodedPath;
+
+            using (var http = new HttpClient())
+            {
+                http.DefaultRequestHeaders.Add("PRIVATE-TOKEN", GitLabPrivateToken);
+                http.DefaultRequestHeaders.UserAgent.ParseAdd("SheetRendererAddin/1.0");
+
+                var res = await http.GetAsync(url).ConfigureAwait(false);
+                string body = await res.Content.ReadAsStringAsync().ConfigureAwait(false);
+
+                if (!res.IsSuccessStatusCode)
+                {
+                    throw new Exception("Tree failed: " + (int)res.StatusCode + " " + res.ReasonPhrase + "\n" + body + "\nURL=" + url);
+                }
+
+                // tree の JSON 配列から、対象ファイルの要素を探して "id"（blob sha）を抜く
+                // 期待する要素例:
+                // {"id":"<sha>","name":"index_rpa8.txt","type":"blob",...}
+                return ExtractBlobIdFromTreeJson(body, fileName);
+            }
+        }
+
+        private async Task<string> DownloadBlobRawAsync(string projectId, string blobSha)
+        {
+            ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;
+
+            string url =
+                "https://gitlab.com/api/v4/projects/" + projectId +
+                "/repository/blobs/" + blobSha +
+                "/raw";
+
+            using (var http = new HttpClient())
+            {
+                http.DefaultRequestHeaders.Add("PRIVATE-TOKEN", GitLabPrivateToken);
+                http.DefaultRequestHeaders.UserAgent.ParseAdd("SheetRendererAddin/1.0");
+
+                var res = await http.GetAsync(url).ConfigureAwait(false);
+                byte[] bytes = await res.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
+
+                if (!res.IsSuccessStatusCode)
+                {
+                    string bodyText = System.Text.Encoding.UTF8.GetString(bytes);
+                    throw new Exception("Blob raw failed: " + (int)res.StatusCode + " " + res.ReasonPhrase + "\n" + bodyText + "\nURL=" + url);
+                }
+
+                return System.Text.Encoding.UTF8.GetString(bytes);
+            }
+        }
+
+        private static string ExtractBlobIdFromTreeJson(string json, string fileName)
+        {
+            // 超簡易： "name":"<fileName>" を見つけて、その手前（近傍）にある "id":"..." を抜く
+            // 検証用途限定。後で Newtonsoft.Json 等に差し替え推奨。
+
+            if (string.IsNullOrEmpty(json) || string.IsNullOrEmpty(fileName))
+            {
+                return null;
+            }
+
+            string nameKey = "\"name\":\"" + EscapeForJsonSearch(fileName) + "\"";
+            int namePos = json.IndexOf(nameKey, StringComparison.Ordinal);
+            if (namePos < 0)
+            {
+                return null;
+            }
+
+            // name の少し手前から "id":" を探す（同じオブジェクト内にある想定）
+            int searchStart = Math.Max(0, namePos - 200);
+            int idKeyPos = json.LastIndexOf("\"id\":\"", namePos, namePos - searchStart, StringComparison.Ordinal);
+            if (idKeyPos < 0)
+            {
+                // 念のため forward でも探す
+                idKeyPos = json.IndexOf("\"id\":\"", searchStart, StringComparison.Ordinal);
+                if (idKeyPos < 0)
+                {
+                    return null;
+                }
+            }
+
+            int idValueStart = idKeyPos + "\"id\":\"".Length;
+            int idValueEnd = json.IndexOf("\"", idValueStart, StringComparison.Ordinal);
+            if (idValueEnd < 0)
+            {
+                return null;
+            }
+
+            return json.Substring(idValueStart, idValueEnd - idValueStart);
+        }
+
+        private static string GetDirectoryPath(string filePath)
+        {
+            if (string.IsNullOrEmpty(filePath))
+            {
+                return string.Empty;
+            }
+
+            int i = filePath.LastIndexOf('/');
+            if (i < 0)
+            {
+                return string.Empty;
+            }
+
+            return filePath.Substring(0, i);
+        }
+
+        private static string GetFileName(string filePath)
+        {
+            if (string.IsNullOrEmpty(filePath))
+            {
+                return string.Empty;
+            }
+
+            int i = filePath.LastIndexOf('/');
+            if (i < 0)
+            {
+                return filePath;
+            }
+
+            return filePath.Substring(i + 1);
+        }
+
+        private static string EscapeForJsonSearch(string s)
+        {
+            // json の中の name と文字列一致させる用途。最低限だけ。
+            if (s == null)
+            {
+                return null;
+            }
+
+            return s.Replace("\\", "\\\\").Replace("\"", "\\\"");
+        }
     }
 }
 
