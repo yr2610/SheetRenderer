@@ -3331,8 +3331,8 @@ namespace ExcelDnaTest
         {
             ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;
 
-            string url =
-                "https://gitlab.com/api/v4/projects/" + projectId +
+            string url = 
+                GitLabBaseUrl + "/api/v4/projects/" + projectId +
                 "/repository/blobs/" + blobSha +
                 "/raw";
 
