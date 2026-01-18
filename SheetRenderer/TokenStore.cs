@@ -160,6 +160,75 @@ internal static class TokenStore
         }
     }
 
+    internal sealed class TokenKeyInfo
+    {
+        public string BaseUrl { get; set; }
+        public string ProjectId { get; set; }
+
+        public override string ToString()
+        {
+            return BaseUrl + " / " + ProjectId;
+        }
+    }
+
+    public static TokenKeyInfo[] GetAllTokenKeys()
+    {
+        lock (_gate)
+        {
+            Dictionary<string, string> map = LoadNoThrow();
+            var list = new List<TokenKeyInfo>();
+
+            foreach (var kv in map)
+            {
+                TokenKeyInfo info;
+                if (TryParseKey(kv.Key, out info))
+                {
+                    list.Add(info);
+                }
+            }
+
+            // 並びを安定させる（UIで見やすい）
+            list.Sort((a, b) =>
+            {
+                int c = string.Compare(a.BaseUrl, b.BaseUrl, StringComparison.OrdinalIgnoreCase);
+                if (c != 0) return c;
+                return string.Compare(a.ProjectId, b.ProjectId, StringComparison.OrdinalIgnoreCase);
+            });
+
+            return list.ToArray();
+        }
+    }
+
+    private static bool TryParseKey(string key, out TokenKeyInfo info)
+    {
+        info = null;
+
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            return false;
+        }
+
+        int idx = key.IndexOf('|');
+        if (idx <= 0 || idx >= key.Length - 1)
+        {
+            return false;
+        }
+
+        string baseUrl = key.Substring(0, idx).Trim();
+        string projectId = key.Substring(idx + 1).Trim();
+        if (baseUrl.Length == 0 || projectId.Length == 0)
+        {
+            return false;
+        }
+
+        info = new TokenKeyInfo
+        {
+            BaseUrl = baseUrl,
+            ProjectId = projectId
+        };
+        return true;
+    }
+
     // ------------------------
     // Internals
     // ------------------------
