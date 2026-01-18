@@ -33,6 +33,25 @@ internal static class GitLabRepoDialog
             form.ShowInTaskbar = false;
             form.ClientSize = new Size(700, 230);
 
+            form.Font = new Font("Meiryo UI", 11f);
+
+            // （必要なら）TextBox高さ
+            txtBaseUrl.AutoSize = false;
+            txtBaseUrl.Height = 28;
+            txtProjectId.AutoSize = false;
+            txtProjectId.Height = 28;
+            txtRefName.AutoSize = false;
+            txtRefName.Height = 28;
+            txtFilePath.AutoSize = false;
+            txtFilePath.Height = 28;
+
+            // 初期フォーカス
+            form.Shown += (s, e) =>
+            {
+                txtFilePath.Focus();
+                txtFilePath.SelectAll();
+            };
+
             int leftLabel = 14;
             int leftInput = 140;
             int top = 16;
