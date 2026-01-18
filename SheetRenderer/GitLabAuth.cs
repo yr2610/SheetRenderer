@@ -30,6 +30,11 @@ internal static class GitLabAuth
         return input;
     }
 
+    public static bool DeleteToken(string baseUrl, string projectId)
+    {
+        return TokenStore.Delete(baseUrl, projectId);
+    }
+
     private static IWin32Window GetExcelOwnerWindow()
     {
         // owner を渡すと、Excelの前面でモーダル表示になりやすい
