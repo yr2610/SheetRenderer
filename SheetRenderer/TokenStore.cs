@@ -160,17 +160,6 @@ internal static class TokenStore
         }
     }
 
-    internal sealed class TokenKeyInfo
-    {
-        public string BaseUrl { get; set; }
-        public string ProjectId { get; set; }
-
-        public override string ToString()
-        {
-            return BaseUrl + " / " + ProjectId;
-        }
-    }
-
     public static TokenKeyInfo[] GetAllTokenKeys()
     {
         lock (_gate)
@@ -187,7 +176,6 @@ internal static class TokenStore
                 }
             }
 
-            // 並びを安定させる（UIで見やすい）
             list.Sort((a, b) =>
             {
                 int c = string.Compare(a.BaseUrl, b.BaseUrl, StringComparison.OrdinalIgnoreCase);
@@ -216,6 +204,7 @@ internal static class TokenStore
 
         string baseUrl = key.Substring(0, idx).Trim();
         string projectId = key.Substring(idx + 1).Trim();
+
         if (baseUrl.Length == 0 || projectId.Length == 0)
         {
             return false;

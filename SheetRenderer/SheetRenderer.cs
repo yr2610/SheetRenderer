@@ -269,12 +269,13 @@ namespace ExcelDnaTest
                                   size='large'
                                   imageMso='RefreshAll'
                                   onAction='OnPullButtonPressed'/>
-                          <button id='buttonTokenClear'
-                                  label='Tokenクリア'
-                                  screentip='保存済みのアクセストークンを削除し、次回の同期で再入力します'
+                          <button id='buttonTokenManager'
+                                  label='トークン管理'
+                                  screentip='保存済みトークンを一覧表示し、不要なものを削除します'
+                                  supertip='このPCに保存されたアクセストークンを管理します。&#10;&#10;期限切れ・不要になったトークンを選択して削除できます。&#10;削除後、次回同期時に再入力が求められます。'
                                   size='large'
-                                  imageMso='Delete'
-                                  onAction='OnTokenClearButtonPressed'/>
+                                  imageMso='AdpDiagramKeys'
+                                  onAction='OnTokenManagerButtonPressed'/>
                           </group>
                           <group id='groupDebug' label='DevTools'>
                             <button id='buttonDebugParse' label='Parse' screentip='Parseのみ（開発用）' imageMso='ControlToolboxOutlook' onAction='OnDebugParseButtonPressed'/>
@@ -3498,9 +3499,16 @@ namespace ExcelDnaTest
             return s.Replace("\\", "\\\\").Replace("\"", "\\\"");
         }
 
-        public async void OnTokenClearButtonPressed(IRibbonControl control)
+        public void OnTokenManagerButtonPressed(IRibbonControl control)
         {
-            
+            try
+            {
+                GitLabTokenManagerDialog.ShowDialogSafe(null);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(ex.ToString(), "Token Manager Error");
+            }
         }
 
     }
