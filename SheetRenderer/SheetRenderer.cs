@@ -3265,17 +3265,59 @@ namespace ExcelDnaTest
 
         public async void OnPullButtonPressed(IRibbonControl control)
         {
+            const string baseUrl = GitLabBaseUrl;
+            const string projectId = GitLabProjectId;
+            const string refName = GitLabRefName;
+
             try
             {
-                string content = await DownloadFileContentForDebugAsync().ConfigureAwait(false);
+                string token = GitLabAuth.GetOrPromptToken(baseUrl, projectId);
+                if (string.IsNullOrEmpty(token))
+                {
+                    System.Windows.Forms.MessageBox.Show("同期をキャンセルしました（トークン未入力）");
+                    return;
+                }
+
+                string filePath = GitLabFilePath; // "foo/2025-10-22/index_rpa8.txt"
+                string folder = System.IO.Path.GetDirectoryName(filePath).Replace('\\', '/');
+                string name = System.IO.Path.GetFileName(filePath);
+
+                byte[] bytes = await GitLabClient.DownloadFileViaTreeAsync(baseUrl, projectId, folder, name, refName, token);
+
+                //System.Windows.Forms.MessageBox.Show("取得成功: " + filePath + "\nbytes=" + bytes.Length);
+
+                // UTF-8 前提（GitLab 上の txt / yml ならまずこれでOK）
+                string text = Encoding.UTF8.GetString(bytes);
+
                 System.Windows.Forms.MessageBox.Show(
-                    content.Length > 200 ? content.Substring(0, 200) : content,
-                    "Downloaded (first 200 chars)");
+                    text.Length > 200 ? text.Substring(0, 200) : text,
+                    "Downloaded (first 200 chars)"
+                );
             }
             catch (Exception ex)
             {
-                System.Windows.Forms.MessageBox.Show(ex.ToString(), "Error");
+                System.Windows.Forms.MessageBox.Show(ex.ToString(), "Pull failed");
             }
+
+            //using (var httpClient = new HttpClient())
+            //{
+            //    httpClient.DefaultRequestHeaders.Add("PRIVATE-TOKEN", token);
+            //
+            //    // ここで Download / API 呼び出し
+            //    //await DownloadEntryAsync(httpClient);
+            //}
+            //
+            //try
+            //{
+            //    string content = await DownloadFileContentForDebugAsync().ConfigureAwait(false);
+            //    System.Windows.Forms.MessageBox.Show(
+            //        content.Length > 200 ? content.Substring(0, 200) : content,
+            //        "Downloaded (first 200 chars)");
+            //}
+            //catch (Exception ex)
+            //{
+            //    System.Windows.Forms.MessageBox.Show(ex.ToString(), "Error");
+            //}
         }
 
         private async Task<string> DownloadFileContentForDebugAsync()
