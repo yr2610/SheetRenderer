@@ -263,12 +263,18 @@ namespace ExcelDnaTest
                             <button id='button3' label='シート更新' screentip='表示中のシートのみ更新します' size='large' imageMso='TableSharePointListsRefreshList' onAction='OnUpdateCurrentSheetButtonPressed' getEnabled='GetUpdateCurrentSheetButtonEnabled'/>
                           </group>
                           <group id='groupSync' label='同期'>
-                          <button id='buttonPill'
+                          <button id='buttonPull'
                                   label='Pull'
                                   screentip='リポジトリの最新内容を取得して反映します'
                                   size='large'
                                   imageMso='RefreshAll'
                                   onAction='OnPullButtonPressed'/>
+                          <button id='buttonTokenClear'
+                                  label='Tokenクリア'
+                                  screentip='保存済みのアクセストークンを削除し、次回の同期で再入力します'
+                                  size='large'
+                                  imageMso='Delete'
+                                  onAction='OnTokenClearButtonPressed'/>
                           </group>
                           <group id='groupDebug' label='DevTools'>
                             <button id='buttonDebugParse' label='Parse' screentip='Parseのみ（開発用）' imageMso='ControlToolboxOutlook' onAction='OnDebugParseButtonPressed'/>
@@ -3491,6 +3497,12 @@ namespace ExcelDnaTest
 
             return s.Replace("\\", "\\\\").Replace("\"", "\\\"");
         }
+
+        public async void OnTokenClearButtonPressed(IRibbonControl control)
+        {
+            
+        }
+
     }
 }
 
