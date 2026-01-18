@@ -138,6 +138,9 @@
     <Compile Include="FileSystemObject.cs" />
     <Compile Include="GitLabAuth.cs" />
     <Compile Include="GitLabClient.cs" />
+    <Compile Include="GitLabLastInput.cs" />
+    <Compile Include="GitLabLastInputStore.cs" />
+    <Compile Include="GitLabRepoDialog.cs" />
     <Compile Include="GitLabTreeItem.cs" />
     <Compile Include="HashHelper.cs" />
     <Compile Include="JsHost.cs" />

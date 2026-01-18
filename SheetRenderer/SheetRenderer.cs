@@ -3265,12 +3265,25 @@ namespace ExcelDnaTest
 
         public async void OnPullButtonPressed(IRibbonControl control)
         {
-            const string baseUrl = GitLabBaseUrl;
-            const string projectId = GitLabProjectId;
-            const string refName = GitLabRefName;
-
             try
             {
+                var last = GitLabLastInputStore.Load();
+
+                GitLabLastInput input;
+                bool clearFilePathEachTime = false;
+
+                if (!GitLabRepoDialog.TryShow(last, out input))
+                {
+                    return; // Cancel
+                }
+
+                GitLabLastInputStore.Save(input, clearFilePathEachTime); // FilePathも含めて保存（開発中はこれでOK）
+
+                // ここから input.BaseUrl / input.ProjectId / input.RefName / input.FilePath を使う
+                string baseUrl = input.BaseUrl;
+                string projectId = input.ProjectId;
+                string refName = input.RefName;
+
                 string token = GitLabAuth.GetOrPromptToken(baseUrl, projectId);
                 if (string.IsNullOrEmpty(token))
                 {
@@ -3278,7 +3291,7 @@ namespace ExcelDnaTest
                     return;
                 }
 
-                string filePath = GitLabFilePath; // "foo/2025-10-22/index_rpa8.txt"
+                string filePath = input.FilePath; // "foo/2025-10-22/index_rpa8.txt"
                 string folder = System.IO.Path.GetDirectoryName(filePath).Replace('\\', '/');
                 string name = System.IO.Path.GetFileName(filePath);
 
