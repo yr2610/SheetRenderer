@@ -2408,8 +2408,13 @@ function evalPlaceholderToken(raw, scope, node) {
     // - truthy のとき true は空文字、それ以外は通常の文字列化で出力
     if (mode === "dropOnFalsy") {
         var dropQ = isDropByQ(val);
+        var dropReasonQ = null;
+        if (dropQ) {
+            dropReasonQ = (val === false) ? "qFalse" : "qMissing";
+        }
         return {
             drop: dropQ,
+            dropReason: dropReasonQ,
             text: dropQ ? "" : (val === true ? "" : String(val))
         };
     }
@@ -2417,11 +2422,16 @@ function evalPlaceholderToken(raw, scope, node) {
     if (mode === "legacy" && PLACEHOLDER_LEGACY_DROP) {
         var legacyUndefined = (val === void 0 || val === null);
         var falsyLegacy = (val === false || legacyUndefined);
+        var dropReasonLegacy = null;
+        if (falsyLegacy) {
+            dropReasonLegacy = legacyUndefined ? "legacyMissing" : "legacyFalse";
+        }
         if (legacyUndefined) {
             handleUndefinedPlaceholder(s, node);
         }
         return {
             drop: falsyLegacy,
+            dropReason: dropReasonLegacy,
             text: falsyLegacy ? "" : (val === true ? "" : String(val))
         };
     }
@@ -2446,7 +2456,9 @@ function replacePlaceholdersInNode(node, scope, defaultParamKey) {
     var MAX_PLACEHOLDER_EXPANSION_DEPTH = 20;
 
     // 1パス分だけ {{}} を展開
-    function applyOnce(s) {
+    // 注意: 1行（1テキスト）内で「最後に false で drop が確定」した場合は、
+    // その行の途中で発生した未定義警告をロールバックして黙らせる（意図的 drop のため）。
+    function applyOnce(s, warnRollbackIndexRef) {
         if (s === void 0 || s === null) return void 0;
 
         if (defaultToken) {
@@ -2454,16 +2466,29 @@ function replacePlaceholdersInNode(node, scope, defaultParamKey) {
         }
 
         var toDelete = false;
+        var deleteReason = null;
         var out = s.replace(RE_EXPR, function(__, expr) {
             if (toDelete) return "";
 
             var hit = evalPlaceholderToken(expr, scope, node);
             if (hit.drop) {
                 toDelete = true;
+                deleteReason = hit.dropReason || null;
+
+                // false による drop は仕様（意図的）なので、この行で積んだ未定義警告を取り消す
+                if (deleteReason === "legacyFalse" || deleteReason === "qFalse") {
+                    if (warnRollbackIndexRef && typeof warnRollbackIndexRef.index === "number") {
+                        placeholderWarnings.length = warnRollbackIndexRef.index;
+                    }
+                }
                 return "";
             }
             return hit.text;
         });
+
+        if (warnRollbackIndexRef) {
+            warnRollbackIndexRef.lastDeleteReason = deleteReason;
+        }
 
         return toDelete ? void 0 : out;
     }
@@ -2475,11 +2500,20 @@ function replacePlaceholdersInNode(node, scope, defaultParamKey) {
         var prev = s;
         var i;
 
+        // このフィールド（text/comment/image）単位で、警告のロールバック境界を作る
+        var warnRef = {
+            index: placeholderWarnings.length,
+            lastDeleteReason: null
+        };
+
         for (i = 0; i < MAX_PLACEHOLDER_EXPANSION_DEPTH; i++) {
-            var next = applyOnce(prev);
+            var next = applyOnce(prev, warnRef);
 
             // ノード削除指定
-            if (next === void 0) return void 0;
+            if (next === void 0) {
+                // undefined/null 由来の drop は警告を残す。false 由来の drop は applyOnce 側でロールバック済み。
+                return void 0;
+            }
 
             // 変化がなくなったら終了
             if (next === prev) return next;
