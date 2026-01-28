@@ -2426,7 +2426,7 @@ function evalPlaceholderToken(raw, scope, node) {
         if (falsyLegacy) {
             dropReasonLegacy = legacyUndefined ? "legacyMissing" : "legacyFalse";
         }
-        if (legacyUndefined) {
+        if (val === void 0) {
             handleUndefinedPlaceholder(s, node);
         }
         return {
@@ -2437,7 +2437,7 @@ function evalPlaceholderToken(raw, scope, node) {
     }
 
     // 警告だけ
-    if (val === void 0 || val === null) {
+    if (val === void 0) {
         handleUndefinedPlaceholder(s, node);
     }
 
