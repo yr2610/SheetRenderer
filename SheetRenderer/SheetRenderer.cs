@@ -2567,6 +2567,102 @@ namespace ExcelDnaTest
             return array;
         }
 
+        static string[,] ConvertTo2DArray_GroupAligned(List<List<NodeData>> rows, out int alignedDepth)
+        {
+            // group -> width (= max(depthInGroup)+1)
+            Dictionary<int, int> groupWidth = new Dictionary<int, int>();
+
+            foreach (var path in rows)
+            {
+                foreach (var node in path)
+                {
+                    if (node == null) continue;
+                    int g = node.group;
+                    int d = node.depthInGroup;
+
+                    if (d < 0) d = 0;
+
+                    int w = d + 1;
+                    if (!groupWidth.TryGetValue(g, out int cur) || w > cur)
+                    {
+                        groupWidth[g] = w;
+                    }
+                }
+            }
+
+            // group list (sorted)
+            List<int> groups = groupWidth.Keys.OrderBy(x => x).ToList();
+            if (groups.Count == 0)
+            {
+                alignedDepth = 0;
+                return new string[rows.Count, 0];
+            }
+
+            // base offset per group
+            Dictionary<int, int> groupBase = new Dictionary<int, int>();
+            int offset = 0;
+            foreach (int g in groups)
+            {
+                groupBase[g] = offset;
+                offset += groupWidth[g];
+            }
+
+            alignedDepth = offset;
+
+            // build array
+            int rcount = rows.Count;
+            string[,] array = new string[rcount, alignedDepth];
+
+            // place texts by (groupBase + depthInGroup)
+            for (int r = 0; r < rcount; r++)
+            {
+                var path = rows[r];
+                foreach (var node in path)
+                {
+                    if (node == null) continue;
+
+                    int g = node.group;
+                    int d = node.depthInGroup;
+                    if (d < 0) d = 0;
+
+                    if (!groupBase.TryGetValue(g, out int b))
+                    {
+                        continue;
+                    }
+
+                    int c = b + d;
+                    if (0 <= c && c < alignedDepth)
+                    {
+                        array[r, c] = node.text;
+                    }
+                }
+
+                // fill blanks inside groups that appear in this row with "---"
+                HashSet<int> usedGroups = new HashSet<int>();
+                foreach (var node in path)
+                {
+                    if (node == null) continue;
+                    usedGroups.Add(node.group);
+                }
+
+                foreach (int g in usedGroups)
+                {
+                    if (!groupBase.TryGetValue(g, out int b)) continue;
+                    int w = groupWidth[g];
+
+                    for (int c = b; c < b + w; c++)
+                    {
+                        if (array[r, c] == null)
+                        {
+                            array[r, c] = "---";
+                        }
+                    }
+                }
+            }
+
+            return array;
+        }
+
         static void SetValueInSheet<T, TOutput>(Excel.Worksheet sheet, int startRow, int startColumn, List<List<T>> list, Func<T, TOutput> selector)
         {
             TOutput[,] array = ConvertTo2DArray(list, selector);
@@ -2683,10 +2779,11 @@ namespace ExcelDnaTest
 
             // 左端はシート名なので削除
             result = RemoveFirstColumn(result);
-            maxDepth--;
 
-            // 2次元配列に変換
-            string[,] arrayResult = ConvertTo2DArray(result, x => x?.text);
+            // group列揃えで2次元配列に変換
+            int alignedDepth;
+            string[,] arrayResult = ConvertTo2DArray_GroupAligned(result, out alignedDepth);
+            maxDepth = alignedDepth;
 
             // 右端にダミー文字追加
             ReplaceTrailingNullsInLastColumn(arrayResult, "---");
