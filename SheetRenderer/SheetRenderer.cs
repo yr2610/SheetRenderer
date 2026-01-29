@@ -2572,43 +2572,12 @@ namespace ExcelDnaTest
             out int alignedDepth,
             out List<Dictionary<int,int>> indexMap /* j -> aligned column c per row */)
         {
-            // 1) 各 group の幅（= max(depthInGroup)+1）を集計
-            var groupWidth = new Dictionary<int, int>();
-            foreach (var path in rows)
-            {
-                foreach (var node in path)
-                {
-                    if (node == null) continue;
-
-                    int g = node.group;
-                    int d = node.depthInGroup;
-                    if (d < 0) d = 0;
-
-                    int w = d + 1;
-                    if (!groupWidth.TryGetValue(g, out int cur) || w > cur)
-                    {
-                        groupWidth[g] = w;
-                    }
-                }
-            }
-
-            // 2) group を昇順に並べ、各 group の先頭オフセット（base）を決める
-            List<int> groups = groupWidth.Keys.OrderBy(x => x).ToList();
+            var groupBase = BuildGroupBase(rows, out alignedDepth, out List<int> groups);
             if (groups.Count == 0)
             {
-                alignedDepth = 0;
                 indexMap = new List<Dictionary<int,int>>();
                 return new string[rows.Count, 0];
             }
-
-            var groupBase = new Dictionary<int, int>();
-            int offset = 0;
-            foreach (int g in groups)
-            {
-                groupBase[g] = offset;
-                offset += groupWidth[g];
-            }
-            alignedDepth = offset;
 
             // 3) 配列本体と j->c の対応表（行ごと）を用意
             int rcount = rows.Count;
@@ -2646,6 +2615,50 @@ namespace ExcelDnaTest
             }
 
             return array;
+        }
+
+        static Dictionary<int, int> BuildGroupBase(
+            List<List<NodeData>> rows,
+            out int alignedDepth,
+            out List<int> groups)
+        {
+            // 1) 各 group の幅（= max(depthInGroup)+1）を集計
+            var groupWidth = new Dictionary<int, int>();
+            foreach (var path in rows)
+            {
+                foreach (var node in path)
+                {
+                    if (node == null) continue;
+
+                    int g = node.group;
+                    int d = node.depthInGroup;
+                    if (d < 0) d = 0;
+
+                    int w = d + 1;
+                    if (!groupWidth.TryGetValue(g, out int cur) || w > cur)
+                    {
+                        groupWidth[g] = w;
+                    }
+                }
+            }
+
+            // 2) group を昇順に並べ、各 group の先頭オフセット（base）を決める
+            groups = groupWidth.Keys.OrderBy(x => x).ToList();
+            if (groups.Count == 0)
+            {
+                alignedDepth = 0;
+                return new Dictionary<int, int>();
+            }
+
+            var groupBase = new Dictionary<int, int>();
+            int offset = 0;
+            foreach (int g in groups)
+            {
+                groupBase[g] = offset;
+                offset += groupWidth[g];
+            }
+            alignedDepth = offset;
+            return groupBase;
         }
 
         // 各行の「連続する末尾の空欄」を、最右 1 セルだけ leader にし、それ以外は空欄のままにする
@@ -2818,6 +2831,7 @@ namespace ExcelDnaTest
             const int endColumn = 6;
             int columnWidth = endColumn - startColumn + 1;
             const int startRow = 25;
+            const int headerRow = startRow - 1;
             const int endRow = 102;
             int rowHeight = endRow - startRow + 1;
 
@@ -2862,6 +2876,55 @@ namespace ExcelDnaTest
                 // C, D 列を削除するのはいろいろ面倒な作りのようなので、
                 // 貼り付け列を調整してお茶を濁す（C, D 列は空欄にする）
                 startColumn += columnWidth - maxDepth;
+            }
+
+            JsonArray tableHeadersNonInputArea = sheetNode["tableHeadersNonInputArea"] as JsonArray;
+            if (tableHeadersNonInputArea != null && tableHeadersNonInputArea.Count > 0)
+            {
+                int headerAlignedDepth = arrayResult.GetLength(1);
+                if (headerAlignedDepth > 0)
+                {
+                    Excel.Range headerRange = dstSheet.GetRange(headerRow, startColumn, 1, headerAlignedDepth);
+                    headerRange.ClearContents();
+                }
+
+                var headerItems = new List<(int group, string name)>();
+                foreach (JsonNode headerNode in tableHeadersNonInputArea)
+                {
+                    if (headerNode is not JsonObject headerObject)
+                    {
+                        continue;
+                    }
+
+                    if (headerObject["group"] is not JsonValue groupValue || !groupValue.TryGetValue(out int group))
+                    {
+                        continue;
+                    }
+
+                    string name = headerObject["name"]?.ToString();
+                    if (string.IsNullOrEmpty(name))
+                    {
+                        continue;
+                    }
+
+                    headerItems.Add((group, name));
+                }
+
+                var groupBase = BuildGroupBase(result, out _, out _);
+                foreach (var header in headerItems.OrderBy(item => item.group))
+                {
+                    if (!groupBase.TryGetValue(header.group, out int baseOffset))
+                    {
+                        continue;
+                    }
+
+                    if (baseOffset < 0 || baseOffset >= headerAlignedDepth)
+                    {
+                        continue;
+                    }
+
+                    dstSheet.Cells[headerRow, startColumn + baseOffset].Value = header.name;
+                }
             }
 
             dstSheet.SetValueInSheet(startRow, startColumn, arrayResult);
