@@ -2567,19 +2567,21 @@ namespace ExcelDnaTest
             return array;
         }
 
-        static string[,] ConvertTo2DArray_GroupAligned(List<List<NodeData>> rows, out int alignedDepth)
+        static string[,] ConvertTo2DArray_GroupAligned(
+            List<List<NodeData>> rows,
+            out int alignedDepth,
+            out List<Dictionary<int,int>> indexMap /* j -> aligned column c per row */)
         {
-            // group -> width (= max(depthInGroup)+1)
-            Dictionary<int, int> groupWidth = new Dictionary<int, int>();
-
+            // 1) 各 group の幅（= max(depthInGroup)+1）を集計
+            var groupWidth = new Dictionary<int, int>();
             foreach (var path in rows)
             {
                 foreach (var node in path)
                 {
                     if (node == null) continue;
+
                     int g = node.group;
                     int d = node.depthInGroup;
-
                     if (d < 0) d = 0;
 
                     int w = d + 1;
@@ -2590,35 +2592,39 @@ namespace ExcelDnaTest
                 }
             }
 
-            // group list (sorted)
+            // 2) group を昇順に並べ、各 group の先頭オフセット（base）を決める
             List<int> groups = groupWidth.Keys.OrderBy(x => x).ToList();
             if (groups.Count == 0)
             {
                 alignedDepth = 0;
+                indexMap = new List<Dictionary<int,int>>();
                 return new string[rows.Count, 0];
             }
 
-            // base offset per group
-            Dictionary<int, int> groupBase = new Dictionary<int, int>();
+            var groupBase = new Dictionary<int, int>();
             int offset = 0;
             foreach (int g in groups)
             {
                 groupBase[g] = offset;
                 offset += groupWidth[g];
             }
-
             alignedDepth = offset;
 
-            // build array
+            // 3) 配列本体と j->c の対応表（行ごと）を用意
             int rcount = rows.Count;
             string[,] array = new string[rcount, alignedDepth];
+            indexMap = Enumerable.Range(0, rcount)
+                                .Select(_ => new Dictionary<int,int>())
+                                .ToList();
 
-            // place texts by (groupBase + depthInGroup)
+            // 4) 配置: c = groupBase[g] + depthInGroup
             for (int r = 0; r < rcount; r++)
             {
                 var path = rows[r];
-                foreach (var node in path)
+
+                for (int j = 0; j < path.Count; j++)
                 {
+                    var node = path[j];
                     if (node == null) continue;
 
                     int g = node.group;
@@ -2634,33 +2640,49 @@ namespace ExcelDnaTest
                     if (0 <= c && c < alignedDepth)
                     {
                         array[r, c] = node.text;
-                    }
-                }
-
-                // fill blanks inside groups that appear in this row with "---"
-                HashSet<int> usedGroups = new HashSet<int>();
-                foreach (var node in path)
-                {
-                    if (node == null) continue;
-                    usedGroups.Add(node.group);
-                }
-
-                foreach (int g in usedGroups)
-                {
-                    if (!groupBase.TryGetValue(g, out int b)) continue;
-                    int w = groupWidth[g];
-
-                    for (int c = b; c < b + w; c++)
-                    {
-                        if (array[r, c] == null)
-                        {
-                            array[r, c] = "---";
-                        }
+                        indexMap[r][j] = c; // j(元の列) -> c(整列後の実列)
                     }
                 }
             }
 
             return array;
+        }
+
+        // 各行の「連続する末尾の空欄」を、最右 1 セルだけ leader にし、それ以外は空欄のままにする
+        static void ReplaceTailWithSingleLeader(string[,] array, string leader)
+        {
+            int numRows = array.GetLength(0);
+            int numCols = array.GetLength(1);
+            if (numCols == 0) return;
+            for (int i = 0; i < numRows; i++)
+            {
+                // 行末から最初の非 null を探す
+                int lastNonNull = -1;
+                for (int j = numCols - 1; j >= 0; j--)
+                {
+                    if (array[i, j] != null)
+                    {
+                        lastNonNull = j;
+                        break;
+                    }
+                }
+                if (lastNonNull == -1)
+                {
+                    // 行全体が空なら何もしない（記号も置かない）
+                    continue;
+                }
+                int lastCol = numCols - 1;
+                // 末尾領域（lastNonNull+1 .. lastCol-1）は空欄(null)のままに統一
+                for (int j = lastNonNull + 1; j < lastCol; j++)
+                {
+                    array[i, j] = null;
+                }
+                // 最右 1 セルだけリーダー記号
+                if (lastNonNull < lastCol)
+                {
+                    array[i, lastCol] = leader;
+                }
+            }
         }
 
         static void SetValueInSheet<T, TOutput>(Excel.Worksheet sheet, int startRow, int startColumn, List<List<T>> list, Func<T, TOutput> selector)
@@ -2782,11 +2804,15 @@ namespace ExcelDnaTest
 
             // group列揃えで2次元配列に変換
             int alignedDepth;
-            string[,] arrayResult = ConvertTo2DArray_GroupAligned(result, out alignedDepth);
+            List<Dictionary<int,int>> indexMap;
+            string[,] arrayResult = ConvertTo2DArray_GroupAligned(result, out alignedDepth, out indexMap);
             maxDepth = alignedDepth;
 
-            // 右端にダミー文字追加
-            ReplaceTrailingNullsInLastColumn(arrayResult, "---");
+            // 右端の“リーダー記号”のみ付与（途中は空欄）
+            string leaderSymbol = (confData != null && confData.ContainsKey("LEADER_SYMBOL") && !string.IsNullOrEmpty(confData["LEADER_SYMBOL"]))
+                ? confData["LEADER_SYMBOL"]
+                : " ";
+            ReplaceTailWithSingleLeader(arrayResult, leaderSymbol);
 
             int startColumn = 3;
             const int endColumn = 6;
@@ -2886,11 +2912,15 @@ namespace ExcelDnaTest
                         continue;
                     }
 
+                    // 整列後の列位置（j -> col）を解決。無ければこの j はスキップ。
+                    if (!indexMap[i].TryGetValue(j, out int col)) { continue; }
+
                     void ApplyCommentCell(int cellColorIndex, int fontColorIndex)
                     {
                         // ここより右のセルの色を変える
-                        var cells = dstSheet.Cells[startRow + i, startColumn + j];
-                        cells = cells.Resize(1, maxDepth - j);
+                        var cells = dstSheet.Cells[startRow + i, startColumn + col];
+                        cells = cells.Resize(1, maxDepth - col);
+
                         cells.Interior.ColorIndex = cellColorIndex;
                         cells.Font.ColorIndex = fontColorIndex;
 
@@ -2902,8 +2932,8 @@ namespace ExcelDnaTest
                     void ApplyCommentCellColor(Color cellColor, Color fontColor)
                     {
                         // ここより右のセルの色を変える
-                        var cells = dstSheet.Cells[startRow + i, startColumn + j];
-                        cells = cells.Resize(1, maxDepth - j);
+                        var cells = dstSheet.Cells[startRow + i, startColumn + col];
+                        cells = cells.Resize(1, maxDepth - col);
                         cells.Interior.Color = ColorTranslator.ToOle(cellColor);
                         cells.Font.Color = ColorTranslator.ToOle(fontColor);
 
@@ -2958,7 +2988,7 @@ namespace ExcelDnaTest
                             }
 
                             ApplyCommentCellColor(style.cellColor, style.fontColor);
-                            dstSheet.Cells[startRow + i, startColumn + j].Value = body;
+                            dstSheet.Cells[startRow + i, startColumn + col].Value = body;
                             dstSheet.Cells[startRow + i, resultColumn].Value = "-";
                             applied = true;
                         }
@@ -3014,10 +3044,13 @@ namespace ExcelDnaTest
                         continue;
                     }
 
+                    // 整列後の列位置（j -> col2）。無ければスキップ。
+                    if (!indexMap[i].TryGetValue(j, out int col2)) { continue; }
+
                     if (node.imageFilePath != null)
                     {
                         string path = GetAbsolutePathFromBasePath(jsonFilePath, node.imageFilePath);
-                        var cell = dstSheet.Cells[startRow + i, startColumn + j];
+                        var cell = dstSheet.Cells[startRow + i, startColumn + col2];
 
                         if (!File.Exists(path))
                         {
