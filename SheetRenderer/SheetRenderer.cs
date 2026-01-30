@@ -2853,17 +2853,31 @@ namespace ExcelDnaTest
                 dstSheet.DeleteRows(startRow, numberOfRowsToDelete);
             }
 
-            // XXX: 深度が列より少ない場合は今のテンプレに合わせていろいろやる…
+            // 深度が列より少ない場合は、テーブル範囲だけ列を削除（左詰め）
             if (maxDepth < columnWidth)
             {
-                // とりあえず E 列は削除
-                Excel.Range column = dstSheet.Columns[5];
-                column.Delete();
-                columnWidth--;
+                int tableEndRow = headerRow + leafCount;
 
-                // C, D 列を削除するのはいろいろ面倒な作りのようなので、
-                // 貼り付け列を調整してお茶を濁す（C, D 列は空欄にする）
-                startColumn += columnWidth - maxDepth;
+                // 残す開始列（右端基準）
+                int keepStartCol = startColumn + columnWidth - maxDepth;
+                int keepEndCol   = startColumn + columnWidth - 1;
+
+                // 削除対象はそれより左側
+                int deleteStartCol = startColumn;
+                int deleteEndCol   = keepStartCol - 1;
+
+                if (deleteStartCol <= deleteEndCol)
+                {
+                    Excel.Range delRange = dstSheet.Range[
+                        dstSheet.Cells[headerRow, deleteStartCol],
+                        dstSheet.Cells[tableEndRow, deleteEndCol]
+                    ];
+
+                    // テーブル範囲内だけ左詰め削除
+                    delRange.Delete(Excel.XlDeleteShiftDirection.xlShiftToLeft);
+                }
+
+                columnWidth = maxDepth;
             }
 
             // ─────────────────────────────────────────────────────────────
