@@ -2820,6 +2820,8 @@ namespace ExcelDnaTest
             const int startRow = 25;
             const int endRow = 102;
             int rowHeight = endRow - startRow + 1;
+            // ヘッダー行（本文開始行の 1 行上）
+            const int headerRow = startRow - 1;
 
             const int initialDateColumn = 13;
             const int initialPlanColumn = 11;
@@ -2862,6 +2864,63 @@ namespace ExcelDnaTest
                 // C, D 列を削除するのはいろいろ面倒な作りのようなので、
                 // 貼り付け列を調整してお茶を濁す（C, D 列は空欄にする）
                 startColumn += columnWidth - maxDepth;
+            }
+
+            // ─────────────────────────────────────────────────────────────
+            // ヘッダー行の描画（tableHeadersNonInputArea）
+            //  - JSON 上は常に存在するが、空配列のこともある
+            //  - パディングは空セル（= 名前はグループの先頭列にのみ置く）
+            //  - グループの列範囲は本文と同じ group 揃え規則で再構成する
+            // ─────────────────────────────────────────────────────────────
+            JsonArray thnia = sheetNode["tableHeadersNonInputArea"] as JsonArray;
+            if (thnia != null && thnia.Count > 0)
+            {
+                // group -> width (= max(depthInGroup)+1)
+                var groupWidthForHeader = new Dictionary<int, int>();
+                foreach (var path in result)
+                {
+                    foreach (var n in path)
+                    {
+                        if (n == null) continue;
+                        int g = n.group;
+                        int d = n.depthInGroup;
+                        if (d < 0) d = 0;
+                        int w = d + 1;
+                        if (!groupWidthForHeader.TryGetValue(g, out int cur) || w > cur)
+                        {
+                            groupWidthForHeader[g] = w;
+                        }
+                    }
+                }
+                // group の並びと base オフセット
+                var groupsForHeader = groupWidthForHeader.Keys.OrderBy(x => x).ToList();
+                var groupBaseForHeader = new Dictionary<int, int>();
+                int off = 0;
+                foreach (var g in groupsForHeader)
+                {
+                    groupBaseForHeader[g] = off;
+                    off += groupWidthForHeader[g];
+                }
+                // 1 行分のヘッダー配列（null 埋め = パディング空欄）
+                string[,] headerArray = new string[1, maxDepth];
+                foreach (JsonNode h in thnia)
+                {
+                    // { "group": <int>, "name": <string>, "size": <int> } が想定
+                    if (h == null) continue;
+                    int g = 0;
+                    try { g = h["group"].GetValue<int>(); } catch { continue; }
+                    string name = null;
+                    try { name = h["name"]?.GetValue<string>(); } catch { }
+                    if (string.IsNullOrEmpty(name)) continue;
+
+                    if (!groupBaseForHeader.TryGetValue(g, out int b)) continue;
+                    if (0 <= b && b < maxDepth)
+                    {
+                        headerArray[0, b] = name; // 先頭列のみに名前、右側は空欄（パディングしない）
+                    }
+                }
+                // ヘッダーを書き込み（本文は startRow から、ヘッダーは 1 行上）
+                dstSheet.SetValueInSheet(headerRow, startColumn, headerArray);
             }
 
             dstSheet.SetValueInSheet(startRow, startColumn, arrayResult);
