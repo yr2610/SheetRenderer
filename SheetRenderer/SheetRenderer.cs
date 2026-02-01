@@ -2853,29 +2853,18 @@ namespace ExcelDnaTest
                 dstSheet.DeleteRows(startRow, numberOfRowsToDelete);
             }
 
-            // 深度が列より少ない場合は、テーブル範囲だけ列を削除（左詰め）
+            // 深度が列より少ない場合は、余った列を列全体削除で詰める
+            // 右端の実データ列の書式を維持するため、余剰列は左から削除する
             if (maxDepth < columnWidth)
             {
-                int tableEndRow = headerRow + leafCount;
+                int deleteCount = columnWidth - maxDepth;
 
-                // 残す開始列（右端基準）
-                int keepStartCol = startColumn + columnWidth - maxDepth;
-                int keepEndCol   = startColumn + columnWidth - 1;
+                Excel.Range deleteRange = dstSheet.Range[
+                    dstSheet.Columns[startColumn],
+                    dstSheet.Columns[startColumn + deleteCount - 1]
+                ];
 
-                // 削除対象はそれより左側
-                int deleteStartCol = startColumn;
-                int deleteEndCol   = keepStartCol - 1;
-
-                if (deleteStartCol <= deleteEndCol)
-                {
-                    Excel.Range delRange = dstSheet.Range[
-                        dstSheet.Cells[headerRow, deleteStartCol],
-                        dstSheet.Cells[tableEndRow, deleteEndCol]
-                    ];
-
-                    // テーブル範囲内だけ左詰め削除
-                    delRange.Delete(Excel.XlDeleteShiftDirection.xlShiftToLeft);
-                }
+                deleteRange.Delete();
 
                 columnWidth = maxDepth;
             }
