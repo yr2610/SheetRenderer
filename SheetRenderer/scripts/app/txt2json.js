@@ -1475,6 +1475,57 @@ while (!srcLines.atEnd) {
         var value = _.trim(property[3]);
         var target = stack.peek();
 
+        // ---- system directive: $headers ----
+        // 仕様:
+        // - インデント0のときだけ有効（= シート直下）
+        // - 効き先は「現在のH1（シート）」固定
+        // - variables には入れない（純粋なシステム指示）
+        // - 後勝ち（最後に書いたものが最優先）= 全置換
+        if (key === "$headers") {
+            if (indent !== 0) {
+                FileLogger.Warn("$headers ignored (must be at sheet scope / indent 0) at "
+                    + lineObj.filePath + ":" + lineObj.lineNum);
+                lastLineWasHeading = false;
+                continue;
+            }
+
+            // 現在のシート(H1)を探す（stackに必ずいる前提）
+            var h1Node = null;
+            for (var si = stack.__a.length - 1; si >= 0; si--) {
+                var elem0 = stack.__a[si];
+                if (elem0.kind === kindH && elem0.level === 1) {
+                    h1Node = elem0;
+                    break;
+                }
+            }
+            if (!h1Node) {
+                FileLogger.Warn("$headers ignored (no H1 found) at "
+                    + lineObj.filePath + ":" + lineObj.lineNum);
+                lastLineWasHeading = false;
+                continue;
+            }
+
+            // "概要 | 詳細" → ["概要","詳細"]
+            var headers = value
+                .split("|")
+                .map(s => s.trim())
+                .filter(Boolean);   // s => s.length > 0
+
+            if (headers.length > 0) {
+                h1Node.tableHeadersNonInputArea = [];
+                headers.forEach(function(name, index) {
+                    h1Node.tableHeadersNonInputArea.push({
+                        group: index,
+                        name: name,
+                        size: 1
+                    });
+                });
+            }
+
+            lastLineWasHeading = false;
+            continue;
+        }
+
         if (indent === 0) {
             for (var i = stack.__a.length - 1; i >= 0; i--) {
                 var elem = stack.__a[i];
