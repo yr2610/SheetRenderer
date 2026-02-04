@@ -954,16 +954,6 @@ namespace ExcelDnaTest
             }
 
             string jsonFilePath = TxtToJsonPath(txtFilePath);
-
-            if (!File.Exists(jsonFilePath))
-            {
-                MessageBox.Show(
-                    $"JSON ファイルが見つかりません。\n期待したパス:\n{jsonFilePath}\n\n" +
-                    "先に [Parse] を実行して JSON を生成してください。",
-                    "JSON 不在", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
-            }
-
             string jsonString = File.ReadAllText(jsonFilePath);
             JsonNode jsonObject = JsonNode.Parse(jsonString);
             var confData = GetPropertiesFromJsonNode(jsonObject, "variables");
@@ -1410,17 +1400,6 @@ namespace ExcelDnaTest
             }
 
             string jsonFilePath = jsonFilePathOverride ?? TxtToJsonPath(txtFilePath);
-
-            // JSON が無ければメッセージ出して中断
-            if (!File.Exists(jsonFilePath))
-            {
-                MessageBox.Show(
-                    $"JSON ファイルが見つかりません。\n期待したパス:\n{jsonFilePath}\n\n" +
-                    "先に [Parse] を実行して JSON を生成してください。",
-                    "JSON 不在", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
-            }
-
             string jsonString = File.ReadAllText(jsonFilePath);
             JsonNode jsonObject = JsonNode.Parse(jsonString);
             var confData = GetPropertiesFromJsonNode(jsonObject, "variables");
@@ -2071,38 +2050,6 @@ namespace ExcelDnaTest
 
         async Task CreateNewWorkbook(string txtFilePath = null, string jsonFilePath = null)
         {
-            if (txtFilePath == null)
-            {
-                DialogResult fileSelectionResult = MessageBox.Show(
-                    "ファイルを新規作成します。\nソースの TXT を選択してください。",
-                    "確認", MessageBoxButtons.OKCancel);
-                if (fileSelectionResult != DialogResult.OK)
-                {
-                    return;
-                }
-
-                txtFilePath = OpenSourceFile();
-                if (txtFilePath == null)
-                {
-                    return;
-                }
-            }
-
-            if (jsonFilePath == null)
-            {
-                jsonFilePath = TxtToJsonPath(txtFilePath);
-            }
-
-            // JSON が存在しなければ中断
-            if (!File.Exists(jsonFilePath))
-            {
-                MessageBox.Show(
-                    $"JSON ファイルが見つかりません。\n期待したパス:\n{jsonFilePath}\n\n" +
-                    "先に [Parse] を実行して JSON を生成してください。",
-                    "JSON 不在", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
-            }
-
             // jsonFilePath を読み、confData 等を取得してテンプレから生成
             string jsonString = File.ReadAllText(jsonFilePath);
             JsonNode jsonObject = JsonNode.Parse(jsonString);
@@ -2172,9 +2119,25 @@ namespace ExcelDnaTest
 
         public async void OnCreateNewButtonPressed(IRibbonControl control)
         {
+            string txtFilePath = OpenSourceFile();
+            if (txtFilePath == null)
+            {
+                return;
+            }
+
+            FileLogger.InitializeForInput(txtFilePath, timestamped: false);
+
+            bool parseSucceeded = RunParsePipeline(txtFilePath, true);
+            if (!parseSucceeded)
+            {
+                return;
+            }
+
+            string jsonFilePath = TxtToJsonPath(txtFilePath);
+
             Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
 
-            await CreateNewWorkbook();
+            await CreateNewWorkbook(txtFilePath, jsonFilePath);
 
             excelApp.EnableEvents = true;
             if (excelApp.ActiveWorkbook != null)
@@ -3368,14 +3331,6 @@ namespace ExcelDnaTest
             else
             {
                 jsonFilePath = TxtToJsonPath(txtFilePath);
-            }
-
-            if (!File.Exists(jsonFilePath))
-            {
-                MessageBox.Show(
-                    $"JSON ファイルが見つかりません。\n期待したパス:\n{jsonFilePath}",
-                    "JSON 不在", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
             }
 
             Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
