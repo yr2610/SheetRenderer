@@ -3304,7 +3304,7 @@ namespace ExcelDnaTest
         {
             using (OpenFileDialog openFileDialog = new OpenFileDialog())
             {
-                openFileDialog.Filter = "JSON または Text (*.json;*.txt)|*.json;*.txt|JSON (*.json)|*.json|Text (*.txt)|*.txt|すべてのファイル (*.*)|*.*";
+                openFileDialog.Filter = "JSON ファイル (*.json)|*.json";
                 openFileDialog.Title = "レンダーに使用するファイルを選択してください";
 
                 return (openFileDialog.ShowDialog() == DialogResult.OK)
