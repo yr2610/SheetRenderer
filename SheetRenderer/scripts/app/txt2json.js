@@ -796,6 +796,12 @@ function parseHeading(lineObj) {
 
     text = text.trim();
 
+    if (text.length === 0) {
+        var errorMessage = "見出しテキストが指定されていません";
+
+        throw new ParseError(errorMessage, lineObj);
+    }
+
     if (text.length > 31) {
         var errorMessage = "シート名が31文字を超えています";
 
@@ -889,7 +895,7 @@ function parseUnorderedList(lineObj, line) {
             throw new ParseError(errorMessage, lineObj);
         }
     }
-    checkSpaceAfterMark(/^#+(.+)$/);
+    checkSpaceAfterMark(/^#+(.*)$/);
     checkSpaceAfterMark(/^\s*[\*\+\-]\.?(.+)$/);
     checkSpaceAfterMark(/^\s*\d+\.(.+)$/);
 
