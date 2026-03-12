@@ -594,6 +594,7 @@ namespace ExcelDnaTest
         const string sheetIdCustomPropertyName = "SheetId";
         const string sheetHashCustomPropertyName = "SheetHash";
         const string sheetImageHashCustomPropertyName = "SheetImageHash";
+        const string confHashCustomPropertyName = "ConfHash";
         const string indexSheetTemplateCellsCustomPropertyName = "SheetImageHash";
 
         const string ssSheetRangeName = "SS_SHEET";
@@ -1349,6 +1350,18 @@ namespace ExcelDnaTest
             return clonedNode.ComputeSha256();
         }
 
+        string ComputeConfHash(JsonNode jsonObject)
+        {
+            JsonNode variablesNode = jsonObject?["variables"];
+
+            if (variablesNode == null)
+            {
+                return string.Empty;
+            }
+
+            return variablesNode.ComputeSha256();
+        }
+
         async Task UpdateAllSheets(Excel.Workbook workbook, string txtFilePathOverride = null, string jsonFilePathOverride = null)
         {
             Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
@@ -1409,6 +1422,10 @@ namespace ExcelDnaTest
                 MessageBox.Show($"Project ID({projectId})が異なります。");
                 return;
             }
+
+            string newConfHash = ComputeConfHash(jsonObject);
+            string storedConfHash = workbook.GetCustomProperty(confHashCustomPropertyName);
+            bool forceRenderAllSheets = storedConfHash != newConfHash;
 
             string indexSheetName = workbook.GetCustomProperty(indexSheetNameCustomPropertyName);
             string templateSheetName = workbook.GetCustomProperty(templateSheetNameCustomPropertyName);
@@ -1609,9 +1626,9 @@ namespace ExcelDnaTest
                         var sheetHash = sheet.GetCustomProperty(sheetHashCustomPropertyName);
                         string newSheetImageHash;
 
-                        // 元データが同じで、画像も変更されていないなら生成しない
+                        // confData が変わっていなければ、元データと画像の差分を見て生成要否を判断する
                         string newSheetHash = await newSheetHashTasks[id];
-                        if (newSheetHash == sheetHash)
+                        if (!forceRenderAllSheets && newSheetHash == sheetHash)
                         {
                             var sheetImageHash = sheet.GetCustomProperty(sheetImageHashCustomPropertyName);
                             newSheetImageHash = await newSheetImageHashTask;
@@ -1869,6 +1886,9 @@ namespace ExcelDnaTest
                 indexSheet.SetCustomProperty(indexSheetTemplateCellsCustomPropertyName, indexSheetTemplateCellsYaml);
 
                 RenderIndexSheet(sheetNodes, confData, indexSheet, null);
+
+                string confHash = ComputeConfHash(jsonObject);
+                workbook.SetCustomProperty(confHashCustomPropertyName, confHash);
 
                 // 最後にindexシートを選択状態にしておく
                 indexSheet.Activate();
