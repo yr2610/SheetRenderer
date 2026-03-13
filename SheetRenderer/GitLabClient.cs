@@ -104,6 +104,74 @@ public static class GitLabClient
         }
     }
 
+    public static async Task<List<GitLabTreeItem>> ListTreeItemsAsync(
+        string baseUrl,
+        string projectId,
+        string folderPath,
+        string refName,
+        string privateToken,
+        CancellationToken cancellationToken = default(CancellationToken))
+    {
+        EnsureTls12();
+
+        string encodedFolder = Uri.EscapeDataString(folderPath ?? string.Empty);
+        string encodedRef = Uri.EscapeDataString(refName);
+
+        string treeUrl =
+            $"{baseUrl.TrimEnd('/')}/api/v4/projects/{Uri.EscapeDataString(projectId)}/repository/tree?path={encodedFolder}&ref={encodedRef}&per_page=100";
+
+        using (var req = new HttpRequestMessage(HttpMethod.Get, treeUrl))
+        {
+            req.Headers.Add("PRIVATE-TOKEN", privateToken);
+
+            using (var res = await _httpClient.SendAsync(req, HttpCompletionOption.ResponseContentRead, cancellationToken).ConfigureAwait(false))
+            {
+                byte[] bodyBytes = await res.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
+
+                if (!res.IsSuccessStatusCode)
+                {
+                    string bodyText = SafeUtf8(bodyBytes);
+                    throw new InvalidOperationException(
+                        $"GitLab tree failed: {(int)res.StatusCode} {res.ReasonPhrase}\nURL: {treeUrl}\nBody: {bodyText}");
+                }
+
+                return DeserializeJson<List<GitLabTreeItem>>(bodyBytes) ?? new List<GitLabTreeItem>();
+            }
+        }
+    }
+
+    public static async Task<byte[]> DownloadBlobRawAsync(
+        string baseUrl,
+        string projectId,
+        string blobId,
+        string privateToken,
+        CancellationToken cancellationToken = default(CancellationToken))
+    {
+        EnsureTls12();
+
+        string blobUrl =
+            $"{baseUrl.TrimEnd('/')}/api/v4/projects/{Uri.EscapeDataString(projectId)}/repository/blobs/{Uri.EscapeDataString(blobId)}/raw";
+
+        using (var req = new HttpRequestMessage(HttpMethod.Get, blobUrl))
+        {
+            req.Headers.Add("PRIVATE-TOKEN", privateToken);
+
+            using (var res = await _httpClient.SendAsync(req, HttpCompletionOption.ResponseContentRead, cancellationToken).ConfigureAwait(false))
+            {
+                byte[] bytes = await res.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
+
+                if (!res.IsSuccessStatusCode)
+                {
+                    string bodyText = SafeUtf8(bytes);
+                    throw new InvalidOperationException(
+                        $"GitLab blob raw failed: {(int)res.StatusCode} {res.ReasonPhrase}\nURL: {blobUrl}\nBody: {bodyText}");
+                }
+
+                return bytes;
+            }
+        }
+    }
+
     private static string SafeUtf8(byte[] bytes)
     {
         try { return Encoding.UTF8.GetString(bytes); } catch { return ""; }

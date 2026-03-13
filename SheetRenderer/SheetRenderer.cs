@@ -3413,10 +3413,10 @@ namespace ExcelDnaTest
 
                 GitLabLastInputStore.Save(input, clearFilePathEachTime); // FilePathも含めて保存（開発中はこれでOK）
 
-                // ここから input.BaseUrl / input.ProjectId / input.RefName / input.FilePath を使う
                 string baseUrl = input.BaseUrl;
                 string projectId = input.ProjectId;
                 string refName = input.RefName;
+                string filePath = (input.FilePath ?? string.Empty).Replace('\\', '/').Trim('/');
 
                 string token = GitLabAuth.GetOrPromptToken(baseUrl, projectId);
                 if (string.IsNullOrEmpty(token))
@@ -3425,26 +3425,116 @@ namespace ExcelDnaTest
                     return;
                 }
 
-                string filePath = input.FilePath; // "foo/2025-10-22/index_rpa8.txt"
-                string folder = System.IO.Path.GetDirectoryName(filePath).Replace('\\', '/');
-                string name = System.IO.Path.GetFileName(filePath);
+                string parentFolder = GetGitLabParentFolder(filePath);
+                string workRoot = CreatePullWorkRoot();
 
-                byte[] bytes = await GitLabClient.DownloadFileViaTreeAsync(baseUrl, projectId, folder, name, refName, token);
+                var items = await ListDirectBlobItemsAsync(baseUrl, projectId, parentFolder, refName, token);
+                var downloadedRelativePaths = new List<string>();
 
-                //System.Windows.Forms.MessageBox.Show("取得成功: " + filePath + "\nbytes=" + bytes.Length);
+                foreach (var item in items)
+                {
+                    if (string.IsNullOrEmpty(item.Id) || string.IsNullOrEmpty(item.Path))
+                    {
+                        continue;
+                    }
 
-                // UTF-8 前提（GitLab 上の txt / yml ならまずこれでOK）
-                string text = Encoding.UTF8.GetString(bytes);
+                    byte[] bytes = await DownloadBlobByIdAsync(baseUrl, projectId, item.Id, token);
+                    string savedRelativePath = SaveBlobToWorkRoot(workRoot, item.Path, bytes);
+                    downloadedRelativePaths.Add(savedRelativePath);
+                }
 
-                System.Windows.Forms.MessageBox.Show(
-                    text.Length > 200 ? text.Substring(0, 200) : text,
-                    "Downloaded (first 200 chars)"
-                );
+                string samplePaths = string.Empty;
+                int sampleCount = Math.Min(5, downloadedRelativePaths.Count);
+                if (sampleCount > 0)
+                {
+                    samplePaths = "\n" + string.Join("\n", downloadedRelativePaths.Take(sampleCount));
+                }
+
+                MessageBox.Show(
+                    "ダウンロード完了\n" +
+                    "WorkRoot: " + workRoot + "\n" +
+                    "Files: " + downloadedRelativePaths.Count + samplePaths,
+                    "Pull Result");
             }
             catch (Exception ex)
             {
                 System.Windows.Forms.MessageBox.Show(ex.ToString(), "Pull failed");
             }
+        }
+
+        private static string CreatePullWorkRoot()
+        {
+            string workRoot = Path.Combine(
+                Path.GetTempPath(),
+                "SheetRenderer",
+                "PullWork",
+                DateTime.Now.ToString("yyyyMMdd_HHmmss_fff"));
+
+            Directory.CreateDirectory(workRoot);
+            return workRoot;
+        }
+
+        private static string GetGitLabParentFolder(string gitLabFilePath)
+        {
+            string normalized = (gitLabFilePath ?? string.Empty).Replace('\\', '/').Trim('/');
+            int idx = normalized.LastIndexOf('/');
+            if (idx < 0)
+            {
+                return string.Empty;
+            }
+
+            return normalized.Substring(0, idx);
+        }
+
+        private static async Task<List<GitLabTreeItem>> ListDirectBlobItemsAsync(
+            string baseUrl,
+            string projectId,
+            string folder,
+            string refName,
+            string token)
+        {
+            var items = await GitLabClient.ListTreeItemsAsync(baseUrl, projectId, folder, refName, token);
+            var blobs = new List<GitLabTreeItem>();
+            foreach (var item in items)
+            {
+                if (item == null)
+                {
+                    continue;
+                }
+
+                if (!string.Equals(item.Type, "blob", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                blobs.Add(item);
+            }
+
+            return blobs;
+        }
+
+        private static async Task<byte[]> DownloadBlobByIdAsync(
+            string baseUrl,
+            string projectId,
+            string blobId,
+            string token)
+        {
+            return await GitLabClient.DownloadBlobRawAsync(baseUrl, projectId, blobId, token);
+        }
+
+        private static string SaveBlobToWorkRoot(string workRoot, string relativePath, byte[] bytes)
+        {
+            string normalizedRelativePath = (relativePath ?? string.Empty).Replace('/', Path.DirectorySeparatorChar);
+            string fullPath = Path.Combine(workRoot, normalizedRelativePath);
+            string dir = Path.GetDirectoryName(fullPath);
+
+            if (!string.IsNullOrEmpty(dir))
+            {
+                Directory.CreateDirectory(dir);
+            }
+
+            File.WriteAllBytes(fullPath, bytes ?? new byte[0]);
+            return (relativePath ?? string.Empty).Replace('\\', '/');
         }
 
         public void OnTokenManagerButtonPressed(IRibbonControl control)
