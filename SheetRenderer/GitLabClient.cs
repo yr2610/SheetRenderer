@@ -104,7 +104,7 @@ public static class GitLabClient
         }
     }
 
-    public static async Task<List<GitLabTreeItem>> ListTreeItemsAsync(
+    internal static async Task<List<GitLabTreeItem>> ListTreeItemsAsync(
         string baseUrl,
         string projectId,
         string folderPath,
