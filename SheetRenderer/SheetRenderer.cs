@@ -3443,6 +3443,25 @@ namespace ExcelDnaTest
                     downloadedRelativePaths.Add(savedRelativePath);
                 }
 
+                // 次フェーズ（include / File.Read）向けの最小基盤:
+                // 任意の1ファイルを WorkRoot に確保する処理をここで利用可能にしておく。
+                if (!string.IsNullOrEmpty(filePath))
+                {
+                    string ensuredLocalPath = await EnsureFileInWorkRootAsync(
+                        baseUrl,
+                        projectId,
+                        refName,
+                        token,
+                        workRoot,
+                        filePath);
+
+                    string ensuredRelativePath = ToGitLabRelativePath(workRoot, ensuredLocalPath);
+                    if (!downloadedRelativePaths.Contains(ensuredRelativePath))
+                    {
+                        downloadedRelativePaths.Add(ensuredRelativePath);
+                    }
+                }
+
                 string samplePaths = string.Empty;
                 int sampleCount = Math.Min(5, downloadedRelativePaths.Count);
                 if (sampleCount > 0)
@@ -3476,7 +3495,7 @@ namespace ExcelDnaTest
 
         private static string GetGitLabParentFolder(string gitLabFilePath)
         {
-            string normalized = (gitLabFilePath ?? string.Empty).Replace('\\', '/').Trim('/');
+            string normalized = GitLabPathResolver.NormalizeGitLabRelativePath(gitLabFilePath);
             int idx = normalized.LastIndexOf('/');
             if (idx < 0)
             {
@@ -3526,15 +3545,129 @@ namespace ExcelDnaTest
         {
             string normalizedRelativePath = (relativePath ?? string.Empty).Replace('/', Path.DirectorySeparatorChar);
             string fullPath = Path.Combine(workRoot, normalizedRelativePath);
-            string dir = Path.GetDirectoryName(fullPath);
-
-            if (!string.IsNullOrEmpty(dir))
-            {
-                Directory.CreateDirectory(dir);
-            }
+            EnsureDirectoryForLocalPath(fullPath);
 
             File.WriteAllBytes(fullPath, bytes ?? new byte[0]);
             return (relativePath ?? string.Empty).Replace('\\', '/');
+        }
+
+        private static async Task<string> EnsureFileInWorkRootAsync(
+            string baseUrl,
+            string projectId,
+            string refName,
+            string token,
+            string workRoot,
+            string gitLabRelativePath)
+        {
+            string normalizedRelativePath = GitLabPathResolver.NormalizeGitLabRelativePath(gitLabRelativePath);
+            string localPath = Path.Combine(workRoot, normalizedRelativePath.Replace('/', Path.DirectorySeparatorChar));
+
+            if (File.Exists(localPath))
+            {
+                return Path.GetFullPath(localPath);
+            }
+
+            string parentFolder = GetGitLabParentFolder(normalizedRelativePath);
+            string fileName = GetGitLabFileName(normalizedRelativePath);
+            var items = await GitLabClient.ListTreeItemsAsync(baseUrl, projectId, parentFolder, refName, token);
+
+            GitLabTreeItem fileItem = FindBlobItemByName(items, fileName, normalizedRelativePath, parentFolder);
+            byte[] bytes = await DownloadBlobByIdAsync(baseUrl, projectId, fileItem.Id, token);
+            SaveBlobToWorkRoot(workRoot, normalizedRelativePath, bytes);
+
+            return Path.GetFullPath(localPath);
+        }
+
+        private static GitLabTreeItem FindBlobItemByName(
+            IEnumerable<GitLabTreeItem> items,
+            string fileName,
+            string requestedRelativePath,
+            string parentFolder)
+        {
+            GitLabTreeItem foundByName = null;
+
+            foreach (var item in items)
+            {
+                if (item == null)
+                {
+                    continue;
+                }
+
+                if (!string.Equals(item.Name, fileName, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                foundByName = item;
+                break;
+            }
+
+            if (foundByName == null)
+            {
+                throw new FileNotFoundException(
+                    "GitLab file not found. " +
+                    "requestedRelativePath='" + requestedRelativePath + "', " +
+                    "parentFolder='" + parentFolder + "', " +
+                    "fileName='" + fileName + "'.");
+            }
+
+            if (!string.Equals(foundByName.Type, "blob", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(
+                    "GitLab item is not a blob. " +
+                    "requestedRelativePath='" + requestedRelativePath + "', " +
+                    "parentFolder='" + parentFolder + "', " +
+                    "fileName='" + fileName + "', " +
+                    "actualType='" + (foundByName.Type ?? string.Empty) + "'.");
+            }
+
+            if (string.IsNullOrEmpty(foundByName.Id))
+            {
+                throw new InvalidOperationException(
+                    "GitLab blob id is empty. " +
+                    "requestedRelativePath='" + requestedRelativePath + "', " +
+                    "parentFolder='" + parentFolder + "', " +
+                    "fileName='" + fileName + "'.");
+            }
+
+            return foundByName;
+        }
+
+        private static string GetGitLabFileName(string gitLabRelativePath)
+        {
+            string normalized = GitLabPathResolver.NormalizeGitLabRelativePath(gitLabRelativePath);
+            int idx = normalized.LastIndexOf('/');
+            if (idx < 0)
+            {
+                return normalized;
+            }
+
+            return normalized.Substring(idx + 1);
+        }
+
+        private static void EnsureDirectoryForLocalPath(string fullPath)
+        {
+            string dir = Path.GetDirectoryName(fullPath);
+            if (string.IsNullOrEmpty(dir))
+            {
+                return;
+            }
+
+            Directory.CreateDirectory(dir);
+        }
+
+        private static string ToGitLabRelativePath(string workRoot, string localAbsolutePath)
+        {
+            string normalizedRoot = Path.GetFullPath(workRoot).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            string normalizedLocalPath = Path.GetFullPath(localAbsolutePath);
+
+            if (!normalizedLocalPath.StartsWith(normalizedRoot, StringComparison.OrdinalIgnoreCase))
+            {
+                return normalizedLocalPath.Replace('\\', '/');
+            }
+
+            string relative = normalizedLocalPath.Substring(normalizedRoot.Length).TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            return relative.Replace('\\', '/');
         }
 
         public void OnTokenManagerButtonPressed(IRibbonControl control)
