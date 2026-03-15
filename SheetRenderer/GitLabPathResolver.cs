@@ -26,6 +26,26 @@ internal static class GitLabPathResolver
         return normalized;
     }
 
+    public static string NormalizeGitLabFilePathStrict(string path)
+    {
+        string normalized = NormalizeGitLabRelativePath(path);
+        if (string.IsNullOrEmpty(normalized))
+        {
+            throw new ArgumentException("path is empty.", "path");
+        }
+
+        string[] parts = normalized.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
+        for (int i = 0; i < parts.Length; i++)
+        {
+            if (parts[i] == "." || parts[i] == "..")
+            {
+                throw new InvalidOperationException("Path contains traversal segment: " + path);
+            }
+        }
+
+        return string.Join("/", parts);
+    }
+
     private static string GetParentFolder(string path)
     {
         int idx = path.LastIndexOf('/');

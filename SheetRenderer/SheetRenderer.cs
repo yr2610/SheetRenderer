@@ -3543,12 +3543,12 @@ namespace ExcelDnaTest
 
         private static string SaveBlobToWorkRoot(string workRoot, string relativePath, byte[] bytes)
         {
-            string normalizedRelativePath = (relativePath ?? string.Empty).Replace('/', Path.DirectorySeparatorChar);
-            string fullPath = Path.Combine(workRoot, normalizedRelativePath);
+            string normalizedRelativePath = GitLabPathResolver.NormalizeGitLabFilePathStrict(relativePath);
+            string fullPath = BuildLocalPathInWorkRoot(workRoot, normalizedRelativePath);
             EnsureDirectoryForLocalPath(fullPath);
 
             File.WriteAllBytes(fullPath, bytes ?? new byte[0]);
-            return (relativePath ?? string.Empty).Replace('\\', '/');
+            return normalizedRelativePath;
         }
 
         private static async Task<string> EnsureFileInWorkRootAsync(
@@ -3559,8 +3559,8 @@ namespace ExcelDnaTest
             string workRoot,
             string gitLabRelativePath)
         {
-            string normalizedRelativePath = GitLabPathResolver.NormalizeGitLabRelativePath(gitLabRelativePath);
-            string localPath = Path.Combine(workRoot, normalizedRelativePath.Replace('/', Path.DirectorySeparatorChar));
+            string normalizedRelativePath = GitLabPathResolver.NormalizeGitLabFilePathStrict(gitLabRelativePath);
+            string localPath = BuildLocalPathInWorkRoot(workRoot, normalizedRelativePath);
 
             if (File.Exists(localPath))
             {
@@ -3576,6 +3576,27 @@ namespace ExcelDnaTest
             SaveBlobToWorkRoot(workRoot, normalizedRelativePath, bytes);
 
             return Path.GetFullPath(localPath);
+        }
+
+        private static string BuildLocalPathInWorkRoot(string workRoot, string gitLabRelativePath)
+        {
+            string normalizedRoot = Path.GetFullPath(workRoot).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            string normalizedRelativePath = GitLabPathResolver.NormalizeGitLabFilePathStrict(gitLabRelativePath);
+            string combinedPath = Path.Combine(normalizedRoot, normalizedRelativePath.Replace('/', Path.DirectorySeparatorChar));
+            string fullPath = Path.GetFullPath(combinedPath);
+
+            string rootWithSeparator = normalizedRoot + Path.DirectorySeparatorChar;
+            if (!string.Equals(fullPath, normalizedRoot, StringComparison.OrdinalIgnoreCase) &&
+                !fullPath.StartsWith(rootWithSeparator, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(
+                    "Resolved local path escaped WorkRoot. " +
+                    "workRoot='" + workRoot + "', " +
+                    "gitLabRelativePath='" + gitLabRelativePath + "', " +
+                    "resolvedPath='" + fullPath + "'.");
+            }
+
+            return fullPath;
         }
 
         private static GitLabTreeItem FindBlobItemByName(
