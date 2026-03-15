@@ -238,6 +238,19 @@ namespace ExcelDnaTest
     {
         private IRibbonUI ribbon;
         private ProgressBarForm progressBarForm;
+        private static PullSessionContext currentPullSession;
+        [ThreadStatic]
+        private static Stack<string> currentFileReadStack;
+
+        private sealed class PullSessionContext
+        {
+            public string BaseUrl;
+            public string ProjectId;
+            public string RefName;
+            public string Token;
+            public string WorkRoot;
+            public string EntryGitLabRelativePath;
+        }
 
         public void OnLoad(IRibbonUI ribbonUI)
         {
@@ -3247,6 +3260,8 @@ namespace ExcelDnaTest
 
             try
             {
+                currentFileReadStack = new Stack<string>();
+                JsHost.SetFileReadHook(path => ResolveAndReadFileForJs(path));
                 var result = JsHost.Call("parse", txtFilePath);
                 if (IsQuitResult(result))
                 {
@@ -3275,6 +3290,11 @@ namespace ExcelDnaTest
 
                 MessageBox.Show(details, "JS実行エラー");
                 return false;
+            }
+            finally
+            {
+                JsHost.ClearFileReadHook();
+                currentFileReadStack = null;
             }
 
             string jsonPath = Path.ChangeExtension(txtFilePath, ".json");
@@ -3307,6 +3327,78 @@ namespace ExcelDnaTest
                 Notifier.Info("正常終了", $"jsonファイルを出力しました\n{jsonPath}");
             }
             return true;
+        }
+
+        private static string ResolveAndReadFileForJs(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                throw new ArgumentException("File.Read path is empty.", "path");
+            }
+
+            if (currentPullSession == null ||
+                string.IsNullOrEmpty(currentPullSession.WorkRoot) ||
+                string.IsNullOrEmpty(currentPullSession.EntryGitLabRelativePath))
+            {
+                return File.ReadAllText(Path.GetFullPath(path));
+            }
+
+            string workRoot = Path.GetFullPath(currentPullSession.WorkRoot)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+            string baseFileRelativePath = GetCurrentBaseFileRelativePath();
+            string resolvedGitLabRelativePath;
+
+            if (Path.IsPathRooted(path))
+            {
+                string fullPath = Path.GetFullPath(path);
+                if (!fullPath.StartsWith(workRoot, StringComparison.OrdinalIgnoreCase))
+                {
+                    return File.ReadAllText(fullPath);
+                }
+
+                resolvedGitLabRelativePath = ToGitLabRelativePath(workRoot, fullPath);
+            }
+            else
+            {
+                resolvedGitLabRelativePath = GitLabPathResolver.ResolveGitLabRelativePath(baseFileRelativePath, path);
+            }
+
+            string localEnsuredPath = EnsureFileInWorkRootAsync(
+                currentPullSession.BaseUrl,
+                currentPullSession.ProjectId,
+                currentPullSession.RefName,
+                currentPullSession.Token,
+                currentPullSession.WorkRoot,
+                resolvedGitLabRelativePath,
+                path)
+                .GetAwaiter()
+                .GetResult();
+
+            if (currentFileReadStack == null)
+            {
+                currentFileReadStack = new Stack<string>();
+            }
+
+            currentFileReadStack.Push(resolvedGitLabRelativePath);
+            try
+            {
+                return File.ReadAllText(localEnsuredPath);
+            }
+            finally
+            {
+                currentFileReadStack.Pop();
+            }
+        }
+
+        private static string GetCurrentBaseFileRelativePath()
+        {
+            if (currentFileReadStack != null && currentFileReadStack.Count > 0)
+            {
+                return currentFileReadStack.Peek();
+            }
+
+            return currentPullSession.EntryGitLabRelativePath;
         }
 
         public void OnDebugParseButtonPressed(IRibbonControl control)
@@ -3401,6 +3493,8 @@ namespace ExcelDnaTest
         {
             try
             {
+                currentPullSession = null;
+
                 var last = GitLabLastInputStore.Load();
 
                 GitLabLastInput input;
@@ -3427,6 +3521,16 @@ namespace ExcelDnaTest
 
                 string parentFolder = GetGitLabParentFolder(filePath);
                 string workRoot = CreatePullWorkRoot();
+
+                currentPullSession = new PullSessionContext
+                {
+                    BaseUrl = baseUrl,
+                    ProjectId = projectId,
+                    RefName = refName,
+                    Token = token,
+                    WorkRoot = workRoot,
+                    EntryGitLabRelativePath = GitLabPathResolver.NormalizeGitLabFilePathStrict(filePath)
+                };
 
                 var items = await ListDirectBlobItemsAsync(baseUrl, projectId, parentFolder, refName, token);
                 var downloadedRelativePaths = new List<string>();
@@ -3557,7 +3661,8 @@ namespace ExcelDnaTest
             string refName,
             string token,
             string workRoot,
-            string gitLabRelativePath)
+            string gitLabRelativePath,
+            string requestedPathForError = null)
         {
             string normalizedRelativePath = GitLabPathResolver.NormalizeGitLabFilePathStrict(gitLabRelativePath);
             string localPath = BuildLocalPathInWorkRoot(workRoot, normalizedRelativePath);
@@ -3571,7 +3676,12 @@ namespace ExcelDnaTest
             string fileName = GetGitLabFileName(normalizedRelativePath);
             var items = await GitLabClient.ListTreeItemsAsync(baseUrl, projectId, parentFolder, refName, token);
 
-            GitLabTreeItem fileItem = FindBlobItemByName(items, fileName, normalizedRelativePath, parentFolder);
+            GitLabTreeItem fileItem = FindBlobItemByName(
+                items,
+                fileName,
+                requestedPathForError ?? normalizedRelativePath,
+                normalizedRelativePath,
+                parentFolder);
             byte[] bytes = await DownloadBlobByIdAsync(baseUrl, projectId, fileItem.Id, token);
             SaveBlobToWorkRoot(workRoot, normalizedRelativePath, bytes);
 
@@ -3602,7 +3712,8 @@ namespace ExcelDnaTest
         private static GitLabTreeItem FindBlobItemByName(
             IEnumerable<GitLabTreeItem> items,
             string fileName,
-            string requestedRelativePath,
+            string requestedPath,
+            string resolvedRelativePath,
             string parentFolder)
         {
             GitLabTreeItem foundByName = null;
@@ -3627,7 +3738,8 @@ namespace ExcelDnaTest
             {
                 throw new FileNotFoundException(
                     "GitLab file not found. " +
-                    "requestedRelativePath='" + requestedRelativePath + "', " +
+                    "requestedPath='" + requestedPath + "', " +
+                    "resolvedRelativePath='" + resolvedRelativePath + "', " +
                     "parentFolder='" + parentFolder + "', " +
                     "fileName='" + fileName + "'.");
             }
@@ -3636,7 +3748,8 @@ namespace ExcelDnaTest
             {
                 throw new InvalidOperationException(
                     "GitLab item is not a blob. " +
-                    "requestedRelativePath='" + requestedRelativePath + "', " +
+                    "requestedPath='" + requestedPath + "', " +
+                    "resolvedRelativePath='" + resolvedRelativePath + "', " +
                     "parentFolder='" + parentFolder + "', " +
                     "fileName='" + fileName + "', " +
                     "actualType='" + (foundByName.Type ?? string.Empty) + "'.");
@@ -3646,7 +3759,8 @@ namespace ExcelDnaTest
             {
                 throw new InvalidOperationException(
                     "GitLab blob id is empty. " +
-                    "requestedRelativePath='" + requestedRelativePath + "', " +
+                    "requestedPath='" + requestedPath + "', " +
+                    "resolvedRelativePath='" + resolvedRelativePath + "', " +
                     "parentFolder='" + parentFolder + "', " +
                     "fileName='" + fileName + "'.");
             }

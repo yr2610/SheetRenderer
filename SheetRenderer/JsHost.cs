@@ -13,6 +13,7 @@ public static class JsHost
     private static V8ScriptEngine _engine;
     private static WScriptPolyfill _wscript;
     private static string _baseDir;
+    private static Func<string, string> _fileReadHook;
 
     // ① 初期化（アドイン読み込み時 or 最初に使うときに1回だけ呼ぶ）
     public static void Init(string baseDir)
@@ -35,7 +36,7 @@ public static class JsHost
 
         // .NETの型を直公開（Path / File / Directory）
         _engine.AddHostType("Path", typeof(System.IO.Path));
-        _engine.AddHostType("File", typeof(System.IO.File));
+        _engine.AddHostObject("File", new FileBridge());
         _engine.AddHostType("Directory", typeof(System.IO.Directory));
         _engine.AddHostType("FileLogger", typeof(FileLogger));
 
@@ -124,6 +125,44 @@ public static class JsHost
     {
         if (_engine == null)
             throw new InvalidOperationException("JsHost.Init() がまだ呼ばれていません。");
+    }
+
+    public static void SetFileReadHook(Func<string, string> fileReadHook)
+    {
+        _fileReadHook = fileReadHook;
+    }
+
+    public static void ClearFileReadHook()
+    {
+        _fileReadHook = null;
+    }
+
+    private sealed class FileBridge
+    {
+        public string Read(string path)
+        {
+            if (_fileReadHook != null)
+            {
+                return _fileReadHook(path);
+            }
+
+            return System.IO.File.ReadAllText(path);
+        }
+
+        public string ReadAllText(string path)
+        {
+            return Read(path);
+        }
+
+        public bool Exists(string path)
+        {
+            return System.IO.File.Exists(path);
+        }
+
+        public void WriteAllText(string path, string contents)
+        {
+            System.IO.File.WriteAllText(path, contents);
+        }
     }
 }
 
