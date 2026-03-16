@@ -203,8 +203,22 @@ public static class GitLabClient
 
         if (res.StatusCode == HttpStatusCode.NotFound)
         {
+            string notFoundHint;
+            if (url.IndexOf("/repository/tree", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                notFoundHint = "The specified project, branch (ref), or path may not exist in the repository.";
+            }
+            else if (url.IndexOf("/repository/blobs/", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                notFoundHint = "The specified project or blob ID may not exist, or the GitLab base URL may be incorrect.";
+            }
+            else
+            {
+                notFoundHint = "The requested GitLab API endpoint or resource could not be found.";
+            }
+
             throw new InvalidOperationException(
-                "GitLab resource not found.\n\nThe specified branch (ref) or path may not exist in the repository.");
+                $"GitLab resource not found.\n\n{notFoundHint}\nEndpoint: {url}");
         }
 
         string bodyText = SafeUtf8(bodyBytes);
