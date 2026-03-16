@@ -3375,8 +3375,17 @@ namespace ExcelDnaTest
                 .GetAwaiter()
                 .GetResult();
 
+            string previousGitLabBaseFileRelativePath = currentGitLabBaseFileRelativePath;
             currentGitLabBaseFileRelativePath = resolvedGitLabRelativePath;
-            return File.ReadAllText(localEnsuredPath);
+
+            try
+            {
+                return File.ReadAllText(localEnsuredPath);
+            }
+            finally
+            {
+                currentGitLabBaseFileRelativePath = previousGitLabBaseFileRelativePath;
+            }
         }
 
         private static string GetCurrentBaseFileRelativePath()
