@@ -250,6 +250,110 @@ namespace ExcelDnaTest
             public string Token;
             public string WorkRoot;
             public string EntryGitLabRelativePath;
+            public PullSessionLog SessionLog;
+        }
+
+        private enum PullFileActionType
+        {
+            InitialFolderDownload,
+            LazyFileRead,
+            AlreadyExists
+        }
+
+        private sealed class PullFileActivity
+        {
+            public DateTime Timestamp;
+            public PullFileActionType ActionType;
+            public string RelativePath;
+        }
+
+        private sealed class PullSessionLog
+        {
+            private readonly List<PullFileActivity> activities;
+
+            public PullSessionLog(string workRoot, string entryGitLabRelativePath)
+            {
+                WorkRoot = workRoot;
+                EntryGitLabRelativePath = entryGitLabRelativePath;
+                activities = new List<PullFileActivity>();
+            }
+
+            public string WorkRoot { get; private set; }
+
+            public string EntryGitLabRelativePath { get; private set; }
+
+            public int TotalCount
+            {
+                get { return activities.Count; }
+            }
+
+            public void Add(PullFileActionType actionType, string relativePath)
+            {
+                activities.Add(new PullFileActivity
+                {
+                    Timestamp = DateTime.Now,
+                    ActionType = actionType,
+                    RelativePath = relativePath
+                });
+            }
+
+            public int CountByType(PullFileActionType actionType)
+            {
+                return activities.Count(a => a.ActionType == actionType);
+            }
+
+            public string BuildSummaryText(int maxItems)
+            {
+                var lines = new List<string>();
+                lines.Add("Pull completed.");
+                lines.Add(string.Empty);
+                lines.Add("WorkRoot:");
+                lines.Add(WorkRoot ?? string.Empty);
+                lines.Add(string.Empty);
+                lines.Add("Entry:");
+                lines.Add(EntryGitLabRelativePath ?? string.Empty);
+                lines.Add(string.Empty);
+                lines.Add("Event Count: " + TotalCount);
+                lines.Add("- initial-folder-download: " + CountByType(PullFileActionType.InitialFolderDownload));
+                lines.Add("- lazy-file-read: " + CountByType(PullFileActionType.LazyFileRead));
+                lines.Add("- already-exists: " + CountByType(PullFileActionType.AlreadyExists));
+                lines.Add(string.Empty);
+                lines.Add("File activity:");
+
+                int shownCount = 0;
+                foreach (var activity in activities)
+                {
+                    if (shownCount >= maxItems)
+                    {
+                        break;
+                    }
+
+                    lines.Add("[" + ToLabel(activity.ActionType) + "] " + activity.RelativePath);
+                    shownCount++;
+                }
+
+                if (TotalCount > shownCount)
+                {
+                    lines.Add("... (" + (TotalCount - shownCount) + " more)");
+                }
+
+                return string.Join("\n", lines);
+            }
+
+            private static string ToLabel(PullFileActionType actionType)
+            {
+                switch (actionType)
+                {
+                    case PullFileActionType.InitialFolderDownload:
+                        return "initial-folder-download";
+                    case PullFileActionType.LazyFileRead:
+                        return "lazy-file-read";
+                    case PullFileActionType.AlreadyExists:
+                        return "already-exists";
+                    default:
+                        return "unknown";
+                }
+            }
         }
 
         public void OnLoad(IRibbonUI ribbonUI)
@@ -3371,7 +3475,8 @@ namespace ExcelDnaTest
                 currentPullSession.Token,
                 currentPullSession.WorkRoot,
                 resolvedGitLabRelativePath,
-                path)
+                path,
+                currentPullSession.SessionLog)
                 .GetAwaiter()
                 .GetResult();
 
@@ -3547,6 +3652,12 @@ namespace ExcelDnaTest
                 string parentFolder = GetGitLabParentFolder(filePath);
                 string workRoot = CreatePullWorkRoot();
 
+                string normalizedEntryPath = string.IsNullOrEmpty(filePath)
+                    ? null
+                    : GitLabPathResolver.NormalizeGitLabFilePathStrict(filePath);
+
+                var sessionLog = new PullSessionLog(workRoot, normalizedEntryPath);
+
                 currentPullSession = new PullSessionContext
                 {
                     BaseUrl = baseUrl,
@@ -3554,13 +3665,11 @@ namespace ExcelDnaTest
                     RefName = refName,
                     Token = token,
                     WorkRoot = workRoot,
-                    EntryGitLabRelativePath = string.IsNullOrEmpty(filePath)
-                        ? null
-                        : GitLabPathResolver.NormalizeGitLabFilePathStrict(filePath)
+                    EntryGitLabRelativePath = normalizedEntryPath,
+                    SessionLog = sessionLog
                 };
 
                 var items = await ListDirectBlobItemsAsync(baseUrl, projectId, parentFolder, refName, token);
-                var downloadedRelativePaths = new List<string>();
 
                 foreach (var item in items)
                 {
@@ -3571,40 +3680,26 @@ namespace ExcelDnaTest
 
                     byte[] bytes = await DownloadBlobByIdAsync(baseUrl, projectId, item.Id, token);
                     string savedRelativePath = SaveBlobToWorkRoot(workRoot, item.Path, bytes);
-                    downloadedRelativePaths.Add(savedRelativePath);
+                    sessionLog.Add(PullFileActionType.InitialFolderDownload, savedRelativePath);
                 }
 
                 // 次フェーズ（include / File.Read）向けの最小基盤:
                 // 任意の1ファイルを WorkRoot に確保する処理をここで利用可能にしておく。
                 if (!string.IsNullOrEmpty(filePath))
                 {
-                    string ensuredLocalPath = await EnsureFileInWorkRootAsync(
+                    await EnsureFileInWorkRootAsync(
                         baseUrl,
                         projectId,
                         refName,
                         token,
                         workRoot,
-                        filePath);
+                        filePath,
+                        null,
+                        sessionLog);
 
-                    string ensuredRelativePath = ToGitLabRelativePath(workRoot, ensuredLocalPath);
-                    if (!downloadedRelativePaths.Contains(ensuredRelativePath))
-                    {
-                        downloadedRelativePaths.Add(ensuredRelativePath);
-                    }
                 }
 
-                string samplePaths = string.Empty;
-                int sampleCount = Math.Min(5, downloadedRelativePaths.Count);
-                if (sampleCount > 0)
-                {
-                    samplePaths = "\n" + string.Join("\n", downloadedRelativePaths.Take(sampleCount));
-                }
-
-                MessageBox.Show(
-                    "ダウンロード完了\n" +
-                    "WorkRoot: " + workRoot + "\n" +
-                    "Files: " + downloadedRelativePaths.Count + samplePaths,
-                    "Pull Result");
+                MessageBox.Show(sessionLog.BuildSummaryText(30), "Pull Result");
             }
             catch (Exception ex)
             {
@@ -3689,7 +3784,8 @@ namespace ExcelDnaTest
             string token,
             string workRoot,
             string gitLabRelativePath,
-            string requestedPathForError = null)
+            string requestedPathForError = null,
+            PullSessionLog sessionLog = null)
         {
             string normalizedRelativePath = GitLabPathResolver.NormalizeGitLabFilePathStrict(gitLabRelativePath);
             string localPath = BuildLocalPathInWorkRoot(workRoot, normalizedRelativePath);
@@ -3697,6 +3793,11 @@ namespace ExcelDnaTest
             if (File.Exists(localPath))
             {
                 FileLogger.Info("[PullLazyRead] local cache hit: " + normalizedRelativePath);
+                if (sessionLog != null)
+                {
+                    sessionLog.Add(PullFileActionType.AlreadyExists, normalizedRelativePath);
+                }
+
                 return Path.GetFullPath(localPath);
             }
 
@@ -3714,6 +3815,10 @@ namespace ExcelDnaTest
                 parentFolder);
             byte[] bytes = await DownloadBlobByIdAsync(baseUrl, projectId, fileItem.Id, token);
             SaveBlobToWorkRoot(workRoot, normalizedRelativePath, bytes);
+            if (sessionLog != null)
+            {
+                sessionLog.Add(PullFileActionType.LazyFileRead, normalizedRelativePath);
+            }
 
             return Path.GetFullPath(localPath);
         }
