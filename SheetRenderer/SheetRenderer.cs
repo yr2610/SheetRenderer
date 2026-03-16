@@ -3380,13 +3380,15 @@ namespace ExcelDnaTest
                 currentFileReadStack = new Stack<string>();
             }
 
-            if (currentFileReadStack.Count > 0)
+            currentFileReadStack.Push(resolvedGitLabRelativePath);
+            try
+            {
+                return File.ReadAllText(localEnsuredPath);
+            }
+            finally
             {
                 currentFileReadStack.Pop();
             }
-
-            currentFileReadStack.Push(resolvedGitLabRelativePath);
-            return File.ReadAllText(localEnsuredPath);
         }
 
         private static string GetCurrentBaseFileRelativePath()
