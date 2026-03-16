@@ -240,7 +240,7 @@ namespace ExcelDnaTest
         private ProgressBarForm progressBarForm;
         private static PullSessionContext currentPullSession;
         [ThreadStatic]
-        private static Stack<string> currentFileReadStack;
+        private static string currentGitLabBaseFileRelativePath;
 
         private sealed class PullSessionContext
         {
@@ -3260,7 +3260,7 @@ namespace ExcelDnaTest
 
             try
             {
-                currentFileReadStack = new Stack<string>();
+                currentGitLabBaseFileRelativePath = ResolveInitialGitLabBaseFileRelativePath(txtFilePath);
                 JsHost.SetFileReadHook(path => ResolveAndReadFileForJs(path));
                 var result = JsHost.Call("parse", txtFilePath);
                 if (IsQuitResult(result))
@@ -3294,7 +3294,7 @@ namespace ExcelDnaTest
             finally
             {
                 JsHost.ClearFileReadHook();
-                currentFileReadStack = null;
+                currentGitLabBaseFileRelativePath = null;
             }
 
             string jsonPath = Path.ChangeExtension(txtFilePath, ".json");
@@ -3375,30 +3375,46 @@ namespace ExcelDnaTest
                 .GetAwaiter()
                 .GetResult();
 
-            if (currentFileReadStack == null)
-            {
-                currentFileReadStack = new Stack<string>();
-            }
-
-            currentFileReadStack.Push(resolvedGitLabRelativePath);
-            try
-            {
-                return File.ReadAllText(localEnsuredPath);
-            }
-            finally
-            {
-                currentFileReadStack.Pop();
-            }
+            currentGitLabBaseFileRelativePath = resolvedGitLabRelativePath;
+            return File.ReadAllText(localEnsuredPath);
         }
 
         private static string GetCurrentBaseFileRelativePath()
         {
-            if (currentFileReadStack != null && currentFileReadStack.Count > 0)
+            if (!string.IsNullOrEmpty(currentGitLabBaseFileRelativePath))
             {
-                return currentFileReadStack.Peek();
+                return currentGitLabBaseFileRelativePath;
             }
 
             return currentPullSession.EntryGitLabRelativePath;
+        }
+
+        private static string ResolveInitialGitLabBaseFileRelativePath(string txtFilePath)
+        {
+            if (currentPullSession == null ||
+                string.IsNullOrEmpty(currentPullSession.WorkRoot) ||
+                string.IsNullOrEmpty(currentPullSession.EntryGitLabRelativePath))
+            {
+                return null;
+            }
+
+            if (string.IsNullOrWhiteSpace(txtFilePath))
+            {
+                return currentPullSession.EntryGitLabRelativePath;
+            }
+
+            string fullTxtPath = Path.GetFullPath(txtFilePath);
+            string normalizedWorkRoot = Path.GetFullPath(currentPullSession.WorkRoot)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            string rootWithSeparator = normalizedWorkRoot + Path.DirectorySeparatorChar;
+
+            if (!string.Equals(fullTxtPath, normalizedWorkRoot, StringComparison.OrdinalIgnoreCase) &&
+                !fullTxtPath.StartsWith(rootWithSeparator, StringComparison.OrdinalIgnoreCase))
+            {
+                return currentPullSession.EntryGitLabRelativePath;
+            }
+
+            return ToGitLabRelativePath(normalizedWorkRoot, fullTxtPath);
         }
 
         public void OnDebugParseButtonPressed(IRibbonControl control)
@@ -3671,8 +3687,11 @@ namespace ExcelDnaTest
 
             if (File.Exists(localPath))
             {
+                FileLogger.Info("[PullLazyRead] local cache hit: " + normalizedRelativePath);
                 return Path.GetFullPath(localPath);
             }
+
+            FileLogger.Info("[PullLazyRead] fetching from GitLab: " + normalizedRelativePath);
 
             string parentFolder = GetGitLabParentFolder(normalizedRelativePath);
             string fileName = GetGitLabFileName(normalizedRelativePath);
