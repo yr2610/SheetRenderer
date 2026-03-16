@@ -3380,15 +3380,13 @@ namespace ExcelDnaTest
                 currentFileReadStack = new Stack<string>();
             }
 
-            currentFileReadStack.Push(resolvedGitLabRelativePath);
-            try
-            {
-                return File.ReadAllText(localEnsuredPath);
-            }
-            finally
+            if (currentFileReadStack.Count > 0)
             {
                 currentFileReadStack.Pop();
             }
+
+            currentFileReadStack.Push(resolvedGitLabRelativePath);
+            return File.ReadAllText(localEnsuredPath);
         }
 
         private static string GetCurrentBaseFileRelativePath()
@@ -3529,7 +3527,9 @@ namespace ExcelDnaTest
                     RefName = refName,
                     Token = token,
                     WorkRoot = workRoot,
-                    EntryGitLabRelativePath = GitLabPathResolver.NormalizeGitLabFilePathStrict(filePath)
+                    EntryGitLabRelativePath = string.IsNullOrEmpty(filePath)
+                        ? null
+                        : GitLabPathResolver.NormalizeGitLabFilePathStrict(filePath)
                 };
 
                 var items = await ListDirectBlobItemsAsync(baseUrl, projectId, parentFolder, refName, token);
