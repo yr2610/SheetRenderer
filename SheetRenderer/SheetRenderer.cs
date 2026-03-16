@@ -3480,6 +3480,11 @@ namespace ExcelDnaTest
                 .GetAwaiter()
                 .GetResult();
 
+            return ReadFileWithBasePathContext(localEnsuredPath, resolvedGitLabRelativePath);
+        }
+
+        private static string ReadFileWithBasePathContext(string localEnsuredPath, string resolvedGitLabRelativePath)
+        {
             string previousGitLabBaseFileRelativePath = currentGitLabBaseFileRelativePath;
             currentGitLabBaseFileRelativePath = resolvedGitLabRelativePath;
 
