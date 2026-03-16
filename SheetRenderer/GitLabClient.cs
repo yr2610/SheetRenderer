@@ -57,9 +57,7 @@ public static class GitLabClient
 
                 if (!res.IsSuccessStatusCode)
                 {
-                    string bodyText = SafeUtf8(bodyBytes);
-                    throw new InvalidOperationException(
-                        $"GitLab tree failed: {(int)res.StatusCode} {res.ReasonPhrase}\nURL: {treeUrl}\nBody: {bodyText}");
+                    ThrowGitLabApiException(res, treeUrl, bodyBytes);
                 }
 
                 var items = DeserializeJson<List<GitLabTreeItem>>(bodyBytes);
@@ -94,9 +92,7 @@ public static class GitLabClient
 
                 if (!res2.IsSuccessStatusCode)
                 {
-                    string bodyText = SafeUtf8(bytes);
-                    throw new InvalidOperationException(
-                        $"GitLab blob raw failed: {(int)res2.StatusCode} {res2.ReasonPhrase}\nURL: {blobUrl}\nBody: {bodyText}");
+                    ThrowGitLabApiException(res2, blobUrl, bytes);
                 }
 
                 return bytes; // バイナリOK（画像もOK）
@@ -137,9 +133,7 @@ public static class GitLabClient
 
                     if (!res.IsSuccessStatusCode)
                     {
-                        string bodyText = SafeUtf8(bodyBytes);
-                        throw new InvalidOperationException(
-                            $"GitLab tree failed: {(int)res.StatusCode} {res.ReasonPhrase}\nURL: {treeUrl}\nBody: {bodyText}");
+                        ThrowGitLabApiException(res, treeUrl, bodyBytes);
                     }
 
                     var pageItems = DeserializeJson<List<GitLabTreeItem>>(bodyBytes) ?? new List<GitLabTreeItem>();
@@ -180,9 +174,7 @@ public static class GitLabClient
 
                 if (!res.IsSuccessStatusCode)
                 {
-                    string bodyText = SafeUtf8(bytes);
-                    throw new InvalidOperationException(
-                        $"GitLab blob raw failed: {(int)res.StatusCode} {res.ReasonPhrase}\nURL: {blobUrl}\nBody: {bodyText}");
+                    ThrowGitLabApiException(res, blobUrl, bytes);
                 }
 
                 return bytes;
@@ -193,5 +185,30 @@ public static class GitLabClient
     private static string SafeUtf8(byte[] bytes)
     {
         try { return Encoding.UTF8.GetString(bytes); } catch { return ""; }
+    }
+
+    private static void ThrowGitLabApiException(HttpResponseMessage res, string url, byte[] bodyBytes)
+    {
+        if (res.StatusCode == HttpStatusCode.Unauthorized)
+        {
+            throw new InvalidOperationException(
+                "GitLab authentication failed.\n\nThe access token is missing, invalid, or expired.\nPlease check the configured GitLab access token.");
+        }
+
+        if (res.StatusCode == HttpStatusCode.Forbidden)
+        {
+            throw new InvalidOperationException(
+                "GitLab access forbidden.\n\nThe access token is valid but does not have permission to access this repository or resource.");
+        }
+
+        if (res.StatusCode == HttpStatusCode.NotFound)
+        {
+            throw new InvalidOperationException(
+                "GitLab resource not found.\n\nThe specified branch (ref) or path may not exist in the repository.");
+        }
+
+        string bodyText = SafeUtf8(bodyBytes);
+        throw new InvalidOperationException(
+            $"GitLab API error {(int)res.StatusCode} {res.ReasonPhrase}\nURL: {url}\nBody: {bodyText}");
     }
 }
