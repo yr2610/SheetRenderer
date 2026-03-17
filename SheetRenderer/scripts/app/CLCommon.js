@@ -10,6 +10,10 @@ CL.writeTextFileUTF8 = function (s, outFilePath) {
   File.WriteAllText(outFilePath, s);
 };
 
+CL.readTextFile = function (filePath) {
+  return File.ReadAllText(filePath);
+};
+
 // 圧縮されてれば展開
 CL.decompressJSON = function (json) {
   var o = JSON.parse(json);
@@ -47,7 +51,7 @@ CL.decompressJSON = function (json) {
 };
 
 CL.readYAMLFile = function (yamlFilePath) {
-  var s = File.ReadAllText(yamlFilePath);
+  var s = CL.readTextFile(yamlFilePath);
   return jsyaml.load(s);
   //return Yaml.LoadFile(yamlFilePath);
 };
