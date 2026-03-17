@@ -30,6 +30,63 @@ CL.readTextFile = function (requestedPath, baseFilePath) {
   return File.ReadAllText(localPath);
 };
 
+CL._activeFileReadChain = [];
+CL._activeFileReadSet = {};
+
+CL.normalizeFileReadChainPath = function (filePath) {
+  return String(filePath || "").replace(/\\/g, "/");
+};
+
+CL.beginFileReadChain = function (filePath) {
+  var normalizedPath = CL.normalizeFileReadChainPath(filePath);
+
+  if (CL._activeFileReadSet[normalizedPath]) {
+    var cycleChain = CL._activeFileReadChain.slice(0);
+    cycleChain.push(normalizedPath);
+
+    throw new Error(
+      "Circular file reference detected.\n\n" +
+      "Read chain:\n" +
+      cycleChain.join("\n -> "));
+  }
+
+  CL._activeFileReadChain.push(normalizedPath);
+  CL._activeFileReadSet[normalizedPath] = true;
+};
+
+CL.endFileReadChain = function (filePath) {
+  var normalizedPath = CL.normalizeFileReadChainPath(filePath);
+  var lastIndex = CL._activeFileReadChain.length - 1;
+
+  if (lastIndex >= 0 && CL._activeFileReadChain[lastIndex] === normalizedPath) {
+    CL._activeFileReadChain.pop();
+    delete CL._activeFileReadSet[normalizedPath];
+    return;
+  }
+
+  for (var i = CL._activeFileReadChain.length - 1; i >= 0; i--) {
+    if (CL._activeFileReadChain[i] !== normalizedPath) {
+      continue;
+    }
+
+    CL._activeFileReadChain.splice(i, 1);
+    delete CL._activeFileReadSet[normalizedPath];
+    break;
+  }
+};
+
+CL.withActiveReadFile = function (filePath, action) {
+  var normalizedPath = CL.normalizeFileReadChainPath(filePath);
+
+  CL.beginFileReadChain(normalizedPath);
+  try {
+    return action();
+  }
+  finally {
+    CL.endFileReadChain(normalizedPath);
+  }
+};
+
 // lazy-read の入れ子解決確認用の一時フック
 CL.debugValidateNestedLazyReadChain = function (entryBaseFilePath, firstRequestedPath, secondRequestedPath) {
   if (File.TraceFileRead) {
