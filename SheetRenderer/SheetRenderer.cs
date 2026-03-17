@@ -3657,6 +3657,9 @@ namespace ExcelDnaTest
                 string parentFolder = GetGitLabParentFolder(filePath);
                 string workRoot = CreatePullWorkRoot();
 
+                // Pull 実行時点でログを書けるように先に初期化しておく
+                FileLogger.InitializeForSession(workRoot, "pull", timestamped: false);
+
                 string normalizedEntryPath = string.IsNullOrEmpty(filePath)
                     ? null
                     : GitLabPathResolver.NormalizeGitLabFilePathStrict(filePath);
