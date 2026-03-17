@@ -2,7 +2,7 @@
     if (!FileSystem.FileExists(confFilePath)) {
         return {};
     }
-    var data = CL.readYAMLFile(confFilePath);
+    var data = CL.readYAMLFile(confFilePath, confFilePath);
 
     var postProcess = [];
 
@@ -52,7 +52,7 @@
             delete data.$include;
             _.forEach(includeFiles, function(value) {
                 var includeFilePath = FileSystem.BuildPath(baseDirectory, value);
-                var includeData = CL.readYAMLFile(includeFilePath);
+                var includeData = CL.readYAMLFile(includeFilePath, baseFile);
                 processIncludeFiles(includeData, includeFilePath);
                 //_.assign(data, includeData);  // 上書きする
                 _.defaults(data, includeData);  // 上書きしない

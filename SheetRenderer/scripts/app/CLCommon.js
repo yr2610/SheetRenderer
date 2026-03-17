@@ -10,8 +10,14 @@ CL.writeTextFileUTF8 = function (s, outFilePath) {
   File.WriteAllText(outFilePath, s);
 };
 
-CL.readTextFile = function (filePath) {
-  return File.ReadAllText(filePath);
+CL.readTextFile = function (requestedPath, baseFilePath) {
+  var localPath = requestedPath;
+
+  if (File.ResolveAndEnsureLocalPath) {
+    localPath = File.ResolveAndEnsureLocalPath(requestedPath, baseFilePath);
+  }
+
+  return File.ReadAllText(localPath);
 };
 
 // 圧縮されてれば展開
@@ -50,8 +56,8 @@ CL.decompressJSON = function (json) {
   };
 };
 
-CL.readYAMLFile = function (yamlFilePath) {
-  var s = CL.readTextFile(yamlFilePath);
+CL.readYAMLFile = function (yamlFilePath, baseFilePath) {
+  var s = CL.readTextFile(yamlFilePath, baseFilePath);
   return jsyaml.load(s);
   //return Yaml.LoadFile(yamlFilePath);
 };
