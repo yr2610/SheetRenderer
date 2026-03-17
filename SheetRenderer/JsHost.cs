@@ -137,7 +137,7 @@ public static class JsHost
         _fileReadHook = null;
     }
 
-    private sealed class FileBridge
+    public sealed class FileBridge
     {
         public string Read(string path)
         {

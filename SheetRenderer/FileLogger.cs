@@ -34,6 +34,31 @@ public static class FileLogger
         WriteRaw($"===== Parse Log for \"{Path.GetFileName(inputFilePath)}\" ({DateTime.Now:yyyy-MM-dd HH:mm:ss}) =====");
     }
 
+
+    // Pull など入力ファイルが未確定な処理向けの初期化
+    public static void InitializeForSession(string directoryPath, string baseName = "session", bool timestamped = true)
+    {
+        if (string.IsNullOrWhiteSpace(directoryPath))
+        {
+            throw new ArgumentException("出力先ディレクトリが未指定です。", nameof(directoryPath));
+        }
+
+        Directory.CreateDirectory(directoryPath);
+
+        string safeBaseName = string.IsNullOrWhiteSpace(baseName) ? "session" : baseName;
+        if (timestamped)
+        {
+            string stamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+            _logPath = Path.Combine(directoryPath, $"{safeBaseName}.{stamp}.parse.log");
+        }
+        else
+        {
+            _logPath = Path.Combine(directoryPath, $"{safeBaseName}.parse.log");
+        }
+
+        WriteRaw($"===== Parse Log for \"{safeBaseName}\" ({DateTime.Now:yyyy-MM-dd HH:mm:ss}) =====");
+    }
+
     public static void Info(string msg) { Write("INFO", msg); }
     public static void Warn(string msg) { Write("WARN", msg); }
     public static void Error(string msg) { Write("ERROR", msg); }
