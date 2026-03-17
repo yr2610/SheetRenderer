@@ -422,7 +422,7 @@ function readVarsFile(varsFileName) {
         return {};
     }
 
-    var data = CL.readYAMLFile(varsFilePath);
+    var data = CL.readYAMLFile(varsFilePath, filePath);
     if (!data) {
         return {};
     }
@@ -452,7 +452,7 @@ function readVarsFile(varsFileName) {
                 includeFilePath = FileSystem.BuildPath(baseDirectory, value);
             }
 
-            var includeData = CL.readYAMLFile(includeFilePath) || {};
+            var includeData = CL.readYAMLFile(includeFilePath, baseFile) || {};
             processIncludeFiles(includeData, includeFilePath);
             _.defaults(target, includeData);
         });

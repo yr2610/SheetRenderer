@@ -3365,7 +3365,7 @@ namespace ExcelDnaTest
             try
             {
                 currentGitLabBaseFileRelativePath = ResolveInitialGitLabBaseFileRelativePath(txtFilePath);
-                JsHost.SetFileReadHook(path => ResolveAndReadFileForJs(path));
+                JsHost.SetFilePathResolveHook((requestedPath, baseFilePath) => ResolveAndEnsureLocalFilePathForJs(requestedPath, baseFilePath));
                 var result = JsHost.Call("parse", txtFilePath);
                 if (IsQuitResult(result))
                 {
@@ -3397,7 +3397,7 @@ namespace ExcelDnaTest
             }
             finally
             {
-                JsHost.ClearFileReadHook();
+                JsHost.ClearFilePathResolveHook();
                 currentGitLabBaseFileRelativePath = null;
             }
 
@@ -3433,39 +3433,39 @@ namespace ExcelDnaTest
             return true;
         }
 
-        private static string ResolveAndReadFileForJs(string path)
+        private static string ResolveAndEnsureLocalFilePathForJs(string requestedPath, string baseFilePath)
         {
-            if (string.IsNullOrWhiteSpace(path))
+            if (string.IsNullOrWhiteSpace(requestedPath))
             {
-                throw new ArgumentException("File.Read path is empty.", "path");
+                throw new ArgumentException("requestedPath is empty.", "requestedPath");
             }
 
             if (currentPullSession == null ||
                 string.IsNullOrEmpty(currentPullSession.WorkRoot) ||
                 string.IsNullOrEmpty(currentPullSession.EntryGitLabRelativePath))
             {
-                return File.ReadAllText(Path.GetFullPath(path));
+                return Path.GetFullPath(requestedPath);
             }
 
             string workRoot = Path.GetFullPath(currentPullSession.WorkRoot)
                 .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
 
-            string baseFileRelativePath = GetCurrentBaseFileRelativePath();
+            string baseFileRelativePath = ResolveBaseFileRelativePath(baseFilePath);
             string resolvedGitLabRelativePath;
 
-            if (Path.IsPathRooted(path))
+            if (Path.IsPathRooted(requestedPath))
             {
-                string fullPath = Path.GetFullPath(path);
+                string fullPath = Path.GetFullPath(requestedPath);
                 if (!fullPath.StartsWith(workRoot, StringComparison.OrdinalIgnoreCase))
                 {
-                    return File.ReadAllText(fullPath);
+                    return fullPath;
                 }
 
                 resolvedGitLabRelativePath = ToGitLabRelativePath(workRoot, fullPath);
             }
             else
             {
-                resolvedGitLabRelativePath = GitLabPathResolver.ResolveGitLabRelativePath(baseFileRelativePath, path);
+                resolvedGitLabRelativePath = GitLabPathResolver.ResolveGitLabRelativePath(baseFileRelativePath, requestedPath);
             }
 
             string localEnsuredPath = EnsureFileInWorkRootAsync(
@@ -3475,31 +3475,40 @@ namespace ExcelDnaTest
                 currentPullSession.Token,
                 currentPullSession.WorkRoot,
                 resolvedGitLabRelativePath,
-                path,
+                requestedPath,
                 currentPullSession.SessionLog)
                 .GetAwaiter()
                 .GetResult();
 
-            return ReadFileWithBasePathContext(localEnsuredPath, resolvedGitLabRelativePath);
+            return localEnsuredPath;
         }
 
-        private static string ReadFileWithBasePathContext(string localEnsuredPath, string resolvedGitLabRelativePath)
+        private static string ResolveBaseFileRelativePath(string baseFilePath)
         {
-            string previousGitLabBaseFileRelativePath = currentGitLabBaseFileRelativePath;
-            currentGitLabBaseFileRelativePath = resolvedGitLabRelativePath;
-
-            try
+            if (!string.IsNullOrWhiteSpace(baseFilePath))
             {
-                return File.ReadAllText(localEnsuredPath);
-            }
-            finally
-            {
-                currentGitLabBaseFileRelativePath = previousGitLabBaseFileRelativePath;
-            }
-        }
+                if (Path.IsPathRooted(baseFilePath))
+                {
+                    string normalizedWorkRoot = Path.GetFullPath(currentPullSession.WorkRoot)
+                        .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
 
-        private static string GetCurrentBaseFileRelativePath()
-        {
+                    string fullBasePath = Path.GetFullPath(baseFilePath);
+                    string rootWithSeparator = normalizedWorkRoot + Path.DirectorySeparatorChar;
+                    if (!string.Equals(fullBasePath, normalizedWorkRoot, StringComparison.OrdinalIgnoreCase) &&
+                        !fullBasePath.StartsWith(rootWithSeparator, StringComparison.OrdinalIgnoreCase))
+                    {
+                        throw new InvalidOperationException(
+                            "baseFilePath is outside WorkRoot. " +
+                            "baseFilePath='" + baseFilePath + "', " +
+                            "workRoot='" + currentPullSession.WorkRoot + "'.");
+                    }
+
+                    return ToGitLabRelativePath(normalizedWorkRoot, fullBasePath);
+                }
+
+                return GitLabPathResolver.NormalizeGitLabFilePathStrict(baseFilePath);
+            }
+
             if (!string.IsNullOrEmpty(currentGitLabBaseFileRelativePath))
             {
                 return currentGitLabBaseFileRelativePath;

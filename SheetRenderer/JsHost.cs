@@ -13,7 +13,7 @@ public static class JsHost
     private static V8ScriptEngine _engine;
     private static WScriptPolyfill _wscript;
     private static string _baseDir;
-    private static Func<string, string> _fileReadHook;
+    private static Func<string, string, string> _filePathResolveHook;
 
     // ① 初期化（アドイン読み込み時 or 最初に使うときに1回だけ呼ぶ）
     public static void Init(string baseDir)
@@ -127,25 +127,20 @@ public static class JsHost
             throw new InvalidOperationException("JsHost.Init() がまだ呼ばれていません。");
     }
 
-    public static void SetFileReadHook(Func<string, string> fileReadHook)
+    public static void SetFilePathResolveHook(Func<string, string, string> filePathResolveHook)
     {
-        _fileReadHook = fileReadHook;
+        _filePathResolveHook = filePathResolveHook;
     }
 
-    public static void ClearFileReadHook()
+    public static void ClearFilePathResolveHook()
     {
-        _fileReadHook = null;
+        _filePathResolveHook = null;
     }
 
     public sealed class FileBridge
     {
         public string Read(string path)
         {
-            if (_fileReadHook != null)
-            {
-                return _fileReadHook(path);
-            }
-
             return System.IO.File.ReadAllText(path);
         }
 
@@ -157,6 +152,21 @@ public static class JsHost
         public bool Exists(string path)
         {
             return System.IO.File.Exists(path);
+        }
+
+        public string ResolveAndEnsureLocalPath(string requestedPath, string baseFilePath)
+        {
+            if (_filePathResolveHook == null)
+            {
+                if (string.IsNullOrWhiteSpace(requestedPath))
+                {
+                    throw new ArgumentException("requestedPath is empty.", "requestedPath");
+                }
+
+                return Path.GetFullPath(requestedPath);
+            }
+
+            return _filePathResolveHook(requestedPath, baseFilePath);
         }
 
         public void WriteAllText(string path, string contents)
