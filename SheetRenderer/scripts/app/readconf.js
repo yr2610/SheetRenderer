@@ -52,7 +52,7 @@
             delete data.$include;
             _.forEach(includeFiles, function(value) {
                 var includeFilePath = FileSystem.BuildPath(baseDirectory, value);
-                var includeData = CL.readYAMLFile(includeFilePath, baseFile);
+                var includeData = CL.readYAMLFile(includeFilePath, includeFilePath);
                 processIncludeFiles(includeData, includeFilePath);
                 //_.assign(data, includeData);  // 上書きする
                 _.defaults(data, includeData);  // 上書きしない
