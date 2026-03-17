@@ -601,35 +601,37 @@ function preProcess_Recurse(filePath, currentProjectDirectoryFromRoot, defines, 
     //alert(currentProjectDirectoryFromRoot);
     var filePathAbs = directoryLocalPathToAbsolutePath(filePath, currentProjectDirectoryFromRoot, sourceDirectoryName);
 
-    var allLines = CL.readTextFile(filePathAbs, filePathAbs);
+    return CL.withActiveReadFile(filePathAbs, function() {
+        var allLines = CL.readTextFile(filePathAbs, filePathAbs);
 
-    //var path = FileSystem.BuildPath(parentFolderName, image);
+        //var path = FileSystem.BuildPath(parentFolderName, image);
 
-    //var lineArray = new ArrayReader(allLines.split(/\r\n|\r|\n/));
-    // 空要素も結果に含めたいのでsplitには正規表現を使わないように
-    var lineArray = allLines.replace(/\r\n|\r/g, "\n").split("\n");
+        //var lineArray = new ArrayReader(allLines.split(/\r\n|\r|\n/));
+        // 空要素も結果に含めたいのでsplitには正規表現を使わないように
+        var lineArray = allLines.replace(/\r\n|\r/g, "\n").split("\n");
 
-    // 最初に lineObj にしてしまう
-    var lines = [];
-    _.forEach(lineArray, function(line, lineNum) {
-        if (line === "") {
-            return;
-        }
+        // 最初に lineObj にしてしまう
+        var lines = [];
+        _.forEach(lineArray, function(line, lineNum) {
+            if (line === "") {
+                return;
+            }
 
-        var lineObj = {
-            line: line,
-            lineNum: 1 + lineNum,   // 1 origin
-            filePath: filePath,
-            projectDirectory: currentProjectDirectoryFromRoot
-        };
-        lines.push(lineObj);
+            var lineObj = {
+                line: line,
+                lineNum: 1 + lineNum,   // 1 origin
+                filePath: filePath,
+                projectDirectory: currentProjectDirectoryFromRoot
+            };
+            lines.push(lineObj);
+        });
+
+        lines = parseOneLineComment(lines);
+        lines = parseMultilineComment(lines);
+        lines = preProcessConditionalCompile(lines, defines, currentProjectDirectoryFromRoot, filePathAbs, templateVariables);
+
+        return lines;
     });
-
-    lines = parseOneLineComment(lines);
-    lines = parseMultilineComment(lines);
-    lines = preProcessConditionalCompile(lines, defines, currentProjectDirectoryFromRoot, filePathAbs, templateVariables);
-
-    return lines;
 }
 
 // preprocess

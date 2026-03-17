@@ -30,42 +30,42 @@
         data.$rootDirectory = FileSystem.BuildPath(baseDirectory, data.$rootDirectory);
     }
 
-    // 循環しないように
-    // 循環の対処はしないので、無限ループになる
+    // 循環参照は CL.withActiveReadFile で検出する
     function processIncludeFiles(data, baseFile) {
-        var baseDirectory = FileSystem.GetParentFolderName(baseFile);
+        return CL.withActiveReadFile(baseFile, function() {
+            var baseDirectory = FileSystem.GetParentFolderName(baseFile);
 
-        // XXX: ついでに template_dxl もここで処理
-        //if (!_.isUndefined(data.$template_dxl)) {
-        //    xmlFilePath = FileSystem.BuildPath(baseDirectory, data.$template_dxl);
-        //    delete data.$template_dxl;
-        //}
+            // XXX: ついでに template_dxl もここで処理
+            //if (!_.isUndefined(data.$template_dxl)) {
+            //    xmlFilePath = FileSystem.BuildPath(baseDirectory, data.$template_dxl);
+            //    delete data.$template_dxl;
+            //}
 
-        // XXX: ついでに functions もここで
-        processFunctions(data);
+            // XXX: ついでに functions もここで
+            processFunctions(data);
 
-        // XXX: クソ実装ではあるけど、path の対処もここで
-        processPath(data, baseDirectory);
+            // XXX: クソ実装ではあるけど、path の対処もここで
+            processPath(data, baseDirectory);
 
-        if (!_.isUndefined(data.$include)) {
-            var includeFiles = data.$include;
-            delete data.$include;
-            _.forEach(includeFiles, function(value) {
-                var includeFilePath = FileSystem.BuildPath(baseDirectory, value);
-                var includeData = CL.readYAMLFile(includeFilePath, includeFilePath);
-                processIncludeFiles(includeData, includeFilePath);
-                //_.assign(data, includeData);  // 上書きする
-                _.defaults(data, includeData);  // 上書きしない
-            });
-        }
+            if (!_.isUndefined(data.$include)) {
+                var includeFiles = data.$include;
+                delete data.$include;
+                _.forEach(includeFiles, function(value) {
+                    var includeFilePath = FileSystem.BuildPath(baseDirectory, value);
+                    var includeData = CL.readYAMLFile(includeFilePath, includeFilePath);
+                    processIncludeFiles(includeData, includeFilePath);
+                    //_.assign(data, includeData);  // 上書きする
+                    _.defaults(data, includeData);  // 上書きしない
+                });
+            }
 
-        if (!_.isUndefined(data.$post_process)) {
-            var s = data.$post_process;
-            var f = Function.call(this, 'return ' + s)();
-            postProcess.push(f);
-            delete data.$post_process;
-        }
-    
+            if (!_.isUndefined(data.$post_process)) {
+                var s = data.$post_process;
+                var f = Function.call(this, 'return ' + s)();
+                postProcess.push(f);
+                delete data.$post_process;
+            }
+        });
     }
 
     processIncludeFiles(data, confFilePath);
