@@ -13,8 +13,16 @@ CL.writeTextFileUTF8 = function (s, outFilePath) {
 CL.readTextFile = function (requestedPath, baseFilePath) {
   var localPath = requestedPath;
 
+  if (File.TraceFileRead) {
+    File.TraceFileRead("[read-request] requested=" + String(requestedPath) + ", base=" + String(baseFilePath || ""));
+  }
+
   if (File.ResolveAndEnsureLocalPath) {
     localPath = File.ResolveAndEnsureLocalPath(requestedPath, baseFilePath);
+  }
+
+  if (File.TraceFileRead) {
+    File.TraceFileRead("[read-local] localPath=" + String(localPath));
   }
 
   return File.ReadAllText(localPath);

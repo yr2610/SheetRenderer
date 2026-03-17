@@ -257,7 +257,8 @@ namespace ExcelDnaTest
         {
             InitialFolderDownload,
             LazyFileRead,
-            AlreadyExists
+            AlreadyExists,
+            FileReadTrace
         }
 
         private sealed class PullFileActivity
@@ -317,6 +318,7 @@ namespace ExcelDnaTest
                 lines.Add("- initial-folder-download: " + CountByType(PullFileActionType.InitialFolderDownload));
                 lines.Add("- lazy-file-read: " + CountByType(PullFileActionType.LazyFileRead));
                 lines.Add("- already-exists: " + CountByType(PullFileActionType.AlreadyExists));
+                lines.Add("- file-read-trace: " + CountByType(PullFileActionType.FileReadTrace));
                 lines.Add(string.Empty);
                 lines.Add("File activity:");
 
@@ -350,6 +352,8 @@ namespace ExcelDnaTest
                         return "lazy-file-read";
                     case PullFileActionType.AlreadyExists:
                         return "already-exists";
+                    case PullFileActionType.FileReadTrace:
+                        return "file-read-trace";
                     default:
                         return "unknown";
                 }
@@ -3366,6 +3370,7 @@ namespace ExcelDnaTest
             {
                 currentGitLabBaseFileRelativePath = ResolveInitialGitLabBaseFileRelativePath(txtFilePath);
                 JsHost.SetFilePathResolveHook((requestedPath, baseFilePath) => ResolveAndEnsureLocalFilePathForJs(requestedPath, baseFilePath));
+                JsHost.SetFileReadTraceHook(message => AddFileReadTrace(message));
                 var result = JsHost.Call("parse", txtFilePath);
                 if (IsQuitResult(result))
                 {
@@ -3397,6 +3402,7 @@ namespace ExcelDnaTest
             }
             finally
             {
+                JsHost.ClearFileReadTraceHook();
                 JsHost.ClearFilePathResolveHook();
                 currentGitLabBaseFileRelativePath = null;
             }
@@ -3468,6 +3474,8 @@ namespace ExcelDnaTest
                 resolvedGitLabRelativePath = GitLabPathResolver.ResolveGitLabRelativePath(baseFileRelativePath, requestedPath);
             }
 
+            AddFileReadTrace("[resolved] gitlabRelative=" + resolvedGitLabRelativePath);
+
             string localEnsuredPath = EnsureFileInWorkRootAsync(
                 currentPullSession.BaseUrl,
                 currentPullSession.ProjectId,
@@ -3481,6 +3489,21 @@ namespace ExcelDnaTest
                 .GetResult();
 
             return localEnsuredPath;
+        }
+
+        private static void AddFileReadTrace(string message)
+        {
+            if (string.IsNullOrWhiteSpace(message))
+            {
+                return;
+            }
+
+            FileLogger.Info("[PullLazyReadTrace] " + message);
+
+            if (currentPullSession != null && currentPullSession.SessionLog != null)
+            {
+                currentPullSession.SessionLog.Add(PullFileActionType.FileReadTrace, message);
+            }
         }
 
         private static string ResolveBaseFileRelativePath(string baseFilePath)
@@ -3810,6 +3833,7 @@ namespace ExcelDnaTest
             if (File.Exists(localPath))
             {
                 FileLogger.Info("[PullLazyRead] local cache hit: " + normalizedRelativePath);
+                AddFileReadTrace("[local-hit] localPath=" + Path.GetFullPath(localPath));
                 if (sessionLog != null)
                 {
                     sessionLog.Add(PullFileActionType.AlreadyExists, normalizedRelativePath);
@@ -3819,6 +3843,7 @@ namespace ExcelDnaTest
             }
 
             FileLogger.Info("[PullLazyRead] fetching from GitLab: " + normalizedRelativePath);
+            AddFileReadTrace("[download] gitlabRelative=" + normalizedRelativePath);
 
             string parentFolder = GetGitLabParentFolder(normalizedRelativePath);
             string fileName = GetGitLabFileName(normalizedRelativePath);

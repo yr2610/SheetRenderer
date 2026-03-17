@@ -14,6 +14,7 @@ public static class JsHost
     private static WScriptPolyfill _wscript;
     private static string _baseDir;
     private static Func<string, string, string> _filePathResolveHook;
+    private static Action<string> _fileReadTraceHook;
 
     // ① 初期化（アドイン読み込み時 or 最初に使うときに1回だけ呼ぶ）
     public static void Init(string baseDir)
@@ -137,6 +138,16 @@ public static class JsHost
         _filePathResolveHook = null;
     }
 
+    public static void SetFileReadTraceHook(Action<string> fileReadTraceHook)
+    {
+        _fileReadTraceHook = fileReadTraceHook;
+    }
+
+    public static void ClearFileReadTraceHook()
+    {
+        _fileReadTraceHook = null;
+    }
+
     public sealed class FileBridge
     {
         public string Read(string path)
@@ -167,6 +178,16 @@ public static class JsHost
             }
 
             return _filePathResolveHook(requestedPath, baseFilePath);
+        }
+
+        public void TraceFileRead(string message)
+        {
+            if (_fileReadTraceHook == null)
+            {
+                return;
+            }
+
+            _fileReadTraceHook(message ?? string.Empty);
         }
 
         public void WriteAllText(string path, string contents)
