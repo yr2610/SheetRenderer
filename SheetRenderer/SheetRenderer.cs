@@ -400,6 +400,7 @@ namespace ExcelDnaTest
                           </group>
                           <group id='groupDebug' label='DevTools'>
                             <button id='buttonDebugParse' label='Parse' screentip='Parseのみ（開発用）' imageMso='ControlToolboxOutlook' onAction='OnDebugParseButtonPressed'/>
+                            <button id='buttonDebugNestedLazyRead' label='NestedRead' screentip='lazy-read の入れ子相対解決確認（開発用）' imageMso='ControlToolboxOutlook' onAction='OnDebugValidateNestedLazyReadButtonPressed'/>
                             <button id='buttonDebugRender' label='Render' screentip='Renderのみ（開発用）' imageMso='ControlToolboxOutlook' onAction='OnRenderOnlyDebugButtonPressed'/>
                           </group>
                         </tab>
@@ -3577,6 +3578,49 @@ namespace ExcelDnaTest
             }
             FileLogger.InitializeForInput(txtPath2, timestamped: false);
             RunParsePipeline(txtPath2, false);
+        }
+
+        public void OnDebugValidateNestedLazyReadButtonPressed(IRibbonControl control)
+        {
+            if (currentPullSession == null ||
+                string.IsNullOrEmpty(currentPullSession.WorkRoot) ||
+                string.IsNullOrEmpty(currentPullSession.EntryGitLabRelativePath))
+            {
+                MessageBox.Show("先に Pull を実行してください。", "NestedRead");
+                return;
+            }
+
+            string entryGitLabRelativePath = currentPullSession.EntryGitLabRelativePath;
+            string entryLocalPath = BuildLocalPathInWorkRoot(currentPullSession.WorkRoot, entryGitLabRelativePath);
+
+            FileLogger.InitializeForSession(currentPullSession.WorkRoot, "nested-lazy-read", timestamped: false);
+            AddFileReadTrace("[validate-setup] entry=" + entryGitLabRelativePath);
+
+            try
+            {
+                currentGitLabBaseFileRelativePath = ResolveInitialGitLabBaseFileRelativePath(entryLocalPath);
+                JsHost.SetFilePathResolveHook((requestedPath, baseFilePath) => ResolveAndEnsureLocalFilePathForJs(requestedPath, baseFilePath));
+                JsHost.SetFileReadTraceHook(message => AddFileReadTrace(message));
+
+                JsHost.Call(
+                    "debugValidateNestedLazyReadChain",
+                    entryLocalPath,
+                    "../common/a.txt",
+                    "./b.txt");
+
+                MessageBox.Show("Nested lazy-read validation completed. ログを確認してください。", "NestedRead");
+            }
+            catch (Exception ex)
+            {
+                FileLogger.Error(ex.ToString());
+                MessageBox.Show(ex.ToString(), "NestedRead failed");
+            }
+            finally
+            {
+                JsHost.ClearFileReadTraceHook();
+                JsHost.ClearFilePathResolveHook();
+                currentGitLabBaseFileRelativePath = null;
+            }
         }
 
         static string SelectInputFileForRenderOnly()
