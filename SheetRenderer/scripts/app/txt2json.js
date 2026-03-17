@@ -1784,7 +1784,7 @@ var lastParsedRoot;
 
 // 前回出力したJSONファイルがあれば読む
 if (FileSystem.FileExists(outfilePath)) {
-    let s = File.ReadAllText(outfilePath);
+    let s = CL.readTextFile(outfilePath);
 
     lastParsedRoot = JSON.parse(s);
 }
@@ -2139,7 +2139,7 @@ function loadPlaceholderWarningsCache() {
     }
 
     try {
-        var content = File.ReadAllText(cacheFilePath);
+        var content = CL.readTextFile(cacheFilePath);
         if (!content) {
             return {};
         }
@@ -4178,7 +4178,7 @@ for (var key in srcTextsToRewrite) {
     FileSystem.CopyFile(filePathAbs, backupFilePath);
 
     // バックアップファイルを読んで、元ファイルを直接上書き更新
-    var s = File.ReadAllText(filePathAbs);
+    var s = CL.readTextFile(filePathAbs);
 
     // バックアップファイルを１行ずつ読んで、srcTextsToRewriteに行番号が存在すればそちらを、なければそのまま書き出し
     // XXX: あらかじめ改行でjoinして１回で書き込んだ場合との速度差はどの程度か？

@@ -601,7 +601,7 @@ function preProcess_Recurse(filePath, currentProjectDirectoryFromRoot, defines, 
     //alert(currentProjectDirectoryFromRoot);
     var filePathAbs = directoryLocalPathToAbsolutePath(filePath, currentProjectDirectoryFromRoot, sourceDirectoryName);
 
-    var allLines = File.ReadAllText(filePathAbs);
+    var allLines = CL.readTextFile(filePathAbs);
 
     //var path = FileSystem.BuildPath(parentFolderName, image);
 
