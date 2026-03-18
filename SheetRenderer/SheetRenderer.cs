@@ -241,6 +241,8 @@ namespace ExcelDnaTest
         private static PullSessionContext currentPullSession;
         [ThreadStatic]
         private static string currentGitLabBaseFileRelativePath;
+        [ThreadStatic]
+        private static string currentRootDirectory;
 
         private sealed class PullSessionContext
         {
@@ -3369,6 +3371,7 @@ namespace ExcelDnaTest
 
             try
             {
+                currentRootDirectory = Path.GetDirectoryName(Path.GetFullPath(txtFilePath));
                 currentGitLabBaseFileRelativePath = ResolveInitialGitLabBaseFileRelativePath(txtFilePath);
                 JsHost.SetFilePathResolveHook((requestedPath, baseFilePath) => ResolveAndEnsureLocalFilePathForJs(requestedPath, baseFilePath));
                 JsHost.SetFileReadTraceHook(message => AddFileReadTrace(message));
@@ -3406,6 +3409,7 @@ namespace ExcelDnaTest
                 JsHost.ClearFileReadTraceHook();
                 JsHost.ClearFilePathResolveHook();
                 currentGitLabBaseFileRelativePath = null;
+                currentRootDirectory = null;
             }
 
             string jsonPath = Path.ChangeExtension(txtFilePath, ".json");
@@ -3513,21 +3517,25 @@ namespace ExcelDnaTest
             {
                 if (Path.IsPathRooted(baseFilePath))
                 {
-                    string normalizedWorkRoot = Path.GetFullPath(currentPullSession.WorkRoot)
+                    bool isPullMode = HasActivePullSession();
+                    string rootDirectory = GetBaseFileRootDirectory(isPullMode, baseFilePath);
+                    string normalizedRootDirectory = Path.GetFullPath(rootDirectory)
                         .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-
                     string fullBasePath = Path.GetFullPath(baseFilePath);
-                    string rootWithSeparator = normalizedWorkRoot + Path.DirectorySeparatorChar;
-                    if (!string.Equals(fullBasePath, normalizedWorkRoot, StringComparison.OrdinalIgnoreCase) &&
+                    string rootWithSeparator = normalizedRootDirectory + Path.DirectorySeparatorChar;
+
+                    if (!string.Equals(fullBasePath, normalizedRootDirectory, StringComparison.OrdinalIgnoreCase) &&
                         !fullBasePath.StartsWith(rootWithSeparator, StringComparison.OrdinalIgnoreCase))
                     {
+                        string rootLabel = isPullMode ? "WorkRoot" : "rootDirectory";
+                        string rootKey = isPullMode ? "workRoot" : "rootDirectory";
                         throw new InvalidOperationException(
-                            "baseFilePath is outside WorkRoot. " +
+                            "baseFilePath is outside " + rootLabel + ". " +
                             "baseFilePath='" + baseFilePath + "', " +
-                            "workRoot='" + currentPullSession.WorkRoot + "'.");
+                            rootKey + "='" + rootDirectory + "'.");
                     }
 
-                    return ToGitLabRelativePath(normalizedWorkRoot, fullBasePath);
+                    return ToGitLabRelativePath(normalizedRootDirectory, fullBasePath);
                 }
 
                 return GitLabPathResolver.NormalizeGitLabFilePathStrict(baseFilePath);
@@ -3538,7 +3546,34 @@ namespace ExcelDnaTest
                 return currentGitLabBaseFileRelativePath;
             }
 
-            return currentPullSession.EntryGitLabRelativePath;
+            if (HasActivePullSession())
+            {
+                return currentPullSession.EntryGitLabRelativePath;
+            }
+
+            return string.Empty;
+        }
+
+        private static bool HasActivePullSession()
+        {
+            return currentPullSession != null &&
+                !string.IsNullOrEmpty(currentPullSession.WorkRoot) &&
+                !string.IsNullOrEmpty(currentPullSession.EntryGitLabRelativePath);
+        }
+
+        private static string GetBaseFileRootDirectory(bool isPullMode, string baseFilePath)
+        {
+            if (isPullMode)
+            {
+                return currentPullSession.WorkRoot;
+            }
+
+            if (!string.IsNullOrWhiteSpace(currentRootDirectory))
+            {
+                return currentRootDirectory;
+            }
+
+            return Path.GetDirectoryName(Path.GetFullPath(baseFilePath));
         }
 
         private static string ResolveInitialGitLabBaseFileRelativePath(string txtFilePath)
