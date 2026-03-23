@@ -182,7 +182,7 @@ public static class JsHost
 
         public string NormalizeLazyReadPathIdentity(string path)
         {
-            return SheetRenderer.NormalizeLazyReadPathIdentity(path);
+            return RibbonController.NormalizeLazyReadPathIdentity(path);
         }
 
         public void TraceFileRead(string message)
