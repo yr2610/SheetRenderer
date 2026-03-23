@@ -3576,25 +3576,40 @@ public class RibbonController : ExcelRibbon
         {
             if (Path.IsPathRooted(baseFilePath))
             {
-                bool isPullMode = HasActivePullSession();
-                string rootDirectory = GetBaseFileRootDirectory(isPullMode, baseFilePath);
-                string normalizedRootDirectory = Path.GetFullPath(rootDirectory)
-                    .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
                 string fullBasePath = Path.GetFullPath(baseFilePath);
-                string rootWithSeparator = normalizedRootDirectory + Path.DirectorySeparatorChar;
 
-                if (!string.Equals(fullBasePath, normalizedRootDirectory, StringComparison.OrdinalIgnoreCase) &&
-                    !fullBasePath.StartsWith(rootWithSeparator, StringComparison.OrdinalIgnoreCase))
+                if (HasActivePullSession())
                 {
-                    string rootLabel = isPullMode ? "WorkRoot" : "rootDirectory";
-                    string rootKey = isPullMode ? "workRoot" : "rootDirectory";
+                    string workRoot = currentPullSession.WorkRoot;
+                    string rootDirectory = currentRootDirectory;
+
+                    if (IsPathInRoot(fullBasePath, workRoot))
+                    {
+                        return ToGitLabRelativePath(NormalizeRootPath(workRoot), fullBasePath);
+                    }
+
+                    if (IsPathInRoot(fullBasePath, rootDirectory))
+                    {
+                        return ToGitLabRelativePath(NormalizeRootPath(rootDirectory), fullBasePath);
+                    }
+
                     throw new InvalidOperationException(
-                        "baseFilePath is outside " + rootLabel + ". " +
+                        "baseFilePath is outside WorkRoot and rootDirectory. " +
                         "baseFilePath='" + baseFilePath + "', " +
-                        rootKey + "='" + rootDirectory + "'.");
+                        "workRoot='" + workRoot + "', " +
+                        "rootDirectory='" + rootDirectory + "'.");
                 }
 
-                return ToGitLabRelativePath(normalizedRootDirectory, fullBasePath);
+                string rootDirectoryOutsidePull = GetBaseFileRootDirectory(false, baseFilePath);
+                if (!IsPathInRoot(fullBasePath, rootDirectoryOutsidePull))
+                {
+                    throw new InvalidOperationException(
+                        "baseFilePath is outside rootDirectory. " +
+                        "baseFilePath='" + baseFilePath + "', " +
+                        "rootDirectory='" + rootDirectoryOutsidePull + "'.");
+                }
+
+                return ToGitLabRelativePath(NormalizeRootPath(rootDirectoryOutsidePull), fullBasePath);
             }
 
             return GitLabPathResolver.CanonicalizeGitLabRelativePath(baseFilePath, "baseFilePath");
@@ -3618,6 +3633,26 @@ public class RibbonController : ExcelRibbon
         return currentPullSession != null &&
             !string.IsNullOrEmpty(currentPullSession.WorkRoot) &&
             !string.IsNullOrEmpty(currentPullSession.EntryGitLabRelativePath);
+    }
+
+    private static string NormalizeRootPath(string rootPath)
+    {
+        return Path.GetFullPath(rootPath)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+    }
+
+    private static bool IsPathInRoot(string fullPath, string rootPath)
+    {
+        if (string.IsNullOrWhiteSpace(fullPath) || string.IsNullOrWhiteSpace(rootPath))
+        {
+            return false;
+        }
+
+        string normalizedRootPath = NormalizeRootPath(rootPath);
+        string rootWithSeparator = normalizedRootPath + Path.DirectorySeparatorChar;
+
+        return string.Equals(fullPath, normalizedRootPath, StringComparison.OrdinalIgnoreCase) ||
+            fullPath.StartsWith(rootWithSeparator, StringComparison.OrdinalIgnoreCase);
     }
 
     private static string GetBaseFileRootDirectory(bool isPullMode, string baseFilePath)
