@@ -3496,6 +3496,35 @@ namespace ExcelDnaTest
             return localEnsuredPath;
         }
 
+        internal static string NormalizeLazyReadPathIdentity(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                return string.Empty;
+            }
+
+            string fullPath = Path.GetFullPath(path);
+
+            if (currentPullSession == null ||
+                string.IsNullOrEmpty(currentPullSession.WorkRoot) ||
+                string.IsNullOrEmpty(currentPullSession.EntryGitLabRelativePath))
+            {
+                return fullPath.Replace('\\', '/');
+            }
+
+            string normalizedWorkRoot = Path.GetFullPath(currentPullSession.WorkRoot)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            string rootWithSeparator = normalizedWorkRoot + Path.DirectorySeparatorChar;
+
+            if (!string.Equals(fullPath, normalizedWorkRoot, StringComparison.OrdinalIgnoreCase) &&
+                !fullPath.StartsWith(rootWithSeparator, StringComparison.OrdinalIgnoreCase))
+            {
+                return fullPath.Replace('\\', '/');
+            }
+
+            return ToGitLabRelativePath(normalizedWorkRoot, fullPath);
+        }
+
         private static void AddFileReadTrace(string message)
         {
             if (string.IsNullOrWhiteSpace(message))
@@ -3538,7 +3567,7 @@ namespace ExcelDnaTest
                     return ToGitLabRelativePath(normalizedRootDirectory, fullBasePath);
                 }
 
-                return GitLabPathResolver.NormalizeGitLabFilePathStrict(baseFilePath);
+                return GitLabPathResolver.CanonicalizeGitLabRelativePath(baseFilePath, "baseFilePath");
             }
 
             if (!string.IsNullOrEmpty(currentGitLabBaseFileRelativePath))
@@ -3756,7 +3785,7 @@ namespace ExcelDnaTest
                 string baseUrl = input.BaseUrl;
                 string projectId = input.ProjectId;
                 string refName = input.RefName;
-                string filePath = (input.FilePath ?? string.Empty).Replace('\\', '/').Trim('/');
+                string filePath = GitLabPathResolver.NormalizeGitLabRelativePath(input.FilePath);
 
                 string token = GitLabAuth.GetOrPromptToken(baseUrl, projectId);
                 if (string.IsNullOrEmpty(token))
@@ -3912,7 +3941,7 @@ namespace ExcelDnaTest
             if (File.Exists(localPath))
             {
                 FileLogger.Info("[PullLazyRead] local cache hit: " + normalizedRelativePath);
-                AddFileReadTrace("[local-hit] localPath=" + Path.GetFullPath(localPath));
+                AddFileReadTrace("[local-hit] gitlabRelative=" + normalizedRelativePath);
                 if (sessionLog != null)
                 {
                     sessionLog.Add(PullFileActionType.AlreadyExists, normalizedRelativePath);
@@ -4058,7 +4087,7 @@ namespace ExcelDnaTest
             }
 
             string relative = normalizedLocalPath.Substring(normalizedRoot.Length).TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-            return relative.Replace('\\', '/');
+            return GitLabPathResolver.NormalizeGitLabFilePathStrict(relative);
         }
 
         public void OnTokenManagerButtonPressed(IRibbonControl control)

@@ -1,10 +1,12 @@
 ﻿using System;
+using System.Collections.Generic;
+
 internal static class GitLabPathResolver
 {
     public static string ResolveGitLabRelativePath(string baseFileRelativePath, string requestedPath)
     {
-        string normalizedBase = NormalizeGitLabRelativePath(baseFileRelativePath);
-        string normalizedRequested = NormalizeGitLabRelativePath(requestedPath);
+        string normalizedBase = CanonicalizeGitLabRelativePath(baseFileRelativePath, "baseFileRelativePath");
+        string normalizedRequested = CanonicalizeGitLabRelativePath(requestedPath, "requestedPath");
 
         if (string.IsNullOrEmpty(normalizedRequested))
         {
@@ -16,51 +18,25 @@ internal static class GitLabPathResolver
             ? normalizedRequested
             : baseFolder + "/" + normalizedRequested;
 
-        return NormalizeCombinedPath(combined);
+        return CanonicalizeGitLabRelativePath(combined, "requestedPath", requestedPath, baseFileRelativePath);
     }
 
-    public static string NormalizeGitLabRelativePath(string path)
+    public static string CanonicalizeGitLabRelativePath(string path)
     {
-        string normalized = (path ?? string.Empty).Replace('\\', '/').Trim();
-        normalized = normalized.Trim('/');
-        return normalized;
+        return CanonicalizeGitLabRelativePath(path, null, null, null);
     }
 
-    public static string NormalizeGitLabFilePathStrict(string path)
+    public static string CanonicalizeGitLabRelativePath(string path, string parameterName)
     {
-        string normalized = NormalizeGitLabRelativePath(path);
-        if (string.IsNullOrEmpty(normalized))
-        {
-            throw new ArgumentException("path is empty.", "path");
-        }
+        return CanonicalizeGitLabRelativePath(path, parameterName, null, null);
+    }
 
+    public static string CanonicalizeGitLabRelativePath(string path, string parameterName, string originalPath, string basePath)
+    {
+        string rawPath = path ?? string.Empty;
+        string normalized = rawPath.Replace('\\', '/').Trim();
         string[] parts = normalized.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
-        for (int i = 0; i < parts.Length; i++)
-        {
-            if (parts[i] == "." || parts[i] == "..")
-            {
-                throw new InvalidOperationException("Path contains traversal segment: " + path);
-            }
-        }
-
-        return string.Join("/", parts);
-    }
-
-    private static string GetParentFolder(string path)
-    {
-        int idx = path.LastIndexOf('/');
-        if (idx < 0)
-        {
-            return string.Empty;
-        }
-
-        return path.Substring(0, idx);
-    }
-
-    private static string NormalizeCombinedPath(string path)
-    {
-        string[] parts = (path ?? string.Empty).Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
-        var stack = new System.Collections.Generic.List<string>();
+        var stack = new List<string>();
 
         for (int i = 0; i < parts.Length; i++)
         {
@@ -74,7 +50,7 @@ internal static class GitLabPathResolver
             {
                 if (stack.Count == 0)
                 {
-                    throw new InvalidOperationException("Path escapes repository root: " + path);
+                    throw CreatePathEscapeException(rawPath, parameterName, originalPath, basePath);
                 }
 
                 stack.RemoveAt(stack.Count - 1);
@@ -85,5 +61,59 @@ internal static class GitLabPathResolver
         }
 
         return string.Join("/", stack.ToArray());
+    }
+
+    public static string NormalizeGitLabRelativePath(string path)
+    {
+        return CanonicalizeGitLabRelativePath(path);
+    }
+
+    public static string NormalizeGitLabFilePathStrict(string path)
+    {
+        string normalized = CanonicalizeGitLabRelativePath(path, "path");
+        if (string.IsNullOrEmpty(normalized))
+        {
+            throw new ArgumentException("path is empty.", "path");
+        }
+
+        return normalized;
+    }
+
+    private static string GetParentFolder(string path)
+    {
+        int idx = path.LastIndexOf('/');
+        if (idx < 0)
+        {
+            return string.Empty;
+        }
+
+        return path.Substring(0, idx);
+    }
+
+    private static InvalidOperationException CreatePathEscapeException(
+        string path,
+        string parameterName,
+        string originalPath,
+        string basePath)
+    {
+        string message = "Path escapes repository root. " +
+            "path='" + (path ?? string.Empty) + "'";
+
+        if (!string.IsNullOrEmpty(parameterName))
+        {
+            message += ", parameter='" + parameterName + "'";
+        }
+
+        if (!string.IsNullOrEmpty(originalPath))
+        {
+            message += ", originalPath='" + originalPath + "'";
+        }
+
+        if (!string.IsNullOrEmpty(basePath))
+        {
+            message += ", basePath='" + basePath + "'";
+        }
+
+        return new InvalidOperationException(message + ".");
     }
 }

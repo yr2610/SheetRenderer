@@ -180,6 +180,11 @@ public static class JsHost
             return _filePathResolveHook(requestedPath, baseFilePath);
         }
 
+        public string NormalizeLazyReadPathIdentity(string path)
+        {
+            return SheetRenderer.NormalizeLazyReadPathIdentity(path);
+        }
+
         public void TraceFileRead(string message)
         {
             if (_fileReadTraceHook == null)

@@ -35,6 +35,10 @@ CL.readTextFile = function (requestedPath, baseFilePath) {
   CL.lastResolvedReadLocalPath = localPath;
   normalizedLocalPath = CL.normalizeFileReadChainPath(localPath);
 
+  if (File.TraceFileRead) {
+    File.TraceFileRead("[read-identity] path=" + String(normalizedLocalPath));
+  }
+
   if (Object.prototype.hasOwnProperty.call(CL._textReadCache, normalizedLocalPath)) {
     if (File.TraceFileRead) {
       File.TraceFileRead("[text-cache-hit] localPath=" + String(normalizedLocalPath));
@@ -53,6 +57,10 @@ CL._activeFileReadChain = [];
 CL._activeFileReadSet = {};
 
 CL.normalizeFileReadChainPath = function (filePath) {
+  if (File.NormalizeLazyReadPathIdentity) {
+    return String(File.NormalizeLazyReadPathIdentity(filePath));
+  }
+
   return String(filePath || "").replace(/\\/g, "/");
 };
 
