@@ -250,6 +250,7 @@ public class RibbonController : ExcelRibbon
         public string Token;
         public string WorkRoot;
         public string EntryGitLabRelativePath;
+        public string ManifestPath;
         public PullSessionLog SessionLog;
     }
 
@@ -3843,6 +3844,7 @@ public class RibbonController : ExcelRibbon
                 Token = token,
                 WorkRoot = workRoot,
                 EntryGitLabRelativePath = normalizedEntryPath,
+                ManifestPath = CreatePullManifestPath(workRoot),
                 SessionLog = sessionLog
             };
 
@@ -3876,9 +3878,7 @@ public class RibbonController : ExcelRibbon
 
             }
 
-            string manifestPath = WritePullManifest(
-                currentPullSession,
-                sessionLog);
+            string manifestPath = WritePullManifest(currentPullSession);
             FileLogger.Info("[PullManifest] written: " + manifestPath);
 
             MessageBox.Show(sessionLog.BuildSummaryText(30), "Pull Result");
@@ -4002,27 +4002,32 @@ public class RibbonController : ExcelRibbon
         if (sessionLog != null)
         {
             sessionLog.Add(PullFileActionType.LazyFileRead, normalizedRelativePath);
+            UpdatePullManifestIfAvailable(currentPullSession);
         }
 
         return Path.GetFullPath(localPath);
     }
 
-    private static string WritePullManifest(
-        PullSessionContext sessionContext,
-        PullSessionLog sessionLog)
+    private static string WritePullManifest(PullSessionContext sessionContext)
     {
         if (sessionContext == null)
         {
             throw new ArgumentNullException(nameof(sessionContext));
         }
 
-        if (sessionLog == null)
+        if (sessionContext.SessionLog == null)
         {
-            throw new ArgumentNullException(nameof(sessionLog));
+            throw new ArgumentNullException(nameof(sessionContext.SessionLog));
         }
 
         string workRoot = Path.GetFullPath(sessionContext.WorkRoot ?? string.Empty);
-        string manifestPath = CreatePullManifestPath(workRoot);
+        string manifestPath = sessionContext.ManifestPath;
+        if (string.IsNullOrWhiteSpace(manifestPath))
+        {
+            manifestPath = CreatePullManifestPath(workRoot);
+            sessionContext.ManifestPath = manifestPath;
+        }
+
         var manifest = new PullManifest
         {
             BaseUrl = sessionContext.BaseUrl,
@@ -4031,7 +4036,7 @@ public class RibbonController : ExcelRibbon
             EntryFilePath = sessionContext.EntryGitLabRelativePath,
             WorkRoot = workRoot,
             CreatedAt = DateTime.UtcNow.ToString("o"),
-            Files = BuildPullManifestFiles(sessionLog)
+            Files = BuildPullManifestFiles(sessionContext.SessionLog)
         };
 
         string json = JsonSerializer.Serialize(
@@ -4044,6 +4049,19 @@ public class RibbonController : ExcelRibbon
 
         File.WriteAllText(manifestPath, json, new UTF8Encoding(false));
         return manifestPath;
+    }
+
+    private static void UpdatePullManifestIfAvailable(PullSessionContext sessionContext)
+    {
+        if (sessionContext == null ||
+            string.IsNullOrWhiteSpace(sessionContext.WorkRoot) ||
+            sessionContext.SessionLog == null)
+        {
+            return;
+        }
+
+        string manifestPath = WritePullManifest(sessionContext);
+        FileLogger.Info("[PullManifest] updated: " + manifestPath);
     }
 
     private static string CreatePullManifestPath(string workRoot)
