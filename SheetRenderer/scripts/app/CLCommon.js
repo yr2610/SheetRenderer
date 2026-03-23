@@ -10,11 +10,15 @@ CL.writeTextFileUTF8 = function (s, outFilePath) {
   File.WriteAllText(outFilePath, s);
 };
 
+CL._textReadCache = {};
+
 CL.readTextFile = function (requestedPath, baseFilePath) {
   var localPath = requestedPath;
   var resolvedBaseFilePath = (typeof baseFilePath === "undefined" || baseFilePath === null)
     ? ""
     : baseFilePath;
+  var normalizedLocalPath;
+  var text;
 
   if (File.TraceFileRead) {
     File.TraceFileRead("[read-request] requested=" + String(requestedPath) + ", base=" + String(resolvedBaseFilePath));
@@ -29,8 +33,20 @@ CL.readTextFile = function (requestedPath, baseFilePath) {
   }
 
   CL.lastResolvedReadLocalPath = localPath;
+  normalizedLocalPath = CL.normalizeFileReadChainPath(localPath);
 
-  return File.ReadAllText(localPath);
+  if (Object.prototype.hasOwnProperty.call(CL._textReadCache, normalizedLocalPath)) {
+    if (File.TraceFileRead) {
+      File.TraceFileRead("[text-cache-hit] localPath=" + String(normalizedLocalPath));
+    }
+
+    return CL._textReadCache[normalizedLocalPath];
+  }
+
+  text = File.ReadAllText(localPath);
+  CL._textReadCache[normalizedLocalPath] = text;
+
+  return text;
 };
 
 CL._activeFileReadChain = [];
