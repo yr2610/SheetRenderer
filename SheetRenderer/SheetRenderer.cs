@@ -4022,7 +4022,7 @@ public class RibbonController : ExcelRibbon
         }
 
         string workRoot = Path.GetFullPath(sessionContext.WorkRoot ?? string.Empty);
-        string manifestPath = Path.Combine(workRoot, "pull-manifest.json");
+        string manifestPath = CreatePullManifestPath(workRoot);
         var manifest = new PullManifest
         {
             BaseUrl = sessionContext.BaseUrl,
@@ -4038,11 +4038,38 @@ public class RibbonController : ExcelRibbon
             manifest,
             new JsonSerializerOptions
             {
+                PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
                 WriteIndented = true
             });
 
         File.WriteAllText(manifestPath, json, new UTF8Encoding(false));
         return manifestPath;
+    }
+
+    private static string CreatePullManifestPath(string workRoot)
+    {
+        if (string.IsNullOrWhiteSpace(workRoot))
+        {
+            throw new ArgumentException("workRoot is required.", nameof(workRoot));
+        }
+
+        const string manifestPrefix = ".sheetrenderer-pull-manifest";
+        string manifestPath = Path.Combine(workRoot, manifestPrefix + ".json");
+        if (!File.Exists(manifestPath) && !Directory.Exists(manifestPath))
+        {
+            return manifestPath;
+        }
+
+        for (int i = 1; i < 1000; i++)
+        {
+            string candidatePath = Path.Combine(workRoot, manifestPrefix + "-" + i + ".json");
+            if (!File.Exists(candidatePath) && !Directory.Exists(candidatePath))
+            {
+                return candidatePath;
+            }
+        }
+
+        throw new IOException("Unable to allocate a pull manifest path.");
     }
 
     private static List<PullManifestFileRecord> BuildPullManifestFiles(PullSessionLog sessionLog)
