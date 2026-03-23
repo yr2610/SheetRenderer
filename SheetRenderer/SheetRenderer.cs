@@ -268,6 +268,32 @@ public class RibbonController : ExcelRibbon
         public string RelativePath;
     }
 
+    private sealed class PullManifest
+    {
+        public string BaseUrl { get; set; }
+
+        public string ProjectId { get; set; }
+
+        public string RefName { get; set; }
+
+        public string EntryFilePath { get; set; }
+
+        public string WorkRoot { get; set; }
+
+        public string CreatedAt { get; set; }
+
+        public List<PullManifestFileRecord> Files { get; set; }
+    }
+
+    private sealed class PullManifestFileRecord
+    {
+        public string GitLabRelativePath { get; set; }
+
+        public string LocalPath { get; set; }
+
+        public string SourceKind { get; set; }
+    }
+
     private sealed class PullSessionLog
     {
         private readonly List<PullFileActivity> activities;
@@ -301,6 +327,11 @@ public class RibbonController : ExcelRibbon
         public int CountByType(PullFileActionType actionType)
         {
             return activities.Count(a => a.ActionType == actionType);
+        }
+
+        public List<PullFileActivity> GetActivities()
+        {
+            return new List<PullFileActivity>(activities);
         }
 
         public string BuildSummaryText(int maxItems)
@@ -3845,6 +3876,11 @@ public class RibbonController : ExcelRibbon
 
             }
 
+            string manifestPath = WritePullManifest(
+                currentPullSession,
+                sessionLog);
+            FileLogger.Info("[PullManifest] written: " + manifestPath);
+
             MessageBox.Show(sessionLog.BuildSummaryText(30), "Pull Result");
         }
         catch (Exception ex)
@@ -3969,6 +4005,97 @@ public class RibbonController : ExcelRibbon
         }
 
         return Path.GetFullPath(localPath);
+    }
+
+    private static string WritePullManifest(
+        PullSessionContext sessionContext,
+        PullSessionLog sessionLog)
+    {
+        if (sessionContext == null)
+        {
+            throw new ArgumentNullException(nameof(sessionContext));
+        }
+
+        if (sessionLog == null)
+        {
+            throw new ArgumentNullException(nameof(sessionLog));
+        }
+
+        string workRoot = Path.GetFullPath(sessionContext.WorkRoot ?? string.Empty);
+        string manifestPath = Path.Combine(workRoot, "pull-manifest.json");
+        var manifest = new PullManifest
+        {
+            BaseUrl = sessionContext.BaseUrl,
+            ProjectId = sessionContext.ProjectId,
+            RefName = sessionContext.RefName,
+            EntryFilePath = sessionContext.EntryGitLabRelativePath,
+            WorkRoot = workRoot,
+            CreatedAt = DateTime.UtcNow.ToString("o"),
+            Files = BuildPullManifestFiles(sessionLog)
+        };
+
+        string json = JsonSerializer.Serialize(
+            manifest,
+            new JsonSerializerOptions
+            {
+                WriteIndented = true
+            });
+
+        File.WriteAllText(manifestPath, json, new UTF8Encoding(false));
+        return manifestPath;
+    }
+
+    private static List<PullManifestFileRecord> BuildPullManifestFiles(PullSessionLog sessionLog)
+    {
+        var files = new List<PullManifestFileRecord>();
+        var fileMap = new Dictionary<string, PullManifestFileRecord>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var activity in sessionLog.GetActivities())
+        {
+            string sourceKind = ToManifestSourceKind(activity.ActionType);
+            if (sourceKind == null)
+            {
+                continue;
+            }
+
+            string relativePath = GitLabPathResolver.NormalizeGitLabFilePathStrict(activity.RelativePath);
+            PullManifestFileRecord record;
+            if (!fileMap.TryGetValue(relativePath, out record))
+            {
+                record = new PullManifestFileRecord
+                {
+                    GitLabRelativePath = relativePath,
+                    LocalPath = relativePath.Replace('/', Path.DirectorySeparatorChar),
+                    SourceKind = sourceKind
+                };
+
+                fileMap.Add(relativePath, record);
+                files.Add(record);
+                continue;
+            }
+
+            if (string.Equals(record.SourceKind, "initial-folder-download", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            record.SourceKind = sourceKind;
+        }
+
+        return files;
+    }
+
+    private static string ToManifestSourceKind(PullFileActionType actionType)
+    {
+        switch (actionType)
+        {
+            case PullFileActionType.InitialFolderDownload:
+                return "initial-folder-download";
+            case PullFileActionType.LazyFileRead:
+                return "lazy-file-read";
+            default:
+                return null;
+        }
     }
 
     private static string BuildLocalPathInWorkRoot(string workRoot, string gitLabRelativePath)
