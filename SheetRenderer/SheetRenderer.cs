@@ -3582,26 +3582,16 @@ public class RibbonController : ExcelRibbon
                 if (HasActivePullSession())
                 {
                     string workRoot = currentPullSession.WorkRoot;
-                    string rootDirectory = currentRootDirectory;
 
                     if (IsPathInRoot(fullBasePath, workRoot))
                     {
                         return ToGitLabRelativePath(NormalizeRootPath(workRoot), fullBasePath);
                     }
 
-                    if (IsPathInRoot(fullBasePath, rootDirectory))
-                    {
-                        string relativeToRootDirectory = ToGitLabRelativePath(
-                            NormalizeRootPath(rootDirectory),
-                            fullBasePath);
-                        return relativeToRootDirectory;
-                    }
-
                     throw new InvalidOperationException(
-                        "baseFilePath is outside WorkRoot and rootDirectory. " +
+                        "baseFilePath is outside WorkRoot in pull mode. " +
                         "baseFilePath='" + baseFilePath + "', " +
-                        "workRoot='" + workRoot + "', " +
-                        "rootDirectory='" + rootDirectory + "'.");
+                        "workRoot='" + workRoot + "'.");
                 }
 
                 string rootDirectoryOutsidePull = GetBaseFileRootDirectory(false, baseFilePath);
@@ -3837,7 +3827,7 @@ public class RibbonController : ExcelRibbon
     {
         try
         {
-            currentPullSession = null;
+            ClearPullSessionState();
 
             var last = GitLabLastInputStore.Load();
 
@@ -3926,6 +3916,16 @@ public class RibbonController : ExcelRibbon
         {
             System.Windows.Forms.MessageBox.Show(ex.ToString(), "Pull failed");
         }
+        finally
+        {
+            ClearPullSessionState();
+        }
+    }
+
+    private static void ClearPullSessionState()
+    {
+        currentPullSession = null;
+        currentGitLabBaseFileRelativePath = null;
     }
 
     private static string CreatePullWorkRoot()
