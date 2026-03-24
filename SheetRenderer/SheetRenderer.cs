@@ -3825,6 +3825,7 @@ public class RibbonController : ExcelRibbon
 
     public async void OnPullButtonPressed(IRibbonControl control)
     {
+        bool pullCompletedSuccessfully = false;
         try
         {
             ClearPullSessionState();
@@ -3911,6 +3912,7 @@ public class RibbonController : ExcelRibbon
             FileLogger.Info("[PullManifest] written: " + manifestPath);
 
             MessageBox.Show(sessionLog.BuildSummaryText(30), "Pull Result");
+            pullCompletedSuccessfully = true;
         }
         catch (Exception ex)
         {
@@ -3918,7 +3920,10 @@ public class RibbonController : ExcelRibbon
         }
         finally
         {
-            ClearPullSessionState();
+            if (!pullCompletedSuccessfully)
+            {
+                ClearPullSessionState();
+            }
         }
     }
 
