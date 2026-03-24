@@ -3594,14 +3594,6 @@ public class RibbonController : ExcelRibbon
                         string relativeToRootDirectory = ToGitLabRelativePath(
                             NormalizeRootPath(rootDirectory),
                             fullBasePath);
-
-                        if (!string.IsNullOrWhiteSpace(currentGitLabBaseFileRelativePath))
-                        {
-                            return GitLabPathResolver.ResolveGitLabRelativePath(
-                                currentGitLabBaseFileRelativePath,
-                                relativeToRootDirectory);
-                        }
-
                         return relativeToRootDirectory;
                     }
 
