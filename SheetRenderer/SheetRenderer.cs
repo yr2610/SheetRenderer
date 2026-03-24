@@ -251,6 +251,7 @@ public class RibbonController : ExcelRibbon
         public string WorkRoot;
         public string EntryGitLabRelativePath;
         public string ManifestPath;
+        public bool ManifestHasBeenWritten;
         public PullSessionLog SessionLog;
     }
 
@@ -4062,6 +4063,17 @@ public class RibbonController : ExcelRibbon
             manifestPath = CreatePullManifestPath(workRoot);
             sessionContext.ManifestPath = manifestPath;
         }
+        else
+        {
+            manifestPath = Path.GetFullPath(manifestPath);
+        }
+
+        if (ShouldReallocateManifestPath(sessionContext, workRoot, manifestPath))
+        {
+            manifestPath = CreatePullManifestPath(workRoot);
+            sessionContext.ManifestPath = manifestPath;
+            sessionContext.ManifestHasBeenWritten = false;
+        }
 
         var manifest = new PullManifest
         {
@@ -4083,7 +4095,67 @@ public class RibbonController : ExcelRibbon
             });
 
         File.WriteAllText(manifestPath, json, new UTF8Encoding(false));
+        sessionContext.ManifestHasBeenWritten = true;
         return manifestPath;
+    }
+
+    private static bool ShouldReallocateManifestPath(PullSessionContext sessionContext, string workRoot, string manifestPath)
+    {
+        if (Directory.Exists(manifestPath))
+        {
+            return true;
+        }
+
+        bool overlapsPulledFile = SessionContainsLocalPath(sessionContext.SessionLog, workRoot, manifestPath);
+        if (overlapsPulledFile)
+        {
+            return true;
+        }
+
+        if (!sessionContext.ManifestHasBeenWritten && File.Exists(manifestPath))
+        {
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool SessionContainsLocalPath(PullSessionLog sessionLog, string workRoot, string targetPath)
+    {
+        if (sessionLog == null)
+        {
+            return false;
+        }
+
+        string normalizedTargetPath = Path.GetFullPath(targetPath);
+        foreach (var activity in sessionLog.GetActivities())
+        {
+            string relativePath = activity.RelativePath;
+            if (string.IsNullOrWhiteSpace(relativePath))
+            {
+                continue;
+            }
+
+            string activityPath;
+            try
+            {
+                activityPath = BuildLocalPathInWorkRoot(workRoot, relativePath);
+            }
+            catch (Exception)
+            {
+                continue;
+            }
+
+            if (string.Equals(
+                Path.GetFullPath(activityPath),
+                normalizedTargetPath,
+                StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static void UpdatePullManifestIfAvailable(PullSessionContext sessionContext)
