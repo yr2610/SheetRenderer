@@ -237,6 +237,7 @@ public class RibbonController : ExcelRibbon
     private IRibbonUI ribbon;
     private ProgressBarForm progressBarForm;
     private static PullSessionContext currentPullSession;
+    private static PullSessionContext lastSuccessfulPullSession;
     [ThreadStatic]
     private static string currentGitLabBaseFileRelativePath;
     [ThreadStatic]
@@ -3705,18 +3706,19 @@ public class RibbonController : ExcelRibbon
 
     public void OnDebugValidateNestedLazyReadButtonPressed(IRibbonControl control)
     {
-        if (currentPullSession == null ||
-            string.IsNullOrEmpty(currentPullSession.WorkRoot) ||
-            string.IsNullOrEmpty(currentPullSession.EntryGitLabRelativePath))
+        PullSessionContext debugSession = lastSuccessfulPullSession;
+        if (debugSession == null ||
+            string.IsNullOrEmpty(debugSession.WorkRoot) ||
+            string.IsNullOrEmpty(debugSession.EntryGitLabRelativePath))
         {
             MessageBox.Show("先に Pull を実行してください。", "NestedRead");
             return;
         }
 
-        string entryGitLabRelativePath = currentPullSession.EntryGitLabRelativePath;
-        string entryLocalPath = BuildLocalPathInWorkRoot(currentPullSession.WorkRoot, entryGitLabRelativePath);
+        string entryGitLabRelativePath = debugSession.EntryGitLabRelativePath;
+        string entryLocalPath = BuildLocalPathInWorkRoot(debugSession.WorkRoot, entryGitLabRelativePath);
 
-        FileLogger.InitializeForSession(currentPullSession.WorkRoot, "nested-lazy-read", timestamped: false);
+        FileLogger.InitializeForSession(debugSession.WorkRoot, "nested-lazy-read", timestamped: false);
         AddFileReadTrace("[validate-setup] entry=" + entryGitLabRelativePath);
 
         try
@@ -3825,7 +3827,6 @@ public class RibbonController : ExcelRibbon
 
     public async void OnPullButtonPressed(IRibbonControl control)
     {
-        bool pullCompletedSuccessfully = false;
         try
         {
             ClearPullSessionState();
@@ -3912,7 +3913,7 @@ public class RibbonController : ExcelRibbon
             FileLogger.Info("[PullManifest] written: " + manifestPath);
 
             MessageBox.Show(sessionLog.BuildSummaryText(30), "Pull Result");
-            pullCompletedSuccessfully = true;
+            lastSuccessfulPullSession = currentPullSession;
         }
         catch (Exception ex)
         {
@@ -3920,10 +3921,7 @@ public class RibbonController : ExcelRibbon
         }
         finally
         {
-            if (!pullCompletedSuccessfully)
-            {
-                ClearPullSessionState();
-            }
+            ClearPullSessionState();
         }
     }
 
