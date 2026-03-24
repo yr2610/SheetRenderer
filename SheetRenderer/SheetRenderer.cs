@@ -3591,7 +3591,18 @@ public class RibbonController : ExcelRibbon
 
                     if (IsPathInRoot(fullBasePath, rootDirectory))
                     {
-                        return ToGitLabRelativePath(NormalizeRootPath(rootDirectory), fullBasePath);
+                        string relativeToRootDirectory = ToGitLabRelativePath(
+                            NormalizeRootPath(rootDirectory),
+                            fullBasePath);
+
+                        if (!string.IsNullOrWhiteSpace(currentGitLabBaseFileRelativePath))
+                        {
+                            return GitLabPathResolver.ResolveGitLabRelativePath(
+                                currentGitLabBaseFileRelativePath,
+                                relativeToRootDirectory);
+                        }
+
+                        return relativeToRootDirectory;
                     }
 
                     throw new InvalidOperationException(
