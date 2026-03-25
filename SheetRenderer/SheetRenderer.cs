@@ -297,6 +297,17 @@ public class RibbonController : ExcelRibbon
         public string SourceKind { get; set; }
     }
 
+    private sealed class PullManifestReuseContext
+    {
+        public string SourceWorkRoot;
+
+        public string ManifestPath;
+
+        public PullManifest Manifest;
+
+        public Dictionary<string, PullManifestFileRecord> FilesByGitLabRelativePath;
+    }
+
     private sealed class PullSessionLog
     {
         private readonly List<PullFileActivity> activities;
@@ -3879,6 +3890,13 @@ public class RibbonController : ExcelRibbon
                 SessionLog = sessionLog
             };
 
+            PullManifestReuseContext reuseContext = TryLoadReusablePullManifest(
+                workRoot,
+                baseUrl,
+                projectId,
+                refName,
+                normalizedEntryPath);
+
             var items = await ListDirectBlobItemsAsync(baseUrl, projectId, parentFolder, refName, token);
 
             foreach (var item in items)
@@ -3888,8 +3906,16 @@ public class RibbonController : ExcelRibbon
                     continue;
                 }
 
+                string savedRelativePath;
+                if (TryReuseManifestFileToWorkRoot(reuseContext, workRoot, item.Path, out savedRelativePath))
+                {
+                    sessionLog.Add(PullFileActionType.InitialFolderDownload, savedRelativePath);
+                    continue;
+                }
+
+                FileLogger.Info("[download] " + GitLabPathResolver.NormalizeGitLabFilePathStrict(item.Path));
                 byte[] bytes = await DownloadBlobByIdAsync(baseUrl, projectId, item.Id, token);
-                string savedRelativePath = SaveBlobToWorkRoot(workRoot, item.Path, bytes);
+                savedRelativePath = SaveBlobToWorkRoot(workRoot, item.Path, bytes);
                 sessionLog.Add(PullFileActionType.InitialFolderDownload, savedRelativePath);
             }
 
@@ -3934,13 +3960,19 @@ public class RibbonController : ExcelRibbon
     private static string CreatePullWorkRoot()
     {
         string workRoot = Path.Combine(
-            Path.GetTempPath(),
-            "SheetRenderer",
-            "PullWork",
+            GetPullWorkParentDirectory(),
             DateTime.Now.ToString("yyyyMMdd_HHmmss_fff"));
 
         Directory.CreateDirectory(workRoot);
         return workRoot;
+    }
+
+    private static string GetPullWorkParentDirectory()
+    {
+        return Path.Combine(
+            Path.GetTempPath(),
+            "SheetRenderer",
+            "PullWork");
     }
 
     private static string GetGitLabParentFolder(string gitLabFilePath)
@@ -4048,6 +4080,232 @@ public class RibbonController : ExcelRibbon
         }
 
         return Path.GetFullPath(localPath);
+    }
+
+    private static PullManifestReuseContext TryLoadReusablePullManifest(
+        string currentWorkRoot,
+        string baseUrl,
+        string projectId,
+        string refName,
+        string entryFilePath)
+    {
+        try
+        {
+            string candidateWorkRoot = FindLatestReusablePullWorkRoot(currentWorkRoot);
+            if (string.IsNullOrEmpty(candidateWorkRoot))
+            {
+                return null;
+            }
+
+            string manifestPath = FindPullManifestPath(candidateWorkRoot);
+            if (string.IsNullOrEmpty(manifestPath) || !File.Exists(manifestPath))
+            {
+                FileLogger.Info("[manifest-reuse-miss] manifest not found: " + candidateWorkRoot);
+                return null;
+            }
+
+            PullManifest manifest = ReadPullManifest(manifestPath);
+            if (!IsReusablePullManifestMatch(manifest, baseUrl, projectId, refName, entryFilePath))
+            {
+                FileLogger.Info("[manifest-reuse-miss] target mismatch: " + manifestPath);
+                return null;
+            }
+
+            var filesByGitLabRelativePath = BuildManifestFileMap(manifest.Files);
+            FileLogger.Info("[manifest-reuse-ready] sourceWorkRoot=" + candidateWorkRoot + " manifest=" + manifestPath);
+
+            return new PullManifestReuseContext
+            {
+                SourceWorkRoot = candidateWorkRoot,
+                ManifestPath = manifestPath,
+                Manifest = manifest,
+                FilesByGitLabRelativePath = filesByGitLabRelativePath
+            };
+        }
+        catch (Exception ex)
+        {
+            FileLogger.Info("[manifest-reuse-disabled] " + ex.Message);
+            return null;
+        }
+    }
+
+    private static string FindLatestReusablePullWorkRoot(string currentWorkRoot)
+    {
+        string parentDirectory = GetPullWorkParentDirectory();
+        if (!Directory.Exists(parentDirectory))
+        {
+            return null;
+        }
+
+        string normalizedCurrentWorkRoot = string.IsNullOrWhiteSpace(currentWorkRoot)
+            ? null
+            : Path.GetFullPath(currentWorkRoot).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var candidates = new List<string>(Directory.GetDirectories(parentDirectory));
+        candidates.Sort(StringComparer.OrdinalIgnoreCase);
+
+        for (int i = candidates.Count - 1; i >= 0; i--)
+        {
+            string candidate = Path.GetFullPath(candidates[i]).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            if (string.Equals(candidate, normalizedCurrentWorkRoot, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            return candidate;
+        }
+
+        return null;
+    }
+
+    private static string FindPullManifestPath(string workRoot)
+    {
+        if (string.IsNullOrWhiteSpace(workRoot) || !Directory.Exists(workRoot))
+        {
+            return null;
+        }
+
+        string[] manifestPaths = Directory.GetFiles(workRoot, ".sheetrenderer-pull-manifest*.json", SearchOption.TopDirectoryOnly);
+        if (manifestPaths.Length == 0)
+        {
+            return null;
+        }
+
+        Array.Sort(manifestPaths, StringComparer.OrdinalIgnoreCase);
+        return manifestPaths[manifestPaths.Length - 1];
+    }
+
+    private static PullManifest ReadPullManifest(string manifestPath)
+    {
+        string json = File.ReadAllText(manifestPath, Encoding.UTF8);
+        var manifest = JsonSerializer.Deserialize<PullManifest>(
+            json,
+            new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true
+            });
+
+        if (manifest == null)
+        {
+            throw new InvalidOperationException("Pull manifest is empty.");
+        }
+
+        return manifest;
+    }
+
+    private static bool IsReusablePullManifestMatch(
+        PullManifest manifest,
+        string baseUrl,
+        string projectId,
+        string refName,
+        string entryFilePath)
+    {
+        if (manifest == null)
+        {
+            return false;
+        }
+
+        string normalizedManifestEntryFilePath = string.IsNullOrWhiteSpace(manifest.EntryFilePath)
+            ? null
+            : GitLabPathResolver.NormalizeGitLabFilePathStrict(manifest.EntryFilePath);
+        string normalizedEntryFilePath = string.IsNullOrWhiteSpace(entryFilePath)
+            ? null
+            : GitLabPathResolver.NormalizeGitLabFilePathStrict(entryFilePath);
+
+        return string.Equals(manifest.BaseUrl ?? string.Empty, baseUrl ?? string.Empty, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(manifest.ProjectId ?? string.Empty, projectId ?? string.Empty, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(manifest.RefName ?? string.Empty, refName ?? string.Empty, StringComparison.Ordinal) &&
+            string.Equals(normalizedManifestEntryFilePath ?? string.Empty, normalizedEntryFilePath ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static Dictionary<string, PullManifestFileRecord> BuildManifestFileMap(List<PullManifestFileRecord> files)
+    {
+        var map = new Dictionary<string, PullManifestFileRecord>(StringComparer.OrdinalIgnoreCase);
+        if (files == null)
+        {
+            return map;
+        }
+
+        foreach (var file in files)
+        {
+            if (file == null || string.IsNullOrWhiteSpace(file.GitLabRelativePath))
+            {
+                continue;
+            }
+
+            string normalizedRelativePath;
+            try
+            {
+                normalizedRelativePath = GitLabPathResolver.NormalizeGitLabFilePathStrict(file.GitLabRelativePath);
+            }
+            catch
+            {
+                continue;
+            }
+
+            map[normalizedRelativePath] = file;
+        }
+
+        return map;
+    }
+
+    private static bool TryReuseManifestFileToWorkRoot(
+        PullManifestReuseContext reuseContext,
+        string targetWorkRoot,
+        string gitLabRelativePath,
+        out string savedRelativePath)
+    {
+        savedRelativePath = null;
+
+        if (reuseContext == null || reuseContext.FilesByGitLabRelativePath == null)
+        {
+            return false;
+        }
+
+        string normalizedRelativePath = GitLabPathResolver.NormalizeGitLabFilePathStrict(gitLabRelativePath);
+        PullManifestFileRecord fileRecord;
+        if (!reuseContext.FilesByGitLabRelativePath.TryGetValue(normalizedRelativePath, out fileRecord))
+        {
+            return false;
+        }
+
+        string sourcePath = ResolveManifestRecordLocalPath(reuseContext.SourceWorkRoot, fileRecord, normalizedRelativePath);
+        if (string.IsNullOrWhiteSpace(sourcePath) || !File.Exists(sourcePath))
+        {
+            FileLogger.Info("[manifest-reuse-miss] missing file: " + normalizedRelativePath);
+            return false;
+        }
+
+        string destinationPath = BuildLocalPathInWorkRoot(targetWorkRoot, normalizedRelativePath);
+        EnsureDirectoryForLocalPath(destinationPath);
+        File.Copy(sourcePath, destinationPath, true);
+
+        FileLogger.Info("[manifest-reuse-hit] " + normalizedRelativePath);
+        savedRelativePath = normalizedRelativePath;
+        return true;
+    }
+
+    private static string ResolveManifestRecordLocalPath(
+        string sourceWorkRoot,
+        PullManifestFileRecord fileRecord,
+        string normalizedRelativePath)
+    {
+        if (fileRecord == null)
+        {
+            return null;
+        }
+
+        string localPath = fileRecord.LocalPath;
+        if (string.IsNullOrWhiteSpace(localPath))
+        {
+            return BuildLocalPathInWorkRoot(sourceWorkRoot, normalizedRelativePath);
+        }
+
+        if (Path.IsPathRooted(localPath))
+        {
+            return Path.GetFullPath(localPath);
+        }
+
+        return Path.GetFullPath(Path.Combine(sourceWorkRoot, localPath));
     }
 
     private static string WritePullManifest(PullSessionContext sessionContext)
