@@ -405,6 +405,10 @@ function preProcessConditionalCompile(lines, defines, currentProjectDirectoryFro
         var path = includeFileInfo.filePath;
         var pathAbs = directoryLocalPathToAbsolutePath(path, includeProjectDirectoryFromRoot, sourceDirectoryName);
 
+        if (File.ResolveAndEnsureLocalPath) {
+            pathAbs = File.ResolveAndEnsureLocalPath(pathAbs, filePathAbs);
+        }
+
         if (!FileSystem.FileExists(pathAbs)) {
             var sourceDirectory = FileSystem.BuildPath(includeFileInfo.projectDirectory, sourceDirectoryName);
             //var relativeProjectPath = CL.getRelativePath(conf.$rootDirectory, includeFileInfo.sourceDirectory);

@@ -5,6 +5,7 @@ public class FileSystemObject
 {
     public bool FileExists(string path)
     {
+        path = RibbonController.ResolveAndEnsureLocalPathForFileSystemCheck(path);
         return File.Exists(path);
     }
 

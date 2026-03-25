@@ -3539,6 +3539,23 @@ public class RibbonController : ExcelRibbon
         return localEnsuredPath;
     }
 
+    internal static string ResolveAndEnsureLocalPathForFileSystemCheck(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return path;
+        }
+
+        try
+        {
+            return ResolveAndEnsureLocalFilePathForJs(path, path);
+        }
+        catch
+        {
+            return path;
+        }
+    }
+
     internal static string NormalizeLazyReadPathIdentity(string path)
     {
         if (string.IsNullOrWhiteSpace(path))
@@ -3933,6 +3950,14 @@ public class RibbonController : ExcelRibbon
                     null,
                     sessionLog);
 
+                string entryLocalPath = BuildLocalPathInWorkRoot(workRoot, normalizedEntryPath);
+                bool parseSucceeded = RunParsePipeline(entryLocalPath, false);
+                if (!parseSucceeded)
+                {
+                    throw new InvalidOperationException("Pull dependency discovery failed during parse.");
+                }
+
+                await EnsureImageDependenciesInWorkRootAsync(currentPullSession, entryLocalPath);
             }
 
             string manifestPath = WritePullManifest(currentPullSession);
@@ -3994,7 +4019,7 @@ public class RibbonController : ExcelRibbon
         string refName,
         string token)
     {
-        var items = await GitLabClient.ListTreeItemsAsync(baseUrl, projectId, folder, refName, token);
+        var items = await GitLabClient.ListTreeItemsAsync(baseUrl, projectId, folder, refName, token).ConfigureAwait(false);
         var blobs = new List<GitLabTreeItem>();
         foreach (var item in items)
         {
@@ -4020,7 +4045,7 @@ public class RibbonController : ExcelRibbon
         string blobId,
         string token)
     {
-        return await GitLabClient.DownloadBlobRawAsync(baseUrl, projectId, blobId, token);
+        return await GitLabClient.DownloadBlobRawAsync(baseUrl, projectId, blobId, token).ConfigureAwait(false);
     }
 
     private static string SaveBlobToWorkRoot(string workRoot, string relativePath, byte[] bytes)
@@ -4063,7 +4088,7 @@ public class RibbonController : ExcelRibbon
 
         string parentFolder = GetGitLabParentFolder(normalizedRelativePath);
         string fileName = GetGitLabFileName(normalizedRelativePath);
-        var items = await GitLabClient.ListTreeItemsAsync(baseUrl, projectId, parentFolder, refName, token);
+        var items = await GitLabClient.ListTreeItemsAsync(baseUrl, projectId, parentFolder, refName, token).ConfigureAwait(false);
 
         GitLabTreeItem fileItem = FindBlobItemByName(
             items,
@@ -4071,7 +4096,7 @@ public class RibbonController : ExcelRibbon
             requestedPathForError ?? normalizedRelativePath,
             normalizedRelativePath,
             parentFolder);
-        byte[] bytes = await DownloadBlobByIdAsync(baseUrl, projectId, fileItem.Id, token);
+        byte[] bytes = await DownloadBlobByIdAsync(baseUrl, projectId, fileItem.Id, token).ConfigureAwait(false);
         SaveBlobToWorkRoot(workRoot, normalizedRelativePath, bytes);
         if (sessionLog != null)
         {
@@ -4306,6 +4331,79 @@ public class RibbonController : ExcelRibbon
         }
 
         return Path.GetFullPath(Path.Combine(sourceWorkRoot, localPath));
+    }
+
+    private static async Task EnsureImageDependenciesInWorkRootAsync(
+        PullSessionContext sessionContext,
+        string entryLocalPath)
+    {
+        if (sessionContext == null)
+        {
+            throw new ArgumentNullException(nameof(sessionContext));
+        }
+
+        if (string.IsNullOrWhiteSpace(entryLocalPath))
+        {
+            throw new ArgumentException("entryLocalPath is required.", nameof(entryLocalPath));
+        }
+
+        string jsonFilePath = TxtToJsonPath(entryLocalPath);
+        if (!File.Exists(jsonFilePath))
+        {
+            throw new FileNotFoundException("Parsed json file was not created in PullWork.", jsonFilePath);
+        }
+
+        string json = File.ReadAllText(jsonFilePath, Encoding.UTF8);
+        JsonNode rootNode = JsonNode.Parse(json);
+        if (rootNode == null)
+        {
+            throw new InvalidOperationException("Parsed json is empty.");
+        }
+
+        var imageFilePaths = CollectImageFilePaths(rootNode);
+        foreach (string imageFilePath in imageFilePaths)
+        {
+            if (string.IsNullOrWhiteSpace(imageFilePath))
+            {
+                continue;
+            }
+
+            string gitLabRelativePath = ResolvePullImageGitLabRelativePath(
+                sessionContext.EntryGitLabRelativePath,
+                imageFilePath);
+
+            FileLogger.Info("[pull-image] image=" + imageFilePath + " gitlabRelative=" + gitLabRelativePath);
+
+            await EnsureFileInWorkRootAsync(
+                sessionContext.BaseUrl,
+                sessionContext.ProjectId,
+                sessionContext.RefName,
+                sessionContext.Token,
+                sessionContext.WorkRoot,
+                gitLabRelativePath,
+                imageFilePath,
+                sessionContext.SessionLog);
+        }
+    }
+
+    private static string ResolvePullImageGitLabRelativePath(
+        string entryGitLabRelativePath,
+        string imageFilePath)
+    {
+        if (string.IsNullOrWhiteSpace(entryGitLabRelativePath))
+        {
+            throw new ArgumentException("entryGitLabRelativePath is required.", nameof(entryGitLabRelativePath));
+        }
+
+        if (string.IsNullOrWhiteSpace(imageFilePath))
+        {
+            throw new ArgumentException("imageFilePath is required.", nameof(imageFilePath));
+        }
+
+        string entryBaseFolder = GetGitLabParentFolder(
+            GitLabPathResolver.NormalizeGitLabFilePathStrict(entryGitLabRelativePath));
+
+        return GitLabPathResolver.ResolveGitLabRelativePath(entryBaseFolder, imageFilePath);
     }
 
     private static string WritePullManifest(PullSessionContext sessionContext)
