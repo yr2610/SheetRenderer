@@ -182,6 +182,37 @@ public static class GitLabClient
         }
     }
 
+    public static async Task<byte[]> DownloadArchiveZipAsync(
+        string baseUrl,
+        string projectId,
+        string refName,
+        string archivePath,
+        string privateToken,
+        CancellationToken cancellationToken = default(CancellationToken))
+    {
+        EnsureTls12();
+
+        string url =
+            $"{baseUrl.TrimEnd('/')}/api/v4/projects/{Uri.EscapeDataString(projectId)}/repository/archive.zip?sha={Uri.EscapeDataString(refName)}&path={Uri.EscapeDataString(archivePath ?? string.Empty)}";
+
+        using (var req = new HttpRequestMessage(HttpMethod.Get, url))
+        {
+            req.Headers.Add("PRIVATE-TOKEN", privateToken);
+
+            using (var res = await _httpClient.SendAsync(req, HttpCompletionOption.ResponseContentRead, cancellationToken).ConfigureAwait(false))
+            {
+                byte[] bytes = await res.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
+
+                if (!res.IsSuccessStatusCode)
+                {
+                    ThrowGitLabApiException(res, url, bytes);
+                }
+
+                return bytes;
+            }
+        }
+    }
+
     private static string SafeUtf8(byte[] bytes)
     {
         try { return Encoding.UTF8.GetString(bytes); } catch { return ""; }

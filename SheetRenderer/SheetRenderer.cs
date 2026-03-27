@@ -15,6 +15,7 @@ using System.Security.Cryptography;
 
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.IO.Compression;
 
 using System.Drawing;
 
@@ -254,6 +255,7 @@ public class RibbonController : ExcelRibbon
         public string ManifestPath;
         public bool ManifestHasBeenWritten;
         public PullSessionLog SessionLog;
+        public HashSet<string> ExpandedArchiveFolders;
     }
 
     private enum PullFileActionType
@@ -3883,7 +3885,6 @@ public class RibbonController : ExcelRibbon
                 return;
             }
 
-            string parentFolder = GetGitLabParentFolder(filePath);
             string workRoot = CreatePullWorkRoot();
 
             // Pull 実行時点でログを書けるように先に初期化しておく
@@ -3904,37 +3905,9 @@ public class RibbonController : ExcelRibbon
                 WorkRoot = workRoot,
                 EntryGitLabRelativePath = normalizedEntryPath,
                 ManifestPath = CreatePullManifestPath(workRoot),
-                SessionLog = sessionLog
+                SessionLog = sessionLog,
+                ExpandedArchiveFolders = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             };
-
-            PullManifestReuseContext reuseContext = TryLoadReusablePullManifest(
-                workRoot,
-                baseUrl,
-                projectId,
-                refName,
-                normalizedEntryPath);
-
-            var items = await ListDirectBlobItemsAsync(baseUrl, projectId, parentFolder, refName, token);
-
-            foreach (var item in items)
-            {
-                if (string.IsNullOrEmpty(item.Id) || string.IsNullOrEmpty(item.Path))
-                {
-                    continue;
-                }
-
-                string savedRelativePath;
-                if (TryReuseManifestFileToWorkRoot(reuseContext, workRoot, item.Path, out savedRelativePath))
-                {
-                    sessionLog.Add(PullFileActionType.InitialFolderDownload, savedRelativePath);
-                    continue;
-                }
-
-                FileLogger.Info("[download] " + GitLabPathResolver.NormalizeGitLabFilePathStrict(item.Path));
-                byte[] bytes = await DownloadBlobByIdAsync(baseUrl, projectId, item.Id, token);
-                savedRelativePath = SaveBlobToWorkRoot(workRoot, item.Path, bytes);
-                sessionLog.Add(PullFileActionType.InitialFolderDownload, savedRelativePath);
-            }
 
             // 次フェーズ（include / File.Read）向けの最小基盤:
             // 任意の1ファイルを WorkRoot に確保する処理をここで利用可能にしておく。
@@ -4083,6 +4056,29 @@ public class RibbonController : ExcelRibbon
             return Path.GetFullPath(localPath);
         }
 
+        PullSessionContext sessionContext = currentPullSession;
+        if (ShouldUseTopLevelFolderArchive(normalizedRelativePath) &&
+            sessionContext != null &&
+            string.Equals(
+                Path.GetFullPath(sessionContext.WorkRoot ?? string.Empty),
+                Path.GetFullPath(workRoot),
+                StringComparison.OrdinalIgnoreCase))
+        {
+            bool archiveExpanded = await EnsureTopLevelFolderArchiveInWorkRootAsync(
+                sessionContext,
+                normalizedRelativePath,
+                sessionLog).ConfigureAwait(false);
+
+            if (archiveExpanded && File.Exists(localPath))
+            {
+                return Path.GetFullPath(localPath);
+            }
+
+            throw new FileNotFoundException(
+                "File was not found after expanding the top-level folder archive.",
+                localPath);
+        }
+
         FileLogger.Info("[PullLazyRead] fetching from GitLab: " + normalizedRelativePath);
         AddFileReadTrace("[download] gitlabRelative=" + normalizedRelativePath);
 
@@ -4105,6 +4101,137 @@ public class RibbonController : ExcelRibbon
         }
 
         return Path.GetFullPath(localPath);
+    }
+
+    private static bool ShouldUseTopLevelFolderArchive(string gitLabRelativePath)
+    {
+        string normalizedRelativePath = GitLabPathResolver.NormalizeGitLabFilePathStrict(gitLabRelativePath);
+        return normalizedRelativePath.IndexOf('/') >= 0;
+    }
+
+    private static string GetTopLevelFolderName(string gitLabRelativePath)
+    {
+        string normalizedRelativePath = GitLabPathResolver.NormalizeGitLabFilePathStrict(gitLabRelativePath);
+        int idx = normalizedRelativePath.IndexOf('/');
+        if (idx < 0)
+        {
+            return null;
+        }
+
+        return normalizedRelativePath.Substring(0, idx);
+    }
+
+    private static async Task<bool> EnsureTopLevelFolderArchiveInWorkRootAsync(
+        PullSessionContext sessionContext,
+        string gitLabRelativePath,
+        PullSessionLog sessionLog)
+    {
+        if (sessionContext == null)
+        {
+            throw new ArgumentNullException(nameof(sessionContext));
+        }
+
+        string topLevelFolder = GetTopLevelFolderName(gitLabRelativePath);
+        if (string.IsNullOrWhiteSpace(topLevelFolder))
+        {
+            return false;
+        }
+
+        if (sessionContext.ExpandedArchiveFolders == null)
+        {
+            sessionContext.ExpandedArchiveFolders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        if (sessionContext.ExpandedArchiveFolders.Contains(topLevelFolder))
+        {
+            FileLogger.Info("[archive-hit] " + topLevelFolder);
+            return true;
+        }
+
+        FileLogger.Info("[archive-download] " + topLevelFolder);
+        byte[] archiveBytes = await GitLabClient.DownloadArchiveZipAsync(
+            sessionContext.BaseUrl,
+            sessionContext.ProjectId,
+            sessionContext.RefName,
+            topLevelFolder,
+            sessionContext.Token).ConfigureAwait(false);
+
+        ExtractTopLevelFolderArchiveToWorkRoot(
+            sessionContext.WorkRoot,
+            topLevelFolder,
+            archiveBytes,
+            sessionLog);
+
+        sessionContext.ExpandedArchiveFolders.Add(topLevelFolder);
+        FileLogger.Info("[archive-ready] " + topLevelFolder);
+        return true;
+    }
+
+    private static void ExtractTopLevelFolderArchiveToWorkRoot(
+        string workRoot,
+        string topLevelFolder,
+        byte[] archiveBytes,
+        PullSessionLog sessionLog)
+    {
+        using (var stream = new MemoryStream(archiveBytes ?? new byte[0]))
+        using (var archive = new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: false))
+        {
+            foreach (var entry in archive.Entries)
+            {
+                string relativePath = TryGetArchiveEntryRelativePath(entry.FullName, topLevelFolder);
+                if (string.IsNullOrWhiteSpace(relativePath))
+                {
+                    continue;
+                }
+
+                string destinationPath = BuildLocalPathInWorkRoot(workRoot, relativePath);
+                EnsureDirectoryForLocalPath(destinationPath);
+
+                if (string.IsNullOrEmpty(entry.Name))
+                {
+                    Directory.CreateDirectory(destinationPath);
+                    continue;
+                }
+
+                using (var entryStream = entry.Open())
+                using (var destinationStream = File.Create(destinationPath))
+                {
+                    entryStream.CopyTo(destinationStream);
+                }
+
+                if (sessionLog != null)
+                {
+                    sessionLog.Add(PullFileActionType.LazyFileRead, relativePath);
+                }
+            }
+        }
+    }
+
+    private static string TryGetArchiveEntryRelativePath(string archiveEntryName, string topLevelFolder)
+    {
+        if (string.IsNullOrWhiteSpace(archiveEntryName) || string.IsNullOrWhiteSpace(topLevelFolder))
+        {
+            return null;
+        }
+
+        string normalizedEntryName = archiveEntryName.Replace('\\', '/').TrimStart('/');
+        string normalizedTopLevelFolder = GitLabPathResolver.NormalizeGitLabFilePathStrict(topLevelFolder);
+        string folderMarker = normalizedTopLevelFolder + "/";
+
+        if (normalizedEntryName.StartsWith(folderMarker, StringComparison.OrdinalIgnoreCase))
+        {
+            return GitLabPathResolver.NormalizeGitLabFilePathStrict(normalizedEntryName);
+        }
+
+        string marker = "/" + folderMarker;
+        int idx = normalizedEntryName.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+        if (idx < 0)
+        {
+            return null;
+        }
+
+        return GitLabPathResolver.NormalizeGitLabFilePathStrict(
+            normalizedEntryName.Substring(idx + 1));
     }
 
     private static PullManifestReuseContext TryLoadReusablePullManifest(
