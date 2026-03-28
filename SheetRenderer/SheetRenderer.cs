@@ -765,6 +765,7 @@ public class RibbonController : ExcelRibbon
     const string sheetImageHashCustomPropertyName = "SheetImageHash";
     const string confHashCustomPropertyName = "ConfHash";
     const string indexSheetTemplateCellsCustomPropertyName = "SheetImageHash";
+    const string gitLabPullInfoCustomPropertyName = "GitLabPullInfo";
 
     const string ssSheetRangeName = "SS_SHEET";
 
@@ -974,6 +975,7 @@ public class RibbonController : ExcelRibbon
         public string IndexSheetName { get; set; }
         public string TemplateSheetName { get; set; }
         public RenderLog LastRenderLog { get; set; }
+        public GitLabLastInput PullInfo { get; set; }
 
         static public WorkbookInfo CreateFromWorkbook(Excel.Workbook workbook)
         {
@@ -988,6 +990,7 @@ public class RibbonController : ExcelRibbon
             string indexSheetName = workbook.GetCustomProperty(indexSheetNameCustomPropertyName);
             string templateSheetName = workbook.GetCustomProperty(templateSheetNameCustomPropertyName);
             var lastRenderLog = workbook.GetCustomProperty<RenderLog>("RenderLog");
+            var pullInfo = workbook.GetCustomProperty<GitLabLastInput>(gitLabPullInfoCustomPropertyName);
             Debug.Assert(indexSheetName != null, "indexSheetName != null");
             Debug.Assert(templateSheetName != null, "templateSheetName != null");
             Debug.Assert(lastRenderLog != null, "lastRenderLog != null");
@@ -998,6 +1001,7 @@ public class RibbonController : ExcelRibbon
                 IndexSheetName = indexSheetName,
                 TemplateSheetName = templateSheetName,
                 LastRenderLog = lastRenderLog,
+                PullInfo = pullInfo,
             };
         }
     }
@@ -2237,27 +2241,61 @@ public class RibbonController : ExcelRibbon
         }
     }
 
-    async Task CreateNewWorkbook(string txtFilePath = null, string jsonFilePath = null)
+    private static string GetPullWorkbookOutputDirectory(string projectId)
     {
-        // jsonFilePath を読み、confData 等を取得してテンプレから生成
+        string documentsDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+        string safeProjectId = string.IsNullOrWhiteSpace(projectId) ? "UnknownProject" : projectId.Trim();
+        return Path.Combine(documentsDirectory, "SheetRenderer", safeProjectId);
+    }
+
+    private static string GetOutputWorkbookFileNameFromJson(string jsonFilePath)
+    {
         string jsonString = File.ReadAllText(jsonFilePath);
         JsonNode jsonObject = JsonNode.Parse(jsonString);
         var confData = GetPropertiesFromJsonNode(jsonObject, "variables");
 
         const string outputFilenameConfName = "outputFilename";
+        return confData.ContainsKey(outputFilenameConfName)
+            ? confData[outputFilenameConfName]
+            : Path.GetFileNameWithoutExtension(jsonFilePath);
+    }
 
-        //string newFilePath = GetFilePathWithoutExtension(jsonFilePath);
-        string newFileName = confData.ContainsKey(outputFilenameConfName) ? confData[outputFilenameConfName] : Path.GetFileNameWithoutExtension(jsonFilePath);
+    async Task<bool> CreateNewWorkbook(
+        string txtFilePath = null,
+        string jsonFilePath = null,
+        string newFilePathOverride = null,
+        bool failIfExists = false,
+        GitLabLastInput pullInfo = null)
+    {
+        // jsonFilePath を読み、confData 等を取得してテンプレから生成
+        string jsonString = File.ReadAllText(jsonFilePath);
+        JsonNode jsonObject = JsonNode.Parse(jsonString);
+        var confData = GetPropertiesFromJsonNode(jsonObject, "variables");
+        string newFileName = GetOutputWorkbookFileNameFromJson(jsonFilePath);
 
         if (IsSameNameWorkbookOpen(newFileName))
         {
             string fileNameWithoutExtension = Path.GetFileNameWithoutExtension(newFileName);
             MessageBox.Show($"'{fileNameWithoutExtension}'と同じ名前のファイルが既に開かれています。\nファイルを閉じてから再度実行してください。");
-            return;
+            return false;
         }
 
         string jsonFileDirectory = Path.GetDirectoryName(jsonFilePath);
-        string newFilePath = Path.Combine(jsonFileDirectory, newFileName);
+        string newFilePath = string.IsNullOrWhiteSpace(newFilePathOverride)
+            ? Path.Combine(jsonFileDirectory, newFileName)
+            : Path.GetFullPath(newFilePathOverride);
+
+        if (failIfExists && File.Exists(newFilePath))
+        {
+            MessageBox.Show(
+                "同名のファイルが既に存在するため新規作成できません。\n" +
+                "更新したい場合はそのファイルを開いてから Pull を実行してください。\n\n" +
+                newFilePath,
+                "Pull 新規作成");
+            return false;
+        }
+
+        EnsureDirectoryForLocalPath(newFilePath);
 
         Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
 
@@ -2273,14 +2311,14 @@ public class RibbonController : ExcelRibbon
             // ブックを保存せずに閉じる
             workbook.Close(false);
             MessageBox.Show($"{templateFileName} のカスタムプロパティに {indexSheetNameCustomPropertyName} が設定されていません。");
-            return;
+            return false;
         }
         if (templateSheetName == null)
         {
             // ブックを保存せずに閉じる
             workbook.Close(false);
             MessageBox.Show($"{templateFileName} のカスタムプロパティに {templateSheetNameCustomPropertyName} が設定されていません。");
-            return;
+            return false;
         }
 
         var missingImagePaths = await RenderWorkbook(workbook, jsonObject, confData, jsonFilePath, null);
@@ -2303,7 +2341,13 @@ public class RibbonController : ExcelRibbon
         string projectId = confData["project"];
         workbook.SetCustomProperty(ssProjectIdCustomPropertyName, projectId);
 
+        if (pullInfo != null)
+        {
+            workbook.SetCustomProperty(gitLabPullInfoCustomPropertyName, pullInfo);
+        }
+
         workbook.Save();
+        return true;
     }
 
     public async void OnCreateNewButtonPressed(IRibbonControl control)
@@ -3931,6 +3975,30 @@ public class RibbonController : ExcelRibbon
                 }
 
                 await EnsureImageDependenciesInWorkRootAsync(currentPullSession, entryLocalPath);
+
+                string jsonFilePath = TxtToJsonPath(entryLocalPath);
+                string outputDirectory = GetPullWorkbookOutputDirectory(projectId);
+                string outputFileName = GetOutputWorkbookFileNameFromJson(jsonFilePath);
+                string outputFilePath = Path.Combine(outputDirectory, outputFileName);
+
+                var pullInfo = new GitLabLastInput
+                {
+                    BaseUrl = baseUrl,
+                    ProjectId = projectId,
+                    RefName = refName,
+                    FilePath = normalizedEntryPath
+                };
+
+                bool workbookCreated = await CreateNewWorkbook(
+                    entryLocalPath,
+                    jsonFilePath,
+                    outputFilePath,
+                    failIfExists: true,
+                    pullInfo: pullInfo);
+                if (!workbookCreated)
+                {
+                    return;
+                }
             }
 
             string manifestPath = WritePullManifest(currentPullSession);
@@ -4527,10 +4595,30 @@ public class RibbonController : ExcelRibbon
             throw new ArgumentException("imageFilePath is required.", nameof(imageFilePath));
         }
 
-        string entryBaseFolder = GetGitLabParentFolder(
-            GitLabPathResolver.NormalizeGitLabFilePathStrict(entryGitLabRelativePath));
+        string entryProjectFolder = GetEntryProjectFolderFromEntryGitLabRelativePath(entryGitLabRelativePath);
+        string combinedPath = string.IsNullOrWhiteSpace(entryProjectFolder)
+            ? imageFilePath
+            : entryProjectFolder + "/" + imageFilePath;
 
-        return GitLabPathResolver.ResolveGitLabRelativePath(entryBaseFolder, imageFilePath);
+        return GitLabPathResolver.CanonicalizeGitLabRelativePath(
+            combinedPath,
+            "requestedPath",
+            imageFilePath,
+            entryProjectFolder);
+    }
+
+    private static string GetEntryProjectFolderFromEntryGitLabRelativePath(string entryGitLabRelativePath)
+    {
+        string normalizedEntryPath = GitLabPathResolver.NormalizeGitLabFilePathStrict(entryGitLabRelativePath);
+        string entryParentFolder = GetGitLabParentFolder(normalizedEntryPath);
+        string folderName = GetGitLabFileName(entryParentFolder);
+
+        if (string.Equals(folderName, "source", StringComparison.OrdinalIgnoreCase))
+        {
+            return GetGitLabParentFolder(entryParentFolder);
+        }
+
+        return entryParentFolder;
     }
 
     private static string WritePullManifest(PullSessionContext sessionContext)

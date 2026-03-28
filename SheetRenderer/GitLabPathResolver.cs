@@ -6,7 +6,7 @@ internal static class GitLabPathResolver
     public static string ResolveGitLabRelativePath(string baseFileRelativePath, string requestedPath)
     {
         string normalizedBase = CanonicalizeGitLabRelativePath(baseFileRelativePath, "baseFileRelativePath");
-        string normalizedRequested = CanonicalizeGitLabRelativePath(requestedPath, "requestedPath");
+        string normalizedRequested = (requestedPath ?? string.Empty).Replace('\\', '/').Trim();
 
         if (string.IsNullOrEmpty(normalizedRequested))
         {
