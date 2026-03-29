@@ -4124,7 +4124,7 @@ public class RibbonController : ExcelRibbon
             string manifestPath = WritePullManifest(currentPullSession);
             FileLogger.Info("[PullManifest] written: " + manifestPath);
 
-            MessageBox.Show(currentPullSession.SessionLog.BuildSummaryText(30), "Pull Result");
+            // MessageBox.Show(currentPullSession.SessionLog.BuildSummaryText(30), "Pull Result");
             lastSuccessfulPullSession = currentPullSession;
         }
         catch (Exception ex)
@@ -4194,7 +4194,7 @@ public class RibbonController : ExcelRibbon
             string manifestPath = WritePullManifest(currentPullSession);
             FileLogger.Info("[PullManifest] written: " + manifestPath);
 
-            MessageBox.Show(currentPullSession.SessionLog.BuildSummaryText(30), "Pull Result");
+            // MessageBox.Show(currentPullSession.SessionLog.BuildSummaryText(30), "Pull Result");
             lastSuccessfulPullSession = currentPullSession;
         }
         catch (Exception ex)
