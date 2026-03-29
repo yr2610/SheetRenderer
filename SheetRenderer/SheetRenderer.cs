@@ -440,12 +440,19 @@ public class RibbonController : ExcelRibbon
                         <button id='button3' label='シート更新' screentip='表示中のシートのみ更新します' size='large' imageMso='TableSharePointListsRefreshList' onAction='OnUpdateCurrentSheetButtonPressed' getEnabled='GetUpdateCurrentSheetButtonEnabled'/>
                         </group>
                         <group id='groupSync' label='同期'>
-                        <button id='buttonPull'
-                                label='Pull'
-                                screentip='リポジトリの最新内容を取得して反映します'
-                                size='large'
-                                imageMso='RefreshAll'
-                                onAction='OnPullButtonPressed'/>
+                        <splitButton id='splitButtonPull' size='large'>
+                            <button id='buttonPull'
+                                    label='最新版を取得'
+                                    screentip='保存済みの情報があれば最新版を取得して反映します'
+                                    imageMso='RefreshAll'
+                                    onAction='OnPullButtonPressed'/>
+                            <menu id='menuPull'>
+                                <button id='buttonPullCreate'
+                                        label='新規作成'
+                                        screentip='Pull 情報を入力して新しくブックを作成します'
+                                        onAction='OnPullCreateButtonPressed'/>
+                            </menu>
+                        </splitButton>
                         <button id='buttonTokenManager'
                                 label='トークン管理'
                                 screentip='保存済みトークンを一覧表示し、不要なものを削除します'
@@ -3984,6 +3991,68 @@ public class RibbonController : ExcelRibbon
                 {
                     return;
                 }
+            }
+
+            string manifestPath = WritePullManifest(currentPullSession);
+            FileLogger.Info("[PullManifest] written: " + manifestPath);
+
+            MessageBox.Show(currentPullSession.SessionLog.BuildSummaryText(30), "Pull Result");
+            lastSuccessfulPullSession = currentPullSession;
+        }
+        catch (Exception ex)
+        {
+            System.Windows.Forms.MessageBox.Show(ex.ToString(), "Pull failed");
+        }
+        finally
+        {
+            ClearPullSessionState();
+        }
+    }
+
+    public async void OnPullCreateButtonPressed(IRibbonControl control)
+    {
+        try
+        {
+            ClearPullSessionState();
+
+            var last = GitLabLastInputStore.Load();
+            GitLabLastInput input;
+            bool clearFilePathEachTime = false;
+
+            if (!GitLabRepoDialog.TryShow(last, out input))
+            {
+                return;
+            }
+
+            GitLabLastInputStore.Save(input, clearFilePathEachTime);
+
+            PullExecutionResult pullResult = await ExecutePullAsync(input);
+            if (pullResult == null)
+            {
+                return;
+            }
+
+            string outputDirectory = GetPullWorkbookOutputDirectory(input.ProjectId);
+            string outputFileName = GetOutputWorkbookFileNameFromJson(pullResult.JsonFilePath);
+            string outputFilePath = Path.Combine(outputDirectory, outputFileName);
+
+            var pullInfo = new GitLabLastInput
+            {
+                BaseUrl = input.BaseUrl,
+                ProjectId = input.ProjectId,
+                RefName = input.RefName,
+                FilePath = pullResult.NormalizedEntryPath
+            };
+
+            bool workbookCreated = await CreateNewWorkbook(
+                pullResult.EntryLocalPath,
+                pullResult.JsonFilePath,
+                outputFilePath,
+                failIfExists: true,
+                pullInfo: pullInfo);
+            if (!workbookCreated)
+            {
+                return;
             }
 
             string manifestPath = WritePullManifest(currentPullSession);
