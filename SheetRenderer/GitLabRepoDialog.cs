@@ -64,7 +64,7 @@ internal static class GitLabRepoDialog
             txtBaseUrl.Text = initial.BaseUrl ?? "";
 
             top += rowH;
-            ConfigureLabel(lblProjectId, "Project ID", leftLabel, top, labelW);
+            ConfigureLabel(lblProjectId, "Project Path / ID", leftLabel, top, labelW);
             ConfigureTextBox(txtProjectId, leftInput, top - 2, inputW);
             txtProjectId.Text = initial.ProjectId ?? "";
 
@@ -139,7 +139,7 @@ internal static class GitLabRepoDialog
 
                 if (string.IsNullOrWhiteSpace(projectId))
                 {
-                    MessageBox.Show(form, "Project ID を入力してください。", "Input Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    MessageBox.Show(form, "Project Path または Project ID を入力してください。", "Input Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     txtProjectId.Focus();
                     return;
                 }
