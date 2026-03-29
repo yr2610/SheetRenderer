@@ -310,6 +310,15 @@ public class RibbonController : ExcelRibbon
         public Dictionary<string, PullManifestFileRecord> FilesByGitLabRelativePath;
     }
 
+    private sealed class PullExecutionResult
+    {
+        public string EntryLocalPath;
+
+        public string JsonFilePath;
+
+        public string NormalizedEntryPath;
+    }
+
     private sealed class PullSessionLog
     {
         private readonly List<PullFileActivity> activities;
@@ -3901,97 +3910,73 @@ public class RibbonController : ExcelRibbon
 
     public async void OnPullButtonPressed(IRibbonControl control)
     {
+        Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
+        var activeSheet = excelApp.ActiveSheet as Excel.Worksheet;
+        Excel.Workbook activeWorkbook = activeSheet == null ? null : activeSheet.Parent as Excel.Workbook;
+
+        if (SynchronizationContext.Current == null)
+        {
+            SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());
+        }
+
         try
         {
             ClearPullSessionState();
 
-            var last = GitLabLastInputStore.Load();
-
             GitLabLastInput input;
-            bool clearFilePathEachTime = false;
+            bool isPullUpdate = activeWorkbook != null;
 
-            if (!GitLabRepoDialog.TryShow(last, out input))
+            if (isPullUpdate)
             {
-                return; // Cancel
+                WorkbookInfo workbookInfo = WorkbookInfo.CreateFromWorkbook(activeWorkbook);
+                if (workbookInfo == null || workbookInfo.PullInfo == null)
+                {
+                    MessageBox.Show("このブックには Pull 用の情報が保存されていません。", "Pull 更新");
+                    return;
+                }
+
+                input = workbookInfo.PullInfo;
+            }
+            else
+            {
+                var last = GitLabLastInputStore.Load();
+                bool clearFilePathEachTime = false;
+
+                if (!GitLabRepoDialog.TryShow(last, out input))
+                {
+                    return; // Cancel
+                }
+
+                GitLabLastInputStore.Save(input, clearFilePathEachTime);
             }
 
-            GitLabLastInputStore.Save(input, clearFilePathEachTime); // FilePathも含めて保存（開発中はこれでOK）
-
-            string baseUrl = input.BaseUrl;
-            string projectId = input.ProjectId;
-            string refName = input.RefName;
-            string filePath = GitLabPathResolver.NormalizeGitLabRelativePath(input.FilePath);
-
-            string token = GitLabAuth.GetOrPromptToken(baseUrl, projectId);
-            if (string.IsNullOrEmpty(token))
+            PullExecutionResult pullResult = await ExecutePullAsync(input);
+            if (pullResult == null)
             {
-                System.Windows.Forms.MessageBox.Show("同期をキャンセルしました（トークン未入力）");
                 return;
             }
 
-            string workRoot = CreatePullWorkRoot();
-
-            // Pull 実行時点でログを書けるように先に初期化しておく
-            FileLogger.InitializeForSession(workRoot, "pull", timestamped: false);
-
-            string normalizedEntryPath = string.IsNullOrEmpty(filePath)
-                ? null
-                : GitLabPathResolver.NormalizeGitLabFilePathStrict(filePath);
-
-            var sessionLog = new PullSessionLog(workRoot, normalizedEntryPath);
-
-            currentPullSession = new PullSessionContext
+            if (isPullUpdate)
             {
-                BaseUrl = baseUrl,
-                ProjectId = projectId,
-                RefName = refName,
-                Token = token,
-                WorkRoot = workRoot,
-                EntryGitLabRelativePath = normalizedEntryPath,
-                ManifestPath = CreatePullManifestPath(workRoot),
-                SessionLog = sessionLog,
-                ExpandedArchiveFolders = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-            };
-
-            // 次フェーズ（include / File.Read）向けの最小基盤:
-            // 任意の1ファイルを WorkRoot に確保する処理をここで利用可能にしておく。
-            if (!string.IsNullOrEmpty(filePath))
+                await UpdateAllSheets(activeWorkbook, pullResult.EntryLocalPath, pullResult.JsonFilePath);
+            }
+            else
             {
-                await EnsureFileInWorkRootAsync(
-                    baseUrl,
-                    projectId,
-                    refName,
-                    token,
-                    workRoot,
-                    filePath,
-                    null,
-                    sessionLog);
-
-                string entryLocalPath = BuildLocalPathInWorkRoot(workRoot, normalizedEntryPath);
-                bool parseSucceeded = RunParsePipeline(entryLocalPath, false);
-                if (!parseSucceeded)
-                {
-                    throw new InvalidOperationException("Pull dependency discovery failed during parse.");
-                }
-
-                await EnsureImageDependenciesInWorkRootAsync(currentPullSession, entryLocalPath);
-
-                string jsonFilePath = TxtToJsonPath(entryLocalPath);
-                string outputDirectory = GetPullWorkbookOutputDirectory(projectId);
-                string outputFileName = GetOutputWorkbookFileNameFromJson(jsonFilePath);
+                string outputDirectory = GetPullWorkbookOutputDirectory(input.ProjectId);
+                string outputFileName = GetOutputWorkbookFileNameFromJson(pullResult.JsonFilePath);
                 string outputFilePath = Path.Combine(outputDirectory, outputFileName);
 
                 var pullInfo = new GitLabLastInput
                 {
-                    BaseUrl = baseUrl,
-                    ProjectId = projectId,
-                    RefName = refName,
-                    FilePath = normalizedEntryPath
+                    BaseUrl = input.BaseUrl,
+                    ProjectId = input.ProjectId,
+                    RefName = input.RefName,
+                    FilePath = pullResult.NormalizedEntryPath
                 };
 
                 bool workbookCreated = await CreateNewWorkbook(
-                    entryLocalPath,
-                    jsonFilePath,
+                    pullResult.EntryLocalPath,
+                    pullResult.JsonFilePath,
                     outputFilePath,
                     failIfExists: true,
                     pullInfo: pullInfo);
@@ -4004,7 +3989,7 @@ public class RibbonController : ExcelRibbon
             string manifestPath = WritePullManifest(currentPullSession);
             FileLogger.Info("[PullManifest] written: " + manifestPath);
 
-            MessageBox.Show(sessionLog.BuildSummaryText(30), "Pull Result");
+            MessageBox.Show(currentPullSession.SessionLog.BuildSummaryText(30), "Pull Result");
             lastSuccessfulPullSession = currentPullSession;
         }
         catch (Exception ex)
@@ -4015,6 +4000,76 @@ public class RibbonController : ExcelRibbon
         {
             ClearPullSessionState();
         }
+    }
+
+    private async Task<PullExecutionResult> ExecutePullAsync(GitLabLastInput input)
+    {
+        if (input == null)
+        {
+            throw new ArgumentNullException(nameof(input));
+        }
+
+        string baseUrl = input.BaseUrl;
+        string projectId = input.ProjectId;
+        string refName = input.RefName;
+        string filePath = GitLabPathResolver.NormalizeGitLabRelativePath(input.FilePath);
+
+        string token = GitLabAuth.GetOrPromptToken(baseUrl, projectId);
+        if (string.IsNullOrEmpty(token))
+        {
+            System.Windows.Forms.MessageBox.Show("同期をキャンセルしました（トークン未入力）");
+            return null;
+        }
+
+        string workRoot = CreatePullWorkRoot();
+
+        FileLogger.InitializeForSession(workRoot, "pull", timestamped: false);
+
+        string normalizedEntryPath = string.IsNullOrEmpty(filePath)
+            ? null
+            : GitLabPathResolver.NormalizeGitLabFilePathStrict(filePath);
+
+        var sessionLog = new PullSessionLog(workRoot, normalizedEntryPath);
+
+        currentPullSession = new PullSessionContext
+        {
+            BaseUrl = baseUrl,
+            ProjectId = projectId,
+            RefName = refName,
+            Token = token,
+            WorkRoot = workRoot,
+            EntryGitLabRelativePath = normalizedEntryPath,
+            ManifestPath = CreatePullManifestPath(workRoot),
+            SessionLog = sessionLog,
+            ExpandedArchiveFolders = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        };
+
+        await EnsureFileInWorkRootAsync(
+            baseUrl,
+            projectId,
+            refName,
+            token,
+            workRoot,
+            filePath,
+            null,
+            sessionLog);
+
+        string entryLocalPath = BuildLocalPathInWorkRoot(workRoot, normalizedEntryPath);
+        bool parseSucceeded = RunParsePipeline(entryLocalPath, false);
+        if (!parseSucceeded)
+        {
+            throw new InvalidOperationException("Pull dependency discovery failed during parse.");
+        }
+
+        await EnsureImageDependenciesInWorkRootAsync(currentPullSession, entryLocalPath);
+
+        string jsonFilePath = TxtToJsonPath(entryLocalPath);
+        return new PullExecutionResult
+        {
+            EntryLocalPath = entryLocalPath,
+            JsonFilePath = jsonFilePath,
+            NormalizedEntryPath = normalizedEntryPath
+        };
     }
 
     private static void ClearPullSessionState()
