@@ -25,7 +25,7 @@ internal static class GitLabRepoDialog
         using (var btnOk = new Button())
         using (var btnCancel = new Button())
         {
-            form.Text = "GitLab Repo Settings";
+            form.Text = "取得元の GitLab 情報";
             form.FormBorderStyle = FormBorderStyle.FixedDialog;
             form.StartPosition = FormStartPosition.CenterParent;
             form.MinimizeBox = false;
@@ -53,11 +53,11 @@ internal static class GitLabRepoDialog
             };
 
             int leftLabel = 14;
-            int leftInput = 140;
+            int leftInput = 160;
             int top = 16;
             int rowH = 32;
-            int inputW = 540;
-            int labelW = 120;
+            int inputW = 520;
+            int labelW = 140;
 
             ConfigureLabel(lblBaseUrl, "Base URL", leftLabel, top, labelW);
             ConfigureTextBox(txtBaseUrl, leftInput, top - 2, inputW);
