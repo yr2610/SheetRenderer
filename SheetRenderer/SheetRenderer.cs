@@ -4410,6 +4410,43 @@ public class RibbonController : ExcelRibbon
             "PullWork");
     }
 
+    internal static void CleanupOldPullWorkDirectories()
+    {
+        try
+        {
+            string parentDirectory = GetPullWorkParentDirectory();
+            if (!Directory.Exists(parentDirectory))
+            {
+                return;
+            }
+
+            DateTime cutoff = DateTime.Now.AddDays(-1);
+            string[] workDirectories = Directory.GetDirectories(parentDirectory);
+            foreach (string workDirectory in workDirectories)
+            {
+                try
+                {
+                    DateTime lastWriteTime = Directory.GetLastWriteTime(workDirectory);
+                    if (lastWriteTime >= cutoff)
+                    {
+                        continue;
+                    }
+
+                    Directory.Delete(workDirectory, true);
+                    FileLogger.Info("[PullWorkCleanup] deleted: " + workDirectory);
+                }
+                catch (Exception ex)
+                {
+                    FileLogger.Warn("[PullWorkCleanup] skipped: " + workDirectory + " " + ex.Message);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            FileLogger.Warn("[PullWorkCleanup] failed: " + ex.Message);
+        }
+    }
+
     private static string GetGitLabParentFolder(string gitLabFilePath)
     {
         string normalized = GitLabPathResolver.NormalizeGitLabRelativePath(gitLabFilePath);
@@ -5369,6 +5406,8 @@ public class AddIn : IExcelAddIn
 
             MessageBox.Show(details, "JS実行エラー");
         }
+
+        RibbonController.CleanupOldPullWorkDirectories();
     }
 
     public void AutoClose()
