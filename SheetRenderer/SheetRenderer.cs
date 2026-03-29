@@ -4105,7 +4105,7 @@ public class RibbonController : ExcelRibbon
                 if (!string.IsNullOrWhiteSpace(workbookInfo.PullCommitId) &&
                     string.Equals(workbookInfo.PullCommitId, currentCommitId, StringComparison.OrdinalIgnoreCase))
                 {
-                    MessageBox.Show("最新版です。更新はありません。", "Pull 更新");
+                    MessageBox.Show("最新版です。更新はありません。", "最新版取得");
                     return;
                 }
             }
