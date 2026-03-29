@@ -145,6 +145,108 @@ public class ProgressBarForm : Form
 
 }
 
+public class PullProgressForm : Form
+{
+    private readonly TextBox logTextBox;
+    private readonly Label statusLabel;
+    private readonly Button continueButton;
+    private readonly TaskCompletionSource<bool> continueTcs;
+
+    public PullProgressForm()
+    {
+        this.Width = 760;
+        this.Height = 420;
+        this.FormBorderStyle = FormBorderStyle.FixedSingle;
+        this.ControlBox = false;
+        this.Text = "最新版を取得";
+        this.StartPosition = FormStartPosition.CenterScreen;
+
+        statusLabel = new Label();
+        statusLabel.Left = 20;
+        statusLabel.Top = 15;
+        statusLabel.Width = 700;
+        statusLabel.Height = 24;
+        statusLabel.Text = "ダウンロード中...";
+        Controls.Add(statusLabel);
+
+        logTextBox = new TextBox();
+        logTextBox.Left = 20;
+        logTextBox.Top = 45;
+        logTextBox.Width = 700;
+        logTextBox.Height = 280;
+        logTextBox.Multiline = true;
+        logTextBox.ReadOnly = true;
+        logTextBox.ScrollBars = ScrollBars.Vertical;
+        logTextBox.WordWrap = false;
+        Controls.Add(logTextBox);
+
+        continueButton = new Button();
+        continueButton.Left = 560;
+        continueButton.Top = 340;
+        continueButton.Width = 160;
+        continueButton.Height = 32;
+        continueButton.Text = "処理中...";
+        continueButton.Enabled = false;
+        continueButton.Click += ContinueButton_Click;
+        Controls.Add(continueButton);
+
+        continueTcs = new TaskCompletionSource<bool>();
+    }
+
+    private void ContinueButton_Click(object sender, EventArgs e)
+    {
+        continueButton.Enabled = false;
+        continueTcs.TrySetResult(true);
+    }
+
+    public void AppendLine(string message)
+    {
+        if (InvokeRequired)
+        {
+            BeginInvoke(new Action<string>(AppendLine), message);
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return;
+        }
+
+        logTextBox.AppendText(message + Environment.NewLine);
+        logTextBox.SelectionStart = logTextBox.TextLength;
+        logTextBox.ScrollToCaret();
+    }
+
+    public void ShowContinueButton(string buttonText, string statusText)
+    {
+        if (InvokeRequired)
+        {
+            BeginInvoke(new Action<string, string>(ShowContinueButton), buttonText, statusText);
+            return;
+        }
+
+        statusLabel.Text = statusText;
+        continueButton.Text = buttonText;
+        continueButton.Enabled = true;
+    }
+
+    public Task WaitForContinueAsync()
+    {
+        return continueTcs.Task;
+    }
+
+    public void CloseForm()
+    {
+        if (InvokeRequired)
+        {
+            BeginInvoke(new Action(CloseForm));
+            return;
+        }
+
+        Close();
+    }
+}
+
 
 //public static class Class1
 //{
@@ -256,6 +358,7 @@ public class RibbonController : ExcelRibbon
         public bool ManifestHasBeenWritten;
         public PullSessionLog SessionLog;
         public HashSet<string> ExpandedArchiveFolders;
+        public Action<string> ProgressReporter;
     }
 
     private enum PullFileActionType
@@ -3662,6 +3765,22 @@ public class RibbonController : ExcelRibbon
         }
     }
 
+    private static void ReportPullProgress(string message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return;
+        }
+
+        PullSessionContext sessionContext = currentPullSession;
+        if (sessionContext == null || sessionContext.ProgressReporter == null)
+        {
+            return;
+        }
+
+        sessionContext.ProgressReporter(message);
+    }
+
     private static string ResolveBaseFileRelativePath(string baseFilePath)
     {
         if (!string.IsNullOrWhiteSpace(baseFilePath))
@@ -3920,6 +4039,7 @@ public class RibbonController : ExcelRibbon
         Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
         var activeSheet = excelApp.ActiveSheet as Excel.Worksheet;
         Excel.Workbook activeWorkbook = activeSheet == null ? null : activeSheet.Parent as Excel.Workbook;
+        PullProgressForm progressForm = new PullProgressForm();
 
         if (SynchronizationContext.Current == null)
         {
@@ -3957,7 +4077,10 @@ public class RibbonController : ExcelRibbon
                 GitLabLastInputStore.Save(input, clearFilePathEachTime);
             }
 
-            PullExecutionResult pullResult = await ExecutePullAsync(input);
+            progressForm.Show();
+            progressForm.AppendLine("最新版の取得を開始します");
+
+            PullExecutionResult pullResult = await ExecutePullAsync(input, progressForm.AppendLine);
             if (pullResult == null)
             {
                 return;
@@ -3965,10 +4088,15 @@ public class RibbonController : ExcelRibbon
 
             if (isPullUpdate)
             {
+                progressForm.ShowContinueButton("Excel 更新開始", "ダウンロード完了");
+                await progressForm.WaitForContinueAsync();
                 await UpdateAllSheets(activeWorkbook, pullResult.EntryLocalPath, pullResult.JsonFilePath);
             }
             else
             {
+                progressForm.ShowContinueButton("Excel 作成開始", "ダウンロード完了");
+                await progressForm.WaitForContinueAsync();
+
                 string outputDirectory = GetPullWorkbookOutputDirectory(input.ProjectId);
                 string outputFileName = GetOutputWorkbookFileNameFromJson(pullResult.JsonFilePath);
                 string outputFilePath = Path.Combine(outputDirectory, outputFileName);
@@ -4005,12 +4133,14 @@ public class RibbonController : ExcelRibbon
         }
         finally
         {
+            progressForm.CloseForm();
             ClearPullSessionState();
         }
     }
 
     public async void OnPullCreateButtonPressed(IRibbonControl control)
     {
+        PullProgressForm progressForm = new PullProgressForm();
         try
         {
             ClearPullSessionState();
@@ -4026,11 +4156,17 @@ public class RibbonController : ExcelRibbon
 
             GitLabLastInputStore.Save(input, clearFilePathEachTime);
 
-            PullExecutionResult pullResult = await ExecutePullAsync(input);
+            progressForm.Show();
+            progressForm.AppendLine("最新版の取得を開始します");
+
+            PullExecutionResult pullResult = await ExecutePullAsync(input, progressForm.AppendLine);
             if (pullResult == null)
             {
                 return;
             }
+
+            progressForm.ShowContinueButton("Excel 作成開始", "ダウンロード完了");
+            await progressForm.WaitForContinueAsync();
 
             string outputDirectory = GetPullWorkbookOutputDirectory(input.ProjectId);
             string outputFileName = GetOutputWorkbookFileNameFromJson(pullResult.JsonFilePath);
@@ -4067,11 +4203,12 @@ public class RibbonController : ExcelRibbon
         }
         finally
         {
+            progressForm.CloseForm();
             ClearPullSessionState();
         }
     }
 
-    private async Task<PullExecutionResult> ExecutePullAsync(GitLabLastInput input)
+    private async Task<PullExecutionResult> ExecutePullAsync(GitLabLastInput input, Action<string> progressReporter = null)
     {
         if (input == null)
         {
@@ -4093,6 +4230,7 @@ public class RibbonController : ExcelRibbon
         string workRoot = CreatePullWorkRoot();
 
         FileLogger.InitializeForSession(workRoot, "pull", timestamped: false);
+        progressReporter?.Invoke("PullWork を作成しました");
 
         string normalizedEntryPath = string.IsNullOrEmpty(filePath)
             ? null
@@ -4110,9 +4248,11 @@ public class RibbonController : ExcelRibbon
             EntryGitLabRelativePath = normalizedEntryPath,
             ManifestPath = CreatePullManifestPath(workRoot),
             SessionLog = sessionLog,
-            ExpandedArchiveFolders = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            ExpandedArchiveFolders = new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+            ProgressReporter = progressReporter
         };
 
+        progressReporter?.Invoke("エントリーファイルを取得しています");
         await EnsureFileInWorkRootAsync(
             baseUrl,
             projectId,
@@ -4124,15 +4264,18 @@ public class RibbonController : ExcelRibbon
             sessionLog);
 
         string entryLocalPath = BuildLocalPathInWorkRoot(workRoot, normalizedEntryPath);
+        progressReporter?.Invoke("parse を実行しています");
         bool parseSucceeded = RunParsePipeline(entryLocalPath, false);
         if (!parseSucceeded)
         {
             throw new InvalidOperationException("Pull dependency discovery failed during parse.");
         }
 
+        progressReporter?.Invoke("画像依存を確認しています");
         await EnsureImageDependenciesInWorkRootAsync(currentPullSession, entryLocalPath);
 
         string jsonFilePath = TxtToJsonPath(entryLocalPath);
+        progressReporter?.Invoke("ダウンロードと準備が完了しました");
         return new PullExecutionResult
         {
             EntryLocalPath = entryLocalPath,
@@ -4239,6 +4382,7 @@ public class RibbonController : ExcelRibbon
         if (File.Exists(localPath))
         {
             FileLogger.Info("[PullLazyRead] local cache hit: " + normalizedRelativePath);
+            ReportPullProgress("ローカル確認: " + normalizedRelativePath);
             AddFileReadTrace("[local-hit] gitlabRelative=" + normalizedRelativePath);
             if (sessionLog != null)
             {
@@ -4272,6 +4416,7 @@ public class RibbonController : ExcelRibbon
         }
 
         FileLogger.Info("[PullLazyRead] fetching from GitLab: " + normalizedRelativePath);
+        ReportPullProgress("ファイル取得: " + normalizedRelativePath);
         AddFileReadTrace("[download] gitlabRelative=" + normalizedRelativePath);
 
         string parentFolder = GetGitLabParentFolder(normalizedRelativePath);
@@ -4337,10 +4482,12 @@ public class RibbonController : ExcelRibbon
         if (sessionContext.ExpandedArchiveFolders.Contains(topLevelFolder))
         {
             FileLogger.Info("[archive-hit] " + topLevelFolder);
+            ReportPullProgress("アーカイブ再利用: " + topLevelFolder);
             return true;
         }
 
         FileLogger.Info("[archive-download] " + topLevelFolder);
+        ReportPullProgress("フォルダ取得: " + topLevelFolder);
         byte[] archiveBytes = await GitLabClient.DownloadArchiveZipAsync(
             sessionContext.BaseUrl,
             sessionContext.ProjectId,
@@ -4356,6 +4503,7 @@ public class RibbonController : ExcelRibbon
 
         sessionContext.ExpandedArchiveFolders.Add(topLevelFolder);
         FileLogger.Info("[archive-ready] " + topLevelFolder);
+        ReportPullProgress("フォルダ展開完了: " + topLevelFolder);
         return true;
     }
 
@@ -4692,6 +4840,7 @@ public class RibbonController : ExcelRibbon
                 imageFilePath);
 
             FileLogger.Info("[pull-image] image=" + imageFilePath + " gitlabRelative=" + gitLabRelativePath);
+            ReportPullProgress("画像取得: " + gitLabRelativePath);
 
             await EnsureFileInWorkRootAsync(
                 sessionContext.BaseUrl,
