@@ -22,6 +22,28 @@ internal static class GitLabAuth
             return null;
         }
 
+        try
+        {
+            GitLabProjectInfo projectInfo = GitLabClient.GetProjectInfoAsync(baseUrl, projectId, input)
+                .GetAwaiter()
+                .GetResult();
+
+            if (projectInfo == null)
+            {
+                throw new InvalidOperationException("GitLab project could not be resolved.");
+            }
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                owner,
+                "GitLab への接続確認に失敗しました。\n" + ex.Message,
+                "GitLab Token",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+            return null;
+        }
+
         if (remember)
         {
             TokenStore.Set(baseUrl, projectId, input);
