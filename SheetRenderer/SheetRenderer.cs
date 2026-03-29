@@ -545,7 +545,7 @@ public class RibbonController : ExcelRibbon
                         <group id='groupSync' label='同期'>
                         <splitButton id='splitButtonPull' size='large'>
                             <button id='buttonPull'
-                                    label='最新版を取得'
+                                    label='最新版取得'
                                     screentip='保存済みの情報があれば最新版を取得して反映します'
                                     imageMso='RefreshAll'
                                     onAction='OnPullButtonPressed'/>
