@@ -420,6 +420,8 @@ public class RibbonController : ExcelRibbon
         public string JsonFilePath;
 
         public string NormalizedEntryPath;
+
+        public string RefCommitId;
     }
 
     private sealed class PullSessionLog
@@ -885,6 +887,7 @@ public class RibbonController : ExcelRibbon
     const string confHashCustomPropertyName = "ConfHash";
     const string indexSheetTemplateCellsCustomPropertyName = "SheetImageHash";
     const string gitLabPullInfoCustomPropertyName = "GitLabPullInfo";
+    const string gitLabPullCommitIdCustomPropertyName = "GitLabPullCommitId";
 
     const string ssSheetRangeName = "SS_SHEET";
 
@@ -1095,6 +1098,7 @@ public class RibbonController : ExcelRibbon
         public string TemplateSheetName { get; set; }
         public RenderLog LastRenderLog { get; set; }
         public GitLabLastInput PullInfo { get; set; }
+        public string PullCommitId { get; set; }
 
         static public WorkbookInfo CreateFromWorkbook(Excel.Workbook workbook)
         {
@@ -1110,6 +1114,7 @@ public class RibbonController : ExcelRibbon
             string templateSheetName = workbook.GetCustomProperty(templateSheetNameCustomPropertyName);
             var lastRenderLog = workbook.GetCustomProperty<RenderLog>("RenderLog");
             var pullInfo = workbook.GetCustomProperty<GitLabLastInput>(gitLabPullInfoCustomPropertyName);
+            string pullCommitId = workbook.GetCustomProperty(gitLabPullCommitIdCustomPropertyName);
             Debug.Assert(indexSheetName != null, "indexSheetName != null");
             Debug.Assert(templateSheetName != null, "templateSheetName != null");
             Debug.Assert(lastRenderLog != null, "lastRenderLog != null");
@@ -1121,6 +1126,7 @@ public class RibbonController : ExcelRibbon
                 TemplateSheetName = templateSheetName,
                 LastRenderLog = lastRenderLog,
                 PullInfo = pullInfo,
+                PullCommitId = pullCommitId,
             };
         }
     }
@@ -2379,12 +2385,34 @@ public class RibbonController : ExcelRibbon
             : Path.GetFileNameWithoutExtension(jsonFilePath);
     }
 
+    private static void SavePullStateToWorkbook(
+        Excel.Workbook workbook,
+        GitLabLastInput pullInfo,
+        string pullCommitId)
+    {
+        if (workbook == null)
+        {
+            return;
+        }
+
+        if (pullInfo != null)
+        {
+            workbook.SetCustomProperty(gitLabPullInfoCustomPropertyName, pullInfo);
+        }
+
+        if (!string.IsNullOrWhiteSpace(pullCommitId))
+        {
+            workbook.SetCustomProperty(gitLabPullCommitIdCustomPropertyName, pullCommitId);
+        }
+    }
+
     async Task<bool> CreateNewWorkbook(
         string txtFilePath = null,
         string jsonFilePath = null,
         string newFilePathOverride = null,
         bool failIfExists = false,
-        GitLabLastInput pullInfo = null)
+        GitLabLastInput pullInfo = null,
+        string pullCommitId = null)
     {
         // jsonFilePath を読み、confData 等を取得してテンプレから生成
         string jsonString = File.ReadAllText(jsonFilePath);
@@ -2460,10 +2488,7 @@ public class RibbonController : ExcelRibbon
         string projectId = confData["project"];
         workbook.SetCustomProperty(ssProjectIdCustomPropertyName, projectId);
 
-        if (pullInfo != null)
-        {
-            workbook.SetCustomProperty(gitLabPullInfoCustomPropertyName, pullInfo);
-        }
+        SavePullStateToWorkbook(workbook, pullInfo, pullCommitId);
 
         workbook.Save();
         return true;
@@ -4063,6 +4088,26 @@ public class RibbonController : ExcelRibbon
                 }
 
                 input = workbookInfo.PullInfo;
+
+                string token = GitLabAuth.GetOrPromptToken(input.BaseUrl, input.ProjectId);
+                if (string.IsNullOrEmpty(token))
+                {
+                    System.Windows.Forms.MessageBox.Show("同期をキャンセルしました（トークン未入力）");
+                    return;
+                }
+
+                string currentCommitId = await GitLabClient.GetCommitIdAsync(
+                    input.BaseUrl,
+                    input.ProjectId,
+                    input.RefName,
+                    token).ConfigureAwait(true);
+
+                if (!string.IsNullOrWhiteSpace(workbookInfo.PullCommitId) &&
+                    string.Equals(workbookInfo.PullCommitId, currentCommitId, StringComparison.OrdinalIgnoreCase))
+                {
+                    MessageBox.Show("最新版です。更新はありません。", "Pull 更新");
+                    return;
+                }
             }
             else
             {
@@ -4114,7 +4159,8 @@ public class RibbonController : ExcelRibbon
                     pullResult.JsonFilePath,
                     outputFilePath,
                     failIfExists: true,
-                    pullInfo: pullInfo);
+                    pullInfo: pullInfo,
+                    pullCommitId: pullResult.RefCommitId);
                 if (!workbookCreated)
                 {
                     return;
@@ -4124,6 +4170,7 @@ public class RibbonController : ExcelRibbon
             string manifestPath = WritePullManifest(currentPullSession);
             FileLogger.Info("[PullManifest] written: " + manifestPath);
 
+            SavePullStateToWorkbook(activeWorkbook, input, pullResult.RefCommitId);
             // MessageBox.Show(currentPullSession.SessionLog.BuildSummaryText(30), "Pull Result");
             lastSuccessfulPullSession = currentPullSession;
         }
@@ -4185,7 +4232,8 @@ public class RibbonController : ExcelRibbon
                 pullResult.JsonFilePath,
                 outputFilePath,
                 failIfExists: true,
-                pullInfo: pullInfo);
+                pullInfo: pullInfo,
+                pullCommitId: pullResult.RefCommitId);
             if (!workbookCreated)
             {
                 return;
@@ -4231,6 +4279,13 @@ public class RibbonController : ExcelRibbon
 
         FileLogger.InitializeForSession(workRoot, "pull", timestamped: false);
         progressReporter?.Invoke("PullWork を作成しました");
+
+        string refCommitId = await GitLabClient.GetCommitIdAsync(
+            baseUrl,
+            projectId,
+            refName,
+            token).ConfigureAwait(false);
+        progressReporter?.Invoke("取得元の更新状態を確認しました");
 
         string normalizedEntryPath = string.IsNullOrEmpty(filePath)
             ? null
@@ -4280,7 +4335,8 @@ public class RibbonController : ExcelRibbon
         {
             EntryLocalPath = entryLocalPath,
             JsonFilePath = jsonFilePath,
-            NormalizedEntryPath = normalizedEntryPath
+            NormalizedEntryPath = normalizedEntryPath,
+            RefCommitId = refCommitId
         };
     }
 

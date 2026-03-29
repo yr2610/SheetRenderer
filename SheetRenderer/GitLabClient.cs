@@ -213,6 +213,37 @@ public static class GitLabClient
         }
     }
 
+    public static async Task<string> GetCommitIdAsync(
+        string baseUrl,
+        string projectId,
+        string refName,
+        string privateToken,
+        CancellationToken cancellationToken = default(CancellationToken))
+    {
+        EnsureTls12();
+
+        string url =
+            $"{baseUrl.TrimEnd('/')}/api/v4/projects/{Uri.EscapeDataString(projectId)}/repository/commits/{Uri.EscapeDataString(refName)}";
+
+        using (var req = new HttpRequestMessage(HttpMethod.Get, url))
+        {
+            req.Headers.Add("PRIVATE-TOKEN", privateToken);
+
+            using (var res = await _httpClient.SendAsync(req, HttpCompletionOption.ResponseContentRead, cancellationToken).ConfigureAwait(false))
+            {
+                byte[] bytes = await res.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
+
+                if (!res.IsSuccessStatusCode)
+                {
+                    ThrowGitLabApiException(res, url, bytes);
+                }
+
+                var commit = DeserializeJson<GitLabCommitInfo>(bytes);
+                return commit == null ? null : commit.Id;
+            }
+        }
+    }
+
     private static string SafeUtf8(byte[] bytes)
     {
         try { return Encoding.UTF8.GetString(bytes); } catch { return ""; }
