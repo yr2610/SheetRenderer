@@ -143,6 +143,7 @@
     <Compile Include="GitLabLastInput.cs" />
     <Compile Include="GitLabLastInputStore.cs" />
     <Compile Include="GitLabPathResolver.cs" />
+    <Compile Include="GitLabProjectInfo.cs" />
     <Compile Include="GitLabRepoDialog.cs" />
     <Compile Include="GitLabTokenManagerDialog.cs">
       <SubType>Form</SubType>

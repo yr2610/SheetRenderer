@@ -2366,11 +2366,34 @@ public class RibbonController : ExcelRibbon
         }
     }
 
-    private static string GetPullWorkbookOutputDirectory(string projectId)
+    private static string SanitizeFolderName(string folderName, string fallbackName)
+    {
+        string name = string.IsNullOrWhiteSpace(folderName) ? fallbackName : folderName.Trim();
+        char[] invalidChars = Path.GetInvalidFileNameChars();
+        var builder = new StringBuilder(name.Length);
+
+        foreach (char c in name)
+        {
+            if (invalidChars.Contains(c))
+            {
+                builder.Append('_');
+            }
+            else
+            {
+                builder.Append(c);
+            }
+        }
+
+        string sanitized = builder.ToString().Trim();
+        return string.IsNullOrWhiteSpace(sanitized) ? fallbackName : sanitized;
+    }
+
+    private static string GetPullWorkbookOutputDirectory(string projectId, string projectFolderName = null)
     {
         string documentsDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
         string safeProjectId = string.IsNullOrWhiteSpace(projectId) ? "UnknownProject" : projectId.Trim();
-        return Path.Combine(documentsDirectory, "SheetRenderer", safeProjectId);
+        string safeProjectFolderName = SanitizeFolderName(projectFolderName, safeProjectId);
+        return Path.Combine(documentsDirectory, "SheetRenderer", safeProjectFolderName);
     }
 
     private static string GetOutputWorkbookFileNameFromJson(string jsonFilePath)
@@ -2383,6 +2406,27 @@ public class RibbonController : ExcelRibbon
         return confData.ContainsKey(outputFilenameConfName)
             ? confData[outputFilenameConfName]
             : Path.GetFileNameWithoutExtension(jsonFilePath);
+    }
+
+    private static async Task<string> TryGetProjectFolderNameAsync(
+        string baseUrl,
+        string projectId,
+        string token)
+    {
+        try
+        {
+            GitLabProjectInfo projectInfo = await GitLabClient.GetProjectInfoAsync(
+                baseUrl,
+                projectId,
+                token).ConfigureAwait(false);
+
+            return projectInfo == null ? null : projectInfo.Name;
+        }
+        catch (Exception ex)
+        {
+            FileLogger.Warn("Failed to resolve GitLab project name. " + ex.Message);
+            return null;
+        }
     }
 
     private static void SavePullStateToWorkbook(
@@ -4142,7 +4186,8 @@ public class RibbonController : ExcelRibbon
                 progressForm.ShowContinueButton("Excel 作成開始", "ダウンロード完了");
                 await progressForm.WaitForContinueAsync();
 
-                string outputDirectory = GetPullWorkbookOutputDirectory(input.ProjectId);
+                string projectFolderName = await TryGetProjectFolderNameAsync(input.BaseUrl, input.ProjectId, currentPullSession.Token);
+                string outputDirectory = GetPullWorkbookOutputDirectory(input.ProjectId, projectFolderName);
                 string outputFileName = GetOutputWorkbookFileNameFromJson(pullResult.JsonFilePath);
                 string outputFilePath = Path.Combine(outputDirectory, outputFileName);
 
@@ -4215,7 +4260,8 @@ public class RibbonController : ExcelRibbon
             progressForm.ShowContinueButton("Excel 作成開始", "ダウンロード完了");
             await progressForm.WaitForContinueAsync();
 
-            string outputDirectory = GetPullWorkbookOutputDirectory(input.ProjectId);
+            string projectFolderName = await TryGetProjectFolderNameAsync(input.BaseUrl, input.ProjectId, currentPullSession.Token);
+            string outputDirectory = GetPullWorkbookOutputDirectory(input.ProjectId, projectFolderName);
             string outputFileName = GetOutputWorkbookFileNameFromJson(pullResult.JsonFilePath);
             string outputFilePath = Path.Combine(outputDirectory, outputFileName);
 
