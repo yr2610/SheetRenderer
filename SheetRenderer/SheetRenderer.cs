@@ -4127,7 +4127,7 @@ public class RibbonController : ExcelRibbon
                 WorkbookInfo workbookInfo = WorkbookInfo.CreateFromWorkbook(activeWorkbook);
                 if (workbookInfo == null || workbookInfo.PullInfo == null)
                 {
-                    MessageBox.Show("このブックには Pull 用の情報が保存されていません。", "Pull 更新");
+                    MessageBox.Show("このブックには Pull 用の情報が保存されていません。", "最新版取得");
                     return;
                 }
 
