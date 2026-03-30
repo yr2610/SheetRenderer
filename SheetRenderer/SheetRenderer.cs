@@ -4433,17 +4433,16 @@ public class RibbonController : ExcelRibbon
                     }
 
                     Directory.Delete(workDirectory, true);
-                    FileLogger.Info("[PullWorkCleanup] deleted: " + workDirectory);
                 }
                 catch (Exception ex)
                 {
-                    FileLogger.Warn("[PullWorkCleanup] skipped: " + workDirectory + " " + ex.Message);
+                    _ = ex;
                 }
             }
         }
         catch (Exception ex)
         {
-            FileLogger.Warn("[PullWorkCleanup] failed: " + ex.Message);
+            _ = ex;
         }
     }
 
