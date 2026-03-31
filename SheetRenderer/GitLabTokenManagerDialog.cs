@@ -27,6 +27,7 @@ internal sealed class GitLabTokenManagerDialog : Form
         ShowInTaskbar = false;
         Width = 700;
         Height = 420;
+        KeyPreview = true;
 
         _lblInfo = new Label();
         _lblInfo.AutoSize = false;
@@ -101,6 +102,16 @@ internal sealed class GitLabTokenManagerDialog : Form
         _btnClose.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
         _btnClose.Click += (s, e) => Close();
         Controls.Add(_btnClose);
+
+        CancelButton = _btnClose;
+
+        KeyDown += (s, e) =>
+        {
+            if (e.KeyCode == Keys.Escape)
+            {
+                Close();
+            }
+        };
 
         UpdateButtons();
     }
