@@ -2396,6 +2396,38 @@ public class RibbonController : ExcelRibbon
         return Path.Combine(documentsDirectory, "SheetRenderer", safeProjectFolderName);
     }
 
+    private static bool ConfirmOverwriteForPullNewWorkbook(string outputFilePath)
+    {
+        if (string.IsNullOrWhiteSpace(outputFilePath))
+        {
+            return true;
+        }
+
+        string fullPath = GetNormalizedWorkbookOutputPath(outputFilePath);
+        if (!File.Exists(fullPath))
+        {
+            return true;
+        }
+
+        DialogResult overwriteResult = MessageBox.Show(
+            "同名のファイルが既に存在します。上書きしますか？\n\n" + fullPath,
+            "Pull 新規作成",
+            MessageBoxButtons.YesNo,
+            MessageBoxIcon.Warning);
+        return overwriteResult == DialogResult.Yes;
+    }
+
+    private static string GetNormalizedWorkbookOutputPath(string outputFilePath)
+    {
+        string fullPath = Path.GetFullPath(outputFilePath);
+        if (string.IsNullOrWhiteSpace(Path.GetExtension(fullPath)))
+        {
+            fullPath += Path.GetExtension(templateFileName);
+        }
+
+        return fullPath;
+    }
+
     private static string GetOutputWorkbookFileNameFromJson(string jsonFilePath)
     {
         string jsonString = File.ReadAllText(jsonFilePath);
@@ -2455,6 +2487,7 @@ public class RibbonController : ExcelRibbon
         string jsonFilePath = null,
         string newFilePathOverride = null,
         bool failIfExists = false,
+        bool confirmOverwriteIfExists = false,
         GitLabLastInput pullInfo = null,
         string pullCommitId = null)
     {
@@ -2474,16 +2507,32 @@ public class RibbonController : ExcelRibbon
         string jsonFileDirectory = Path.GetDirectoryName(jsonFilePath);
         string newFilePath = string.IsNullOrWhiteSpace(newFilePathOverride)
             ? Path.Combine(jsonFileDirectory, newFileName)
-            : Path.GetFullPath(newFilePathOverride);
+            : GetNormalizedWorkbookOutputPath(newFilePathOverride);
 
-        if (failIfExists && File.Exists(newFilePath))
+        if (File.Exists(newFilePath))
         {
-            MessageBox.Show(
-                "同名のファイルが既に存在するため新規作成できません。\n" +
-                "更新したい場合はそのファイルを開いてから Pull を実行してください。\n\n" +
-                newFilePath,
-                "Pull 新規作成");
-            return false;
+            if (failIfExists)
+            {
+                MessageBox.Show(
+                    "同名のファイルが既に存在するため新規作成できません。\n" +
+                    "更新したい場合はそのファイルを開いてから Pull を実行してください。\n\n" +
+                    newFilePath,
+                    "Pull 新規作成");
+                return false;
+            }
+
+            if (confirmOverwriteIfExists)
+            {
+                DialogResult overwriteResult = MessageBox.Show(
+                    "同名のファイルが既に存在します。上書きしますか？\n\n" + newFilePath,
+                    "Pull 新規作成",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Warning);
+                if (overwriteResult != DialogResult.Yes)
+                {
+                    return false;
+                }
+            }
         }
 
         EnsureDirectoryForLocalPath(newFilePath);
@@ -4191,6 +4240,11 @@ public class RibbonController : ExcelRibbon
                 string outputFileName = GetOutputWorkbookFileNameFromJson(pullResult.JsonFilePath);
                 string outputFilePath = Path.Combine(outputDirectory, outputFileName);
 
+                if (!ConfirmOverwriteForPullNewWorkbook(outputFilePath))
+                {
+                    return;
+                }
+
                 var pullInfo = new GitLabLastInput
                 {
                     BaseUrl = input.BaseUrl,
@@ -4203,7 +4257,7 @@ public class RibbonController : ExcelRibbon
                     pullResult.EntryLocalPath,
                     pullResult.JsonFilePath,
                     outputFilePath,
-                    failIfExists: true,
+                    confirmOverwriteIfExists: true,
                     pullInfo: pullInfo,
                     pullCommitId: pullResult.RefCommitId);
                 if (!workbookCreated)
@@ -4265,6 +4319,11 @@ public class RibbonController : ExcelRibbon
             string outputFileName = GetOutputWorkbookFileNameFromJson(pullResult.JsonFilePath);
             string outputFilePath = Path.Combine(outputDirectory, outputFileName);
 
+            if (!ConfirmOverwriteForPullNewWorkbook(outputFilePath))
+            {
+                return;
+            }
+
             var pullInfo = new GitLabLastInput
             {
                 BaseUrl = input.BaseUrl,
@@ -4277,7 +4336,7 @@ public class RibbonController : ExcelRibbon
                 pullResult.EntryLocalPath,
                 pullResult.JsonFilePath,
                 outputFilePath,
-                failIfExists: true,
+                confirmOverwriteIfExists: true,
                 pullInfo: pullInfo,
                 pullCommitId: pullResult.RefCommitId);
             if (!workbookCreated)
