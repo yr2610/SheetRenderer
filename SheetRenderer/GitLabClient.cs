@@ -213,6 +213,73 @@ public static class GitLabClient
         }
     }
 
+    public static async Task<byte[]> DownloadFileRawByPathAsync(
+        string baseUrl,
+        string projectId,
+        string filePath,
+        string refName,
+        string privateToken,
+        CancellationToken cancellationToken = default(CancellationToken))
+    {
+        EnsureTls12();
+
+        string url =
+            $"{baseUrl.TrimEnd('/')}/api/v4/projects/{Uri.EscapeDataString(projectId)}/repository/files/{Uri.EscapeDataString(filePath)}/raw?ref={Uri.EscapeDataString(refName)}";
+
+        using (var req = new HttpRequestMessage(HttpMethod.Get, url))
+        {
+            req.Headers.Add("PRIVATE-TOKEN", privateToken);
+
+            using (var res = await _httpClient.SendAsync(req, HttpCompletionOption.ResponseContentRead, cancellationToken).ConfigureAwait(false))
+            {
+                byte[] bytes = await res.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
+
+                if (!res.IsSuccessStatusCode)
+                {
+                    ThrowGitLabApiException(res, url, bytes);
+                }
+
+                return bytes;
+            }
+        }
+    }
+
+    public static async Task<byte[]> TryDownloadFileRawByPathAsync(
+        string baseUrl,
+        string projectId,
+        string filePath,
+        string refName,
+        string privateToken,
+        CancellationToken cancellationToken = default(CancellationToken))
+    {
+        EnsureTls12();
+
+        string url =
+            $"{baseUrl.TrimEnd('/')}/api/v4/projects/{Uri.EscapeDataString(projectId)}/repository/files/{Uri.EscapeDataString(filePath)}/raw?ref={Uri.EscapeDataString(refName)}";
+
+        using (var req = new HttpRequestMessage(HttpMethod.Get, url))
+        {
+            req.Headers.Add("PRIVATE-TOKEN", privateToken);
+
+            using (var res = await _httpClient.SendAsync(req, HttpCompletionOption.ResponseContentRead, cancellationToken).ConfigureAwait(false))
+            {
+                byte[] bytes = await res.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
+
+                if (res.StatusCode == HttpStatusCode.NotFound)
+                {
+                    return null;
+                }
+
+                if (!res.IsSuccessStatusCode)
+                {
+                    ThrowGitLabApiException(res, url, bytes);
+                }
+
+                return bytes;
+            }
+        }
+    }
+
     public static async Task<string> GetCommitIdAsync(
         string baseUrl,
         string projectId,
