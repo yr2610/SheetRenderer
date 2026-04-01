@@ -2085,7 +2085,7 @@ public class RibbonController : ExcelRibbon
         JsonNode jsonNode = CreateSharedSheetJsonNode(sharedSheetDocument, includeHash: true);
         return jsonNode == null
             ? "{}"
-            : jsonNode.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+            : jsonNode.ToJsonString();
     }
 
     private static string CreateSharedProjectManifestJsonText(SharedProjectManifest manifest)
@@ -5667,10 +5667,17 @@ public class RibbonController : ExcelRibbon
                 selectedItems,
                 progressForm.AppendLine).ConfigureAwait(true);
 
+            progressForm.CloseForm();
+            progressForm = null;
             MessageBox.Show("共有が完了しました。", "変更共有");
         }
         catch (Exception ex)
         {
+            if (progressForm != null)
+            {
+                progressForm.CloseForm();
+                progressForm = null;
+            }
             MessageBox.Show(ex.ToString(), "変更共有");
         }
         finally
