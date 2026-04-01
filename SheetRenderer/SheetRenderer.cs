@@ -888,6 +888,8 @@ public class RibbonController : ExcelRibbon
     const string indexSheetTemplateCellsCustomPropertyName = "SheetImageHash";
     const string gitLabPullInfoCustomPropertyName = "GitLabPullInfo";
     const string gitLabPullCommitIdCustomPropertyName = "GitLabPullCommitId";
+    const string gitLabShareInfoCustomPropertyName = "GitLabShareInfo";
+    const string sharedSheetSyncStateCustomPropertyName = "SharedSheetSyncState";
 
     const string ssSheetRangeName = "SS_SHEET";
 
@@ -1099,6 +1101,8 @@ public class RibbonController : ExcelRibbon
         public RenderLog LastRenderLog { get; set; }
         public GitLabLastInput PullInfo { get; set; }
         public string PullCommitId { get; set; }
+        public GitLabShareInfo ShareInfo { get; set; }
+        public SharedSheetSyncState SharedSheetSyncState { get; set; }
 
         static public WorkbookInfo CreateFromWorkbook(Excel.Workbook workbook)
         {
@@ -1115,6 +1119,8 @@ public class RibbonController : ExcelRibbon
             var lastRenderLog = workbook.GetCustomProperty<RenderLog>("RenderLog");
             var pullInfo = workbook.GetCustomProperty<GitLabLastInput>(gitLabPullInfoCustomPropertyName);
             string pullCommitId = workbook.GetCustomProperty(gitLabPullCommitIdCustomPropertyName);
+            var shareInfo = workbook.GetCustomProperty<GitLabShareInfo>(gitLabShareInfoCustomPropertyName);
+            var sharedSheetSyncState = workbook.GetCustomProperty<SharedSheetSyncState>(sharedSheetSyncStateCustomPropertyName);
             Debug.Assert(indexSheetName != null, "indexSheetName != null");
             Debug.Assert(templateSheetName != null, "templateSheetName != null");
             Debug.Assert(lastRenderLog != null, "lastRenderLog != null");
@@ -1127,6 +1133,8 @@ public class RibbonController : ExcelRibbon
                 LastRenderLog = lastRenderLog,
                 PullInfo = pullInfo,
                 PullCommitId = pullCommitId,
+                ShareInfo = shareInfo,
+                SharedSheetSyncState = sharedSheetSyncState,
             };
         }
     }
@@ -1180,6 +1188,301 @@ public class RibbonController : ExcelRibbon
             };
         }
 
+    }
+
+    private static object NormalizeSharedCellValue(object value)
+    {
+        if (value == null || value == DBNull.Value)
+        {
+            return null;
+        }
+
+        if (value is string || value is bool || value is double || value is float ||
+            value is decimal || value is int || value is long || value is short ||
+            value is byte || value is DateTime)
+        {
+            return value;
+        }
+
+        return value.ToString();
+    }
+
+    private static object[][] ConvertSheetValuesToJaggedArray(object[,] values)
+    {
+        if (values == null)
+        {
+            return new object[0][];
+        }
+
+        int rowCount = values.GetLength(0);
+        int columnCount = values.GetLength(1);
+        var result = new object[rowCount][];
+
+        for (int row = 0; row < rowCount; row++)
+        {
+            result[row] = new object[columnCount];
+            for (int col = 0; col < columnCount; col++)
+            {
+                result[row][col] = NormalizeSharedCellValue(values[row + 1, col + 1]);
+            }
+        }
+
+        return result;
+    }
+
+    private static SharedRangeInfo CloneRangeInfo(RangeInfo rangeInfo)
+    {
+        if (rangeInfo == null)
+        {
+            return null;
+        }
+
+        return new SharedRangeInfo
+        {
+            IdColumnOffset = rangeInfo.IdColumnOffset,
+            IgnoreColumnOffsets = rangeInfo.IgnoreColumnOffsets == null
+                ? new HashSet<int>()
+                : new HashSet<int>(rangeInfo.IgnoreColumnOffsets)
+        };
+    }
+
+    private static JsonArray CreateSharedSheetValuesJsonArray(object[][] values)
+    {
+        var rows = new JsonArray();
+        if (values == null)
+        {
+            return rows;
+        }
+
+        foreach (object[] row in values)
+        {
+            var rowArray = new JsonArray();
+            if (row != null)
+            {
+                foreach (object value in row)
+                {
+                    if (value == null)
+                    {
+                        rowArray.Add((JsonNode)null);
+                    }
+                    else
+                    {
+                        rowArray.Add(JsonValue.Create(value));
+                    }
+                }
+            }
+            rows.Add(rowArray);
+        }
+
+        return rows;
+    }
+
+    private static JsonNode CreateSharedSheetJsonNode(SharedSheetDocument sheetDocument, bool includeHash)
+    {
+        if (sheetDocument == null)
+        {
+            return null;
+        }
+
+        var root = new JsonObject
+        {
+            ["project"] = sheetDocument.Project,
+            ["sheetId"] = sheetDocument.SheetId,
+            ["sheetName"] = sheetDocument.SheetName,
+            ["rangeAddress"] = sheetDocument.RangeAddress,
+            ["values"] = CreateSharedSheetValuesJsonArray(sheetDocument.Values)
+        };
+
+        if (sheetDocument.RangeInfo != null)
+        {
+            var rangeInfoNode = new JsonObject
+            {
+                ["idColumnOffset"] = sheetDocument.RangeInfo.IdColumnOffset
+            };
+
+            var ignoreColumnOffsets = new JsonArray();
+            if (sheetDocument.RangeInfo.IgnoreColumnOffsets != null)
+            {
+                foreach (int ignoreColumnOffset in sheetDocument.RangeInfo.IgnoreColumnOffsets.OrderBy(x => x))
+                {
+                    ignoreColumnOffsets.Add(ignoreColumnOffset);
+                }
+            }
+
+            rangeInfoNode["ignoreColumnOffsets"] = ignoreColumnOffsets;
+            root["rangeInfo"] = rangeInfoNode;
+        }
+
+        if (includeHash && !string.IsNullOrWhiteSpace(sheetDocument.Hash))
+        {
+            root["hash"] = sheetDocument.Hash;
+        }
+
+        return root;
+    }
+
+    private static string ComputeSharedSheetHash(SharedSheetDocument sheetDocument)
+    {
+        JsonNode jsonNode = CreateSharedSheetJsonNode(sheetDocument, includeHash: false);
+        return jsonNode == null ? null : jsonNode.ComputeSha256();
+    }
+
+    private static SharedSheetDocument CreateSharedSheetDocument(Excel.Worksheet sheet)
+    {
+        if (sheet == null)
+        {
+            return null;
+        }
+
+        string sheetId = sheet.GetCustomProperty(sheetIdCustomPropertyName);
+        if (string.IsNullOrWhiteSpace(sheetId))
+        {
+            return null;
+        }
+
+        SheetAddressInfo sheetAddressInfo = GetSheetAddressInfo(sheet);
+        if (sheetAddressInfo == null)
+        {
+            return null;
+        }
+
+        SheetValuesInfo sheetValuesInfo = SheetValuesInfo.CreateFromSheet(sheet);
+        Excel.Workbook workbook = sheet.Parent as Excel.Workbook;
+        string projectId = workbook == null ? null : workbook.GetCustomProperty(ssProjectIdCustomPropertyName);
+
+        var document = new SharedSheetDocument
+        {
+            Project = projectId,
+            SheetId = sheetId,
+            SheetName = sheet.Name,
+            RangeAddress = sheetAddressInfo.Address,
+            RangeInfo = CloneRangeInfo(sheetAddressInfo.RangeInfo),
+            Values = ConvertSheetValuesToJaggedArray(sheetValuesInfo.Values)
+        };
+        document.Hash = ComputeSharedSheetHash(document);
+
+        return document;
+    }
+
+    private static List<SharedSheetDocument> CollectSharedSheetDocuments(Excel.Workbook workbook)
+    {
+        var result = new List<SharedSheetDocument>();
+        if (workbook == null)
+        {
+            return result;
+        }
+
+        foreach (Excel.Worksheet sheet in workbook.Sheets)
+        {
+            SharedSheetDocument sheetDocument = CreateSharedSheetDocument(sheet);
+            if (sheetDocument != null)
+            {
+                result.Add(sheetDocument);
+            }
+        }
+
+        return result;
+    }
+
+    private static SharedProjectManifest CreateSharedProjectManifest(Excel.Workbook workbook)
+    {
+        List<SharedSheetDocument> sheetDocuments = CollectSharedSheetDocuments(workbook);
+        string projectId = workbook == null ? null : workbook.GetCustomProperty(ssProjectIdCustomPropertyName);
+
+        return new SharedProjectManifest
+        {
+            Project = projectId,
+            UpdatedAt = DateTime.UtcNow.ToString("o"),
+            Sheets = sheetDocuments
+                .OrderBy(x => x.SheetId, StringComparer.Ordinal)
+                .Select(x => new SharedProjectManifestEntry
+                {
+                    SheetId = x.SheetId,
+                    SheetName = x.SheetName,
+                    Hash = x.Hash
+                })
+                .ToList()
+        };
+    }
+
+    private static SharedSheetSyncState GetSharedSheetSyncState(Excel.Workbook workbook)
+    {
+        if (workbook == null)
+        {
+            return new SharedSheetSyncState
+            {
+                Sheets = new List<SharedSheetSyncStateEntry>()
+            };
+        }
+
+        SharedSheetSyncState state = workbook.GetCustomProperty<SharedSheetSyncState>(sharedSheetSyncStateCustomPropertyName);
+        if (state == null)
+        {
+            state = new SharedSheetSyncState();
+        }
+
+        if (state.Sheets == null)
+        {
+            state.Sheets = new List<SharedSheetSyncStateEntry>();
+        }
+
+        return state;
+    }
+
+    private static string GetSharedSheetBaseHash(Excel.Workbook workbook, string sheetId)
+    {
+        if (string.IsNullOrWhiteSpace(sheetId))
+        {
+            return null;
+        }
+
+        SharedSheetSyncState state = GetSharedSheetSyncState(workbook);
+        SharedSheetSyncStateEntry entry = state.Sheets.FirstOrDefault(x => string.Equals(x.SheetId, sheetId, StringComparison.Ordinal));
+        return entry == null ? null : entry.BaseHash;
+    }
+
+    private static void SetSharedSheetBaseHash(Excel.Workbook workbook, string sheetId, string baseHash)
+    {
+        if (workbook == null || string.IsNullOrWhiteSpace(sheetId))
+        {
+            return;
+        }
+
+        SharedSheetSyncState state = GetSharedSheetSyncState(workbook);
+        SharedSheetSyncStateEntry entry = state.Sheets.FirstOrDefault(x => string.Equals(x.SheetId, sheetId, StringComparison.Ordinal));
+        if (entry == null)
+        {
+            entry = new SharedSheetSyncStateEntry
+            {
+                SheetId = sheetId
+            };
+            state.Sheets.Add(entry);
+        }
+
+        entry.BaseHash = baseHash;
+        workbook.SetCustomProperty(sharedSheetSyncStateCustomPropertyName, state);
+    }
+
+    private static void SetSharedSheetBaseHashes(Excel.Workbook workbook, IEnumerable<SharedSheetDocument> sheetDocuments)
+    {
+        if (workbook == null)
+        {
+            return;
+        }
+
+        SharedSheetSyncState state = GetSharedSheetSyncState(workbook);
+        state.Sheets = (sheetDocuments ?? Enumerable.Empty<SharedSheetDocument>())
+            .Where(x => x != null && !string.IsNullOrWhiteSpace(x.SheetId))
+            .GroupBy(x => x.SheetId)
+            .Select(x => new SharedSheetSyncStateEntry
+            {
+                SheetId = x.Key,
+                BaseHash = x.Last().Hash
+            })
+            .OrderBy(x => x.SheetId, StringComparer.Ordinal)
+            .ToList();
+
+        workbook.SetCustomProperty(sharedSheetSyncStateCustomPropertyName, state);
     }
 
     class SheetViewState
