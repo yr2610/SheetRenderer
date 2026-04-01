@@ -152,13 +152,13 @@ public class PullProgressForm : Form
     private readonly Button continueButton;
     private readonly TaskCompletionSource<bool> continueTcs;
 
-    public PullProgressForm()
+    public PullProgressForm(string title = "最新版を取得", string initialStatusText = "ダウンロード中...")
     {
         this.Width = 760;
         this.Height = 420;
         this.FormBorderStyle = FormBorderStyle.FixedSingle;
         this.ControlBox = false;
-        this.Text = "最新版を取得";
+        this.Text = title;
         this.StartPosition = FormStartPosition.CenterScreen;
 
         statusLabel = new Label();
@@ -166,7 +166,7 @@ public class PullProgressForm : Form
         statusLabel.Top = 15;
         statusLabel.Width = 700;
         statusLabel.Height = 24;
-        statusLabel.Text = "ダウンロード中...";
+        statusLabel.Text = initialStatusText;
         Controls.Add(statusLabel);
 
         logTextBox = new TextBox();
@@ -558,6 +558,12 @@ public class RibbonController : ExcelRibbon
                                         onAction='OnPullCreateButtonPressed'/>
                             </menu>
                         </splitButton>
+                        <button id='buttonShare'
+                                label='変更共有'
+                                screentip='変更したシートの入力値を共有先へ送信します'
+                                size='large'
+                                imageMso='FileSendAsAttachment'
+                                onAction='OnShareButtonPressed'/>
                         <button id='buttonTokenManager'
                                 label='トークン管理'
                                 screentip='保存済みトークンを一覧表示し、不要なものを削除します'
@@ -2040,7 +2046,7 @@ public class RibbonController : ExcelRibbon
         }
     }
 
-    private static void InitializeLoggerForSharedReceive(Excel.Workbook workbook)
+    private static void InitializeLoggerForWorkbookSession(Excel.Workbook workbook, string baseName)
     {
         if (workbook == null)
         {
@@ -2062,10 +2068,279 @@ public class RibbonController : ExcelRibbon
                 directoryPath = Path.Combine(Path.GetTempPath(), "SheetRenderer", "SharedReceive");
             }
 
-            FileLogger.InitializeForSession(directoryPath, "shared-receive", timestamped: false);
+            FileLogger.InitializeForSession(directoryPath, baseName, timestamped: false);
         }
         catch
         {
+        }
+    }
+
+    private static void InitializeLoggerForSharedReceive(Excel.Workbook workbook)
+    {
+        InitializeLoggerForWorkbookSession(workbook, "shared-receive");
+    }
+
+    private static string CreateSharedSheetJsonText(SharedSheetDocument sharedSheetDocument)
+    {
+        JsonNode jsonNode = CreateSharedSheetJsonNode(sharedSheetDocument, includeHash: true);
+        return jsonNode == null
+            ? "{}"
+            : jsonNode.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+    }
+
+    private static string CreateSharedProjectManifestJsonText(SharedProjectManifest manifest)
+    {
+        return JsonSerializer.Serialize(
+            manifest ?? new SharedProjectManifest(),
+            new JsonSerializerOptions
+            {
+                WriteIndented = true,
+                PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+            });
+    }
+
+    private static bool IsEmptySharedCellValue(object value)
+    {
+        if (value == null || value == DBNull.Value)
+        {
+            return true;
+        }
+
+        string stringValue = value as string;
+        if (stringValue != null)
+        {
+            return string.IsNullOrWhiteSpace(stringValue);
+        }
+
+        return false;
+    }
+
+    private static bool IsSharedSheetEmpty(SharedSheetDocument sharedSheetDocument)
+    {
+        if (sharedSheetDocument == null || sharedSheetDocument.Values == null)
+        {
+            return true;
+        }
+
+        foreach (object[] row in sharedSheetDocument.Values)
+        {
+            if (row == null)
+            {
+                continue;
+            }
+
+            foreach (object value in row)
+            {
+                if (!IsEmptySharedCellValue(value))
+                {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    private static string GetRemoteSharedHash(SharedProjectManifest manifest, string sheetId)
+    {
+        if (manifest == null || manifest.Sheets == null || string.IsNullOrWhiteSpace(sheetId))
+        {
+            return null;
+        }
+
+        SharedProjectManifestEntry entry = manifest.Sheets.FirstOrDefault(x => string.Equals(x.SheetId, sheetId, StringComparison.Ordinal));
+        return entry == null ? null : entry.Hash;
+    }
+
+    private static List<SharedSheetSelectionItem> CollectSharedSheetSelectionItems(
+        Excel.Workbook workbook,
+        SharedProjectManifest remoteManifest)
+    {
+        var items = new List<SharedSheetSelectionItem>();
+        foreach (SharedSheetDocument document in CollectSharedSheetDocuments(workbook))
+        {
+            string baseHash = GetSharedSheetBaseHash(workbook, document.SheetId);
+            string remoteHash = GetRemoteSharedHash(remoteManifest, document.SheetId);
+
+            if (string.Equals(document.Hash, baseHash, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (string.IsNullOrWhiteSpace(remoteHash) &&
+                string.IsNullOrWhiteSpace(baseHash) &&
+                IsSharedSheetEmpty(document))
+            {
+                continue;
+            }
+
+            items.Add(new SharedSheetSelectionItem
+            {
+                Selected = true,
+                SheetName = document.SheetName,
+                SheetId = document.SheetId,
+                ActionLabel = string.IsNullOrWhiteSpace(remoteHash) ? "新規" : "更新",
+                Document = document
+            });
+        }
+
+        return items
+            .OrderBy(x => x.SheetName, StringComparer.CurrentCulture)
+            .ToList();
+    }
+
+    private static List<string> CollectStaleSharedSheetNames(
+        Excel.Workbook workbook,
+        IEnumerable<SharedSheetSelectionItem> items,
+        SharedProjectManifest remoteManifest)
+    {
+        var staleSheetNames = new List<string>();
+
+        foreach (SharedSheetSelectionItem item in items ?? Enumerable.Empty<SharedSheetSelectionItem>())
+        {
+            if (item == null || item.Document == null || string.IsNullOrWhiteSpace(item.SheetId))
+            {
+                continue;
+            }
+
+            string baseHash = GetSharedSheetBaseHash(workbook, item.SheetId);
+            string remoteHash = GetRemoteSharedHash(remoteManifest, item.SheetId);
+
+            if (string.IsNullOrWhiteSpace(remoteHash))
+            {
+                continue;
+            }
+
+            if (!string.Equals(baseHash, remoteHash, StringComparison.OrdinalIgnoreCase))
+            {
+                staleSheetNames.Add(item.SheetName);
+            }
+        }
+
+        return staleSheetNames
+            .Distinct(StringComparer.CurrentCulture)
+            .OrderBy(x => x, StringComparer.CurrentCulture)
+            .ToList();
+    }
+
+    private static SharedProjectManifest MergeSharedProjectManifest(
+        SharedProjectManifest remoteManifest,
+        string projectId,
+        IEnumerable<SharedSheetDocument> updatedDocuments)
+    {
+        var entries = new Dictionary<string, SharedProjectManifestEntry>(StringComparer.Ordinal);
+
+        if (remoteManifest != null && remoteManifest.Sheets != null)
+        {
+            foreach (SharedProjectManifestEntry entry in remoteManifest.Sheets)
+            {
+                if (entry == null || string.IsNullOrWhiteSpace(entry.SheetId))
+                {
+                    continue;
+                }
+
+                entries[entry.SheetId] = new SharedProjectManifestEntry
+                {
+                    SheetId = entry.SheetId,
+                    SheetName = entry.SheetName,
+                    Hash = entry.Hash
+                };
+            }
+        }
+
+        foreach (SharedSheetDocument document in updatedDocuments ?? Enumerable.Empty<SharedSheetDocument>())
+        {
+            if (document == null || string.IsNullOrWhiteSpace(document.SheetId))
+            {
+                continue;
+            }
+
+            entries[document.SheetId] = new SharedProjectManifestEntry
+            {
+                SheetId = document.SheetId,
+                SheetName = document.SheetName,
+                Hash = document.Hash
+            };
+        }
+
+        return new SharedProjectManifest
+        {
+            Project = projectId,
+            UpdatedAt = DateTime.UtcNow.ToString("o"),
+            Sheets = entries.Values
+                .OrderBy(x => x.SheetId, StringComparer.Ordinal)
+                .ToList()
+        };
+    }
+
+    private async Task UploadSharedSheetsAsync(
+        Excel.Workbook workbook,
+        GitLabShareInfo shareInfo,
+        string token,
+        SharedProjectManifest remoteManifest,
+        IEnumerable<SharedSheetSelectionItem> selectedItems,
+        Action<string> progressReporter = null)
+    {
+        if (workbook == null)
+        {
+            throw new ArgumentNullException(nameof(workbook));
+        }
+
+        if (shareInfo == null)
+        {
+            throw new ArgumentNullException(nameof(shareInfo));
+        }
+
+        List<SharedSheetSelectionItem> items = (selectedItems ?? Enumerable.Empty<SharedSheetSelectionItem>())
+            .Where(x => x != null && x.Document != null)
+            .ToList();
+        if (items.Count == 0)
+        {
+            return;
+        }
+
+        string projectId = workbook.GetCustomProperty(ssProjectIdCustomPropertyName);
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            MessageBox.Show("共有をキャンセルしました（トークン未入力）", "変更共有");
+            return;
+        }
+
+        foreach (SharedSheetSelectionItem item in items)
+        {
+            SharedSheetDocument document = item.Document;
+            string filePath = BuildSharedSheetPath(projectId, document.SheetId);
+            progressReporter?.Invoke("共有しています: " + item.SheetName);
+
+            await GitLabClient.UpsertTextFileAsync(
+                shareInfo.BaseUrl,
+                shareInfo.ProjectId,
+                filePath,
+                shareInfo.RefName,
+                token,
+                CreateSharedSheetJsonText(document),
+                "Update shared sheet: " + projectId + "/" + document.SheetId);
+        }
+
+        SharedProjectManifest updatedManifest = MergeSharedProjectManifest(
+            remoteManifest,
+            projectId,
+            items.Select(x => x.Document));
+
+        progressReporter?.Invoke("共有マニフェストを更新しています");
+        await GitLabClient.UpsertTextFileAsync(
+            shareInfo.BaseUrl,
+            shareInfo.ProjectId,
+            BuildSharedProjectManifestPath(projectId),
+            shareInfo.RefName,
+            token,
+            CreateSharedProjectManifestJsonText(updatedManifest),
+            "Update shared manifest: " + projectId);
+
+        foreach (SharedSheetSelectionItem item in items)
+        {
+            SetSharedSheetBaseHash(workbook, item.SheetId, item.Document.Hash);
+            FileLogger.Info("[SharedCommit] uploaded sheetId=" + item.SheetId + " hash=" + item.Document.Hash);
         }
     }
 
@@ -5276,6 +5551,134 @@ public class RibbonController : ExcelRibbon
         {
             progressForm.CloseForm();
             ClearPullSessionState();
+        }
+    }
+
+    public async void OnShareButtonPressed(IRibbonControl control)
+    {
+        Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
+        Excel.Workbook workbook = excelApp.ActiveWorkbook as Excel.Workbook;
+        PullProgressForm progressForm = null;
+
+        if (workbook == null)
+        {
+            MessageBox.Show("アクティブなブックがありません。", "変更共有");
+            return;
+        }
+
+        try
+        {
+            WorkbookInfo workbookInfo = WorkbookInfo.CreateFromWorkbook(workbook);
+            if (workbookInfo == null)
+            {
+                string projectName = Assembly.GetExecutingAssembly().GetName().Name;
+                MessageBox.Show($"{projectName} で生成されたブックではありません。", "変更共有");
+                return;
+            }
+
+            if (workbookInfo.PullInfo == null)
+            {
+                MessageBox.Show("このブックには最新版取得用の情報が保存されていません。", "変更共有");
+                return;
+            }
+
+            if (workbookInfo.ShareInfo == null)
+            {
+                MessageBox.Show("このブックには共有先の情報が保存されていません。", "変更共有");
+                return;
+            }
+
+            string pullToken = GitLabAuth.GetOrPromptToken(
+                workbookInfo.PullInfo.BaseUrl,
+                workbookInfo.PullInfo.ProjectId);
+            if (string.IsNullOrWhiteSpace(pullToken))
+            {
+                MessageBox.Show("共有をキャンセルしました（トークン未入力）", "変更共有");
+                return;
+            }
+
+            string currentCommitId = await GitLabClient.GetCommitIdAsync(
+                workbookInfo.PullInfo.BaseUrl,
+                workbookInfo.PullInfo.ProjectId,
+                workbookInfo.PullInfo.RefName,
+                pullToken).ConfigureAwait(true);
+
+            if (!string.IsNullOrWhiteSpace(currentCommitId) &&
+                !string.Equals(workbookInfo.PullCommitId, currentCommitId, StringComparison.OrdinalIgnoreCase))
+            {
+                MessageBox.Show("Pull 元が最新ではありません。先に最新版取得を実行してください。", "変更共有");
+                return;
+            }
+
+            string shareToken = GitLabAuth.GetOrPromptToken(
+                workbookInfo.ShareInfo.BaseUrl,
+                workbookInfo.ShareInfo.ProjectId);
+            if (string.IsNullOrWhiteSpace(shareToken))
+            {
+                MessageBox.Show("共有をキャンセルしました（トークン未入力）", "変更共有");
+                return;
+            }
+
+            SharedProjectManifest remoteManifest = await TryDownloadSharedProjectManifestAsync(
+                workbookInfo.ShareInfo,
+                workbookInfo.ProjectId,
+                shareToken).ConfigureAwait(true);
+
+            List<SharedSheetSelectionItem> selectionItems = CollectSharedSheetSelectionItems(workbook, remoteManifest);
+            if (selectionItems.Count == 0)
+            {
+                MessageBox.Show("共有する変更はありません。", "変更共有");
+                return;
+            }
+
+            List<string> staleSheetNames = CollectStaleSharedSheetNames(workbook, selectionItems, remoteManifest);
+            if (staleSheetNames.Count > 0)
+            {
+                MessageBox.Show(
+                    "共有先が最新ではありません。先に最新版取得を実行してください。\n\n" +
+                    string.Join("\n", staleSheetNames),
+                    "変更共有");
+                return;
+            }
+
+            List<SharedSheetSelectionItem> selectedItems;
+            if (!SharedSheetSelectionDialog.TryShow(null, selectionItems, out selectedItems))
+            {
+                return;
+            }
+
+            if (selectedItems == null || selectedItems.Count == 0)
+            {
+                MessageBox.Show("共有するシートが選択されていません。", "変更共有");
+                return;
+            }
+
+            InitializeLoggerForWorkbookSession(workbook, "shared-commit");
+
+            progressForm = new PullProgressForm("変更共有", "共有中...");
+            progressForm.Show();
+            progressForm.AppendLine("変更共有を開始します");
+
+            await UploadSharedSheetsAsync(
+                workbook,
+                workbookInfo.ShareInfo,
+                shareToken,
+                remoteManifest,
+                selectedItems,
+                progressForm.AppendLine).ConfigureAwait(true);
+
+            MessageBox.Show("共有が完了しました。", "変更共有");
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(ex.ToString(), "変更共有");
+        }
+        finally
+        {
+            if (progressForm != null)
+            {
+                progressForm.CloseForm();
+            }
         }
     }
 

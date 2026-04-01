@@ -5,6 +5,7 @@ using System.Net;
 using System.Net.Http;
 using System.Runtime.Serialization.Json;
 using System.Text;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -276,6 +277,105 @@ public static class GitLabClient
                 }
 
                 return bytes;
+            }
+        }
+    }
+
+    internal static async Task<GitLabRepositoryFileInfo> TryGetRepositoryFileInfoAsync(
+        string baseUrl,
+        string projectId,
+        string filePath,
+        string refName,
+        string privateToken,
+        CancellationToken cancellationToken = default(CancellationToken))
+    {
+        EnsureTls12();
+
+        string url =
+            $"{baseUrl.TrimEnd('/')}/api/v4/projects/{Uri.EscapeDataString(projectId)}/repository/files/{Uri.EscapeDataString(filePath)}?ref={Uri.EscapeDataString(refName)}";
+
+        using (var req = new HttpRequestMessage(HttpMethod.Get, url))
+        {
+            req.Headers.Add("PRIVATE-TOKEN", privateToken);
+
+            using (var res = await _httpClient.SendAsync(req, HttpCompletionOption.ResponseContentRead, cancellationToken).ConfigureAwait(false))
+            {
+                byte[] bytes = await res.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
+
+                if (res.StatusCode == HttpStatusCode.NotFound)
+                {
+                    return null;
+                }
+
+                if (!res.IsSuccessStatusCode)
+                {
+                    ThrowGitLabApiException(res, url, bytes);
+                }
+
+                return DeserializeJson<GitLabRepositoryFileInfo>(bytes);
+            }
+        }
+    }
+
+    public static async Task UpsertTextFileAsync(
+        string baseUrl,
+        string projectId,
+        string filePath,
+        string refName,
+        string privateToken,
+        string content,
+        string commitMessage,
+        CancellationToken cancellationToken = default(CancellationToken))
+    {
+        EnsureTls12();
+
+        GitLabRepositoryFileInfo existingFile = await TryGetRepositoryFileInfoAsync(
+            baseUrl,
+            projectId,
+            filePath,
+            refName,
+            privateToken,
+            cancellationToken).ConfigureAwait(false);
+
+        string url =
+            $"{baseUrl.TrimEnd('/')}/api/v4/projects/{Uri.EscapeDataString(projectId)}/repository/files/{Uri.EscapeDataString(filePath)}";
+
+        var body = new Dictionary<string, object>
+        {
+            { "branch", refName },
+            { "commit_message", commitMessage },
+            { "content", content ?? string.Empty },
+        };
+
+        HttpMethod method;
+        if (existingFile == null)
+        {
+            method = HttpMethod.Post;
+        }
+        else
+        {
+            method = HttpMethod.Put;
+
+            if (!string.IsNullOrWhiteSpace(existingFile.LastCommitId))
+            {
+                body["last_commit_id"] = existingFile.LastCommitId;
+            }
+        }
+
+        string jsonBody = JsonSerializer.Serialize(body);
+        using (var req = new HttpRequestMessage(method, url))
+        {
+            req.Headers.Add("PRIVATE-TOKEN", privateToken);
+            req.Content = new StringContent(jsonBody, Encoding.UTF8, "application/json");
+
+            using (var res = await _httpClient.SendAsync(req, HttpCompletionOption.ResponseContentRead, cancellationToken).ConfigureAwait(false))
+            {
+                byte[] bytes = await res.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
+
+                if (!res.IsSuccessStatusCode)
+                {
+                    ThrowGitLabApiException(res, url, bytes);
+                }
             }
         }
     }

@@ -147,6 +147,7 @@
     <Compile Include="GitLabPathResolver.cs" />
     <Compile Include="GitLabProjectInfo.cs" />
     <Compile Include="GitLabRepoDialog.cs" />
+    <Compile Include="GitLabRepositoryFileInfo.cs" />
     <Compile Include="GitLabShareInfo.cs" />
     <Compile Include="GitLabShareInfoStore.cs" />
     <Compile Include="GitLabTokenManagerDialog.cs">
@@ -163,6 +164,7 @@
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="ShellBridge.cs" />
     <Compile Include="SharedSheetModels.cs" />
+    <Compile Include="SharedSheetSelectionDialog.cs" />
     <Compile Include="TimeAssigner.cs" />
     <Compile Include="TokenInputDialog.cs">
       <SubType>Form</SubType>
