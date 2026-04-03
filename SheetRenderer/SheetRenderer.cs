@@ -187,6 +187,7 @@ public class PullProgressForm : Form
         continueButton.Height = 32;
         continueButton.Text = "処理中...";
         continueButton.Enabled = false;
+        continueButton.Visible = false;
         continueButton.Click += ContinueButton_Click;
         Controls.Add(continueButton);
 
@@ -217,6 +218,17 @@ public class PullProgressForm : Form
         logTextBox.ScrollToCaret();
     }
 
+    public void SetStatusText(string statusText)
+    {
+        if (InvokeRequired)
+        {
+            BeginInvoke(new Action<string>(SetStatusText), statusText);
+            return;
+        }
+
+        statusLabel.Text = string.IsNullOrWhiteSpace(statusText) ? string.Empty : statusText;
+    }
+
     public void ShowContinueButton(string buttonText, string statusText)
     {
         if (InvokeRequired)
@@ -227,6 +239,7 @@ public class PullProgressForm : Form
 
         statusLabel.Text = statusText;
         continueButton.Text = buttonText;
+        continueButton.Visible = true;
         continueButton.Enabled = true;
     }
 
@@ -239,7 +252,7 @@ public class PullProgressForm : Form
     {
         if (InvokeRequired)
         {
-            BeginInvoke(new Action(CloseForm));
+            Invoke(new Action(CloseForm));
             return;
         }
 
@@ -1474,6 +1487,44 @@ public class RibbonController : ExcelRibbon
         workbook.SetCustomProperty(sharedSheetSyncStateCustomPropertyName, state);
     }
 
+    private static void SetSharedSheetBaseHashes(
+        Excel.Workbook workbook,
+        IEnumerable<SharedSheetSelectionItem> items)
+    {
+        if (workbook == null)
+        {
+            return;
+        }
+
+        SharedSheetSyncState state = GetSharedSheetSyncState(workbook);
+        foreach (SharedSheetSelectionItem item in items ?? Enumerable.Empty<SharedSheetSelectionItem>())
+        {
+            if (item == null || item.Document == null || string.IsNullOrWhiteSpace(item.SheetId))
+            {
+                continue;
+            }
+
+            SharedSheetSyncStateEntry entry = state.Sheets.FirstOrDefault(x => string.Equals(x.SheetId, item.SheetId, StringComparison.Ordinal));
+            if (entry == null)
+            {
+                entry = new SharedSheetSyncStateEntry
+                {
+                    SheetId = item.SheetId
+                };
+                state.Sheets.Add(entry);
+            }
+
+            entry.BaseHash = item.Document.Hash;
+        }
+
+        state.Sheets = state.Sheets
+            .Where(x => x != null && !string.IsNullOrWhiteSpace(x.SheetId))
+            .OrderBy(x => x.SheetId, StringComparer.Ordinal)
+            .ToList();
+
+        workbook.SetCustomProperty(sharedSheetSyncStateCustomPropertyName, state);
+    }
+
     private static void SetSharedSheetBaseHashes(Excel.Workbook workbook, IEnumerable<SharedSheetDocument> sheetDocuments)
     {
         if (workbook == null)
@@ -1499,6 +1550,74 @@ public class RibbonController : ExcelRibbon
     private static string BuildSharedProjectManifestPath(string projectId)
     {
         return GitLabPathResolver.NormalizeGitLabRelativePath(projectId + "/_manifest.json");
+    }
+
+    private static string GetNormalizedShareRefName(GitLabShareInfo shareInfo)
+    {
+        if (shareInfo == null || string.IsNullOrWhiteSpace(shareInfo.RefName))
+        {
+            return "main";
+        }
+
+        return shareInfo.RefName.Trim();
+    }
+
+    private async Task<string> EnsureValidatedShareRefNameAsync(
+        GitLabShareInfo shareInfo,
+        string token,
+        Excel.Workbook workbook = null)
+    {
+        if (shareInfo == null)
+        {
+            throw new ArgumentNullException(nameof(shareInfo));
+        }
+
+        string configuredRefName = GetNormalizedShareRefName(shareInfo);
+
+        try
+        {
+            await GitLabClient.GetCommitIdAsync(
+                shareInfo.BaseUrl,
+                shareInfo.ProjectId,
+                configuredRefName,
+                token).ConfigureAwait(true);
+            return configuredRefName;
+        }
+        catch (Exception originalException)
+        {
+            GitLabProjectInfo projectInfo = await GitLabClient.GetProjectInfoAsync(
+                shareInfo.BaseUrl,
+                shareInfo.ProjectId,
+                token).ConfigureAwait(true);
+
+            string defaultBranch = projectInfo == null ? null : projectInfo.DefaultBranch;
+            if (string.IsNullOrWhiteSpace(defaultBranch) ||
+                string.Equals(defaultBranch, configuredRefName, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(
+                    "共有先 GitLab の branch が見つかりません。\n" +
+                    "Project ID: " + shareInfo.ProjectId + "\n" +
+                    "Ref: " + configuredRefName + "\n\n" +
+                    originalException.Message);
+            }
+
+            await GitLabClient.GetCommitIdAsync(
+                shareInfo.BaseUrl,
+                shareInfo.ProjectId,
+                defaultBranch,
+                token).ConfigureAwait(true);
+
+            shareInfo.RefName = defaultBranch;
+            GitLabShareInfoStore.Save(shareInfo);
+
+            if (workbook != null)
+            {
+                workbook.SetCustomProperty(gitLabShareInfoCustomPropertyName, shareInfo);
+            }
+
+            FileLogger.Info("[SharedRefFallback] " + configuredRefName + " -> " + defaultBranch);
+            return defaultBranch;
+        }
     }
 
     private static string BuildSharedSheetPath(string projectId, string sheetId)
@@ -1927,12 +2046,13 @@ public class RibbonController : ExcelRibbon
         string projectId,
         string token)
     {
+        string refName = GetNormalizedShareRefName(shareInfo);
         string manifestPath = BuildSharedProjectManifestPath(projectId);
         byte[] manifestBytes = await GitLabClient.TryDownloadFileRawByPathAsync(
             shareInfo.BaseUrl,
             shareInfo.ProjectId,
             manifestPath,
-            shareInfo.RefName,
+            refName,
             token).ConfigureAwait(false);
 
         if (manifestBytes == null || manifestBytes.Length == 0)
@@ -1949,12 +2069,13 @@ public class RibbonController : ExcelRibbon
         string sheetId,
         string token)
     {
+        string refName = GetNormalizedShareRefName(shareInfo);
         string sheetPath = BuildSharedSheetPath(projectId, sheetId);
         byte[] sheetBytes = await GitLabClient.TryDownloadFileRawByPathAsync(
             shareInfo.BaseUrl,
             shareInfo.ProjectId,
             sheetPath,
-            shareInfo.RefName,
+            refName,
             token).ConfigureAwait(false);
 
         if (sheetBytes == null || sheetBytes.Length == 0)
@@ -1987,6 +2108,8 @@ public class RibbonController : ExcelRibbon
             MessageBox.Show("共有値の取得をキャンセルしました（トークン未入力）", "最新版取得");
             return;
         }
+
+        await EnsureValidatedShareRefNameAsync(shareInfo, token, workbook);
 
         progressReporter?.Invoke("共有値を確認しています");
         SharedProjectManifest manifest = await TryDownloadSharedProjectManifestAsync(
@@ -2305,21 +2428,26 @@ public class RibbonController : ExcelRibbon
             MessageBox.Show("共有をキャンセルしました（トークン未入力）", "変更共有");
             return;
         }
+        string refName = GetNormalizedShareRefName(shareInfo);
+
+        var actions = new List<object>();
 
         foreach (SharedSheetSelectionItem item in items)
         {
             SharedSheetDocument document = item.Document;
             string filePath = BuildSharedSheetPath(projectId, document.SheetId);
+            string actionName = string.IsNullOrWhiteSpace(GetRemoteSharedHash(remoteManifest, document.SheetId))
+                ? "create"
+                : "update";
             progressReporter?.Invoke("共有しています: " + item.SheetName);
 
-            await GitLabClient.UpsertTextFileAsync(
-                shareInfo.BaseUrl,
-                shareInfo.ProjectId,
-                filePath,
-                shareInfo.RefName,
-                token,
-                CreateSharedSheetJsonText(document),
-                "Update shared sheet: " + projectId + "/" + document.SheetId);
+            actions.Add(new Dictionary<string, object>
+            {
+                { "action", actionName },
+                { "file_path", filePath },
+                { "content", CreateSharedSheetJsonText(document) },
+                { "encoding", "text" }
+            });
         }
 
         SharedProjectManifest updatedManifest = MergeSharedProjectManifest(
@@ -2328,18 +2456,31 @@ public class RibbonController : ExcelRibbon
             items.Select(x => x.Document));
 
         progressReporter?.Invoke("共有マニフェストを更新しています");
-        await GitLabClient.UpsertTextFileAsync(
+        actions.Add(new Dictionary<string, object>
+        {
+            { "action", remoteManifest == null ? "create" : "update" },
+            { "file_path", BuildSharedProjectManifestPath(projectId) },
+            { "content", CreateSharedProjectManifestJsonText(updatedManifest) },
+            { "encoding", "text" }
+        });
+
+        progressReporter?.Invoke("GitLab の応答を待っています（数秒かかることがあります）");
+        await GitLabClient.CreateCommitAsync(
             shareInfo.BaseUrl,
             shareInfo.ProjectId,
-            BuildSharedProjectManifestPath(projectId),
-            shareInfo.RefName,
+            refName,
             token,
-            CreateSharedProjectManifestJsonText(updatedManifest),
-            "Update shared manifest: " + projectId);
+            "Update shared sheets: " + projectId,
+            actions).ConfigureAwait(true);
+
+        // TODO:
+        // 共有成功直後の workbook カスタムプロパティ更新で UI が戻らないことがあるため、
+        // いったん base hash の即時書き戻しは止めておく。
+        // 安定化後に復活させる。
+        // SetSharedSheetBaseHashes(workbook, items);
 
         foreach (SharedSheetSelectionItem item in items)
         {
-            SetSharedSheetBaseHash(workbook, item.SheetId, item.Document.Hash);
             FileLogger.Info("[SharedCommit] uploaded sheetId=" + item.SheetId + " hash=" + item.Document.Hash);
         }
     }
@@ -3582,12 +3723,44 @@ public class RibbonController : ExcelRibbon
     private static string GetNormalizedWorkbookOutputPath(string outputFilePath)
     {
         string fullPath = Path.GetFullPath(outputFilePath);
-        if (string.IsNullOrWhiteSpace(Path.GetExtension(fullPath)))
-        {
-            fullPath += Path.GetExtension(templateFileName);
-        }
+        string directoryPath = Path.GetDirectoryName(fullPath);
+        string fileName = NormalizeWorkbookOutputFileName(Path.GetFileName(fullPath));
+
+        fullPath = string.IsNullOrWhiteSpace(directoryPath)
+            ? fileName
+            : Path.Combine(directoryPath, fileName);
 
         return fullPath;
+    }
+
+    private static string NormalizeWorkbookOutputFileName(string fileName)
+    {
+        string normalizedFileName = Path.GetFileName(fileName ?? string.Empty);
+        if (string.IsNullOrWhiteSpace(normalizedFileName))
+        {
+            normalizedFileName = "output";
+        }
+
+        string fileNameWithoutExtension = Path.GetFileNameWithoutExtension(normalizedFileName);
+        if (string.IsNullOrWhiteSpace(fileNameWithoutExtension))
+        {
+            fileNameWithoutExtension = "output";
+        }
+
+        char[] invalidChars = Path.GetInvalidFileNameChars();
+        var builder = new StringBuilder(fileNameWithoutExtension.Length);
+        foreach (char c in fileNameWithoutExtension)
+        {
+            builder.Append(invalidChars.Contains(c) ? '_' : c);
+        }
+
+        string safeFileNameWithoutExtension = builder.ToString().Trim();
+        if (string.IsNullOrWhiteSpace(safeFileNameWithoutExtension))
+        {
+            safeFileNameWithoutExtension = "output";
+        }
+
+        return safeFileNameWithoutExtension + Path.GetExtension(templateFileName);
     }
 
     private static string GetOutputWorkbookFileNameFromJson(string jsonFilePath)
@@ -3597,9 +3770,10 @@ public class RibbonController : ExcelRibbon
         var confData = GetPropertiesFromJsonNode(jsonObject, "variables");
 
         const string outputFilenameConfName = "outputFilename";
-        return confData.ContainsKey(outputFilenameConfName)
+        string rawFileName = confData.ContainsKey(outputFilenameConfName)
             ? confData[outputFilenameConfName]
             : Path.GetFileNameWithoutExtension(jsonFilePath);
+        return NormalizeWorkbookOutputFileName(rawFileName);
     }
 
     private static async Task<string> TryGetProjectFolderNameAsync(
@@ -4812,25 +4986,20 @@ public class RibbonController : ExcelRibbon
 
     static Excel.Workbook CreateCopiedWorkbook(Excel.Application excelApp, string filePath, string newFilePath)
     {
-        // Read-onlyでファイルを開く
-        Excel.Workbook workbook = excelApp.Workbooks.Open(filePath, ReadOnly: true);
+        if (File.Exists(newFilePath))
+        {
+            File.Delete(newFilePath);
+        }
 
-        // Save the workbook with the new name, overwriting if it already exists
-        excelApp.DisplayAlerts = false;
-        workbook.SaveAs(newFilePath, Excel.XlFileFormat.xlOpenXMLWorkbookMacroEnabled,
-                    AccessMode: Excel.XlSaveAsAccessMode.xlExclusive,
-                    ConflictResolution: Excel.XlSaveConflictResolution.xlLocalSessionChanges,
-                    AddToMru: false,
-                    TextCodepage: false,
-                    TextVisualLayout: false,
-                    Local: true);
-        excelApp.DisplayAlerts = true;
+        File.Copy(filePath, newFilePath, false);
 
-        // 読み取り専用のブックを閉じる
-        workbook.Close(false);
+        FileAttributes copiedFileAttributes = File.GetAttributes(newFilePath);
+        if ((copiedFileAttributes & FileAttributes.ReadOnly) != 0)
+        {
+            File.SetAttributes(newFilePath, copiedFileAttributes & ~FileAttributes.ReadOnly);
+        }
 
-        // 新しいファイルを開く
-        workbook = excelApp.Workbooks.Open(newFilePath);
+        Excel.Workbook workbook = excelApp.Workbooks.Open(newFilePath, ReadOnly: false);
 
         // Excelを表示
         excelApp.Visible = true;
@@ -5619,6 +5788,11 @@ public class RibbonController : ExcelRibbon
                 return;
             }
 
+            await EnsureValidatedShareRefNameAsync(
+                workbookInfo.ShareInfo,
+                shareToken,
+                workbook).ConfigureAwait(true);
+
             SharedProjectManifest remoteManifest = await TryDownloadSharedProjectManifestAsync(
                 workbookInfo.ShareInfo,
                 workbookInfo.ProjectId,
@@ -5657,7 +5831,13 @@ public class RibbonController : ExcelRibbon
 
             progressForm = new PullProgressForm("変更共有", "共有中...");
             progressForm.Show();
-            progressForm.AppendLine("変更共有を開始します");
+            Action<string> shareProgressReporter = message =>
+            {
+                progressForm.SetStatusText(message);
+                progressForm.AppendLine(message);
+            };
+
+            shareProgressReporter("変更共有を開始します");
 
             await UploadSharedSheetsAsync(
                 workbook,
@@ -5665,11 +5845,14 @@ public class RibbonController : ExcelRibbon
                 shareToken,
                 remoteManifest,
                 selectedItems,
-                progressForm.AppendLine).ConfigureAwait(true);
+                shareProgressReporter).ConfigureAwait(true);
 
+            shareProgressReporter("共有が完了しました");
+            progressForm.ShowContinueButton("閉じる", "共有が完了しました");
+            await progressForm.WaitForContinueAsync();
             progressForm.CloseForm();
             progressForm = null;
-            MessageBox.Show("共有が完了しました。", "変更共有");
+            return;
         }
         catch (Exception ex)
         {
