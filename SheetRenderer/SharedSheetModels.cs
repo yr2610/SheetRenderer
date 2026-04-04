@@ -7,6 +7,7 @@ internal sealed class SharedSheetDocument
     public string SheetName { get; set; }
     public string RangeAddress { get; set; }
     public SharedRangeInfo RangeInfo { get; set; }
+    public object[] RowIds { get; set; }
     public object[][] Values { get; set; }
     public string Hash { get; set; }
 }

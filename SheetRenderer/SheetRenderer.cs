@@ -909,6 +909,7 @@ public class RibbonController : ExcelRibbon
     const string gitLabPullCommitIdCustomPropertyName = "GitLabPullCommitId";
     const string gitLabShareInfoCustomPropertyName = "GitLabShareInfo";
     const string sharedSheetSyncStateCustomPropertyName = "SharedSheetSyncState";
+    const string sharedSheetBaseStoreSheetName = "SS_SYNC_STATE";
 
     const string ssSheetRangeName = "SS_SHEET";
 
@@ -1301,6 +1302,29 @@ public class RibbonController : ExcelRibbon
         return rows;
     }
 
+    private static JsonArray CreateSharedSheetRowIdsJsonArray(IEnumerable<object> rowIds)
+    {
+        var result = new JsonArray();
+        if (rowIds == null)
+        {
+            return result;
+        }
+
+        foreach (object rowId in rowIds)
+        {
+            if (rowId == null)
+            {
+                result.Add((JsonNode)null);
+            }
+            else
+            {
+                result.Add(JsonValue.Create(NormalizeSharedCellValue(rowId)));
+            }
+        }
+
+        return result;
+    }
+
     private static JsonNode CreateSharedSheetJsonNode(SharedSheetDocument sheetDocument, bool includeHash)
     {
         if (sheetDocument == null)
@@ -1314,6 +1338,7 @@ public class RibbonController : ExcelRibbon
             ["sheetId"] = sheetDocument.SheetId,
             ["sheetName"] = sheetDocument.SheetName,
             ["rangeAddress"] = sheetDocument.RangeAddress,
+            ["rowIds"] = CreateSharedSheetRowIdsJsonArray(sheetDocument.RowIds),
             ["values"] = CreateSharedSheetValuesJsonArray(sheetDocument.Values)
         };
 
@@ -1381,6 +1406,9 @@ public class RibbonController : ExcelRibbon
             SheetName = sheet.Name,
             RangeAddress = sheetAddressInfo.Address,
             RangeInfo = CloneRangeInfo(sheetAddressInfo.RangeInfo),
+            RowIds = sheetValuesInfo.Ids == null
+                ? new object[0]
+                : sheetValuesInfo.Ids.Select(NormalizeSharedCellValue).ToArray(),
             Values = ConvertSheetValuesToJaggedArray(sheetValuesInfo.Values)
         };
         document.Hash = ComputeSharedSheetHash(document);
@@ -1460,9 +1488,20 @@ public class RibbonController : ExcelRibbon
             return null;
         }
 
+        SharedSheetDocument sharedSheetDocument = GetSharedSheetBaseDocument(workbook, sheetId);
+        if (sharedSheetDocument != null && !string.IsNullOrWhiteSpace(sharedSheetDocument.Hash))
+        {
+            return sharedSheetDocument.Hash;
+        }
+
         SharedSheetSyncState state = GetSharedSheetSyncState(workbook);
         SharedSheetSyncStateEntry entry = state.Sheets.FirstOrDefault(x => string.Equals(x.SheetId, sheetId, StringComparison.Ordinal));
-        return entry == null ? null : entry.BaseHash;
+        if (entry != null && !string.IsNullOrWhiteSpace(entry.BaseHash))
+        {
+            return entry.BaseHash;
+        }
+
+        return null;
     }
 
     private static void SetSharedSheetBaseHash(Excel.Workbook workbook, string sheetId, string baseHash)
@@ -1485,6 +1524,204 @@ public class RibbonController : ExcelRibbon
 
         entry.BaseHash = baseHash;
         workbook.SetCustomProperty(sharedSheetSyncStateCustomPropertyName, state);
+    }
+
+    private static Excel.Worksheet GetSharedSheetBaseStoreSheet(Excel.Workbook workbook, bool createIfMissing)
+    {
+        if (workbook == null)
+        {
+            return null;
+        }
+
+        foreach (Excel.Worksheet worksheet in workbook.Worksheets)
+        {
+            if (string.Equals(worksheet.Name, sharedSheetBaseStoreSheetName, StringComparison.OrdinalIgnoreCase))
+            {
+                worksheet.Visible = Excel.XlSheetVisibility.xlSheetVisible;
+                EnsureSharedSheetBaseStoreHeader(worksheet);
+                return worksheet;
+            }
+        }
+
+        if (!createIfMissing)
+        {
+            return null;
+        }
+
+        Excel.Worksheet newWorksheet = (Excel.Worksheet)workbook.Worksheets.Add(
+            After: workbook.Worksheets[workbook.Worksheets.Count]);
+        newWorksheet.Name = sharedSheetBaseStoreSheetName;
+        newWorksheet.Visible = Excel.XlSheetVisibility.xlSheetVisible;
+        EnsureSharedSheetBaseStoreHeader(newWorksheet);
+        return newWorksheet;
+    }
+
+    private static void EnsureSharedSheetBaseStoreHeader(Excel.Worksheet worksheet)
+    {
+        if (worksheet == null)
+        {
+            return;
+        }
+
+        object[,] headerValues = (object[,])Array.CreateInstance(typeof(object), new int[] { 1, 4 }, new int[] { 1, 1 });
+        headerValues[1, 1] = "SheetId";
+        headerValues[1, 2] = "SheetName";
+        headerValues[1, 3] = "BaseHash";
+        headerValues[1, 4] = "ChunkCount";
+        worksheet.Range[worksheet.Cells[1, 1], worksheet.Cells[1, 4]].Value2 = headerValues;
+    }
+
+    private static int FindSharedSheetBaseStoreRow(Excel.Worksheet worksheet, string sheetId)
+    {
+        if (worksheet == null || string.IsNullOrWhiteSpace(sheetId))
+        {
+            return 0;
+        }
+
+        Excel.Range usedRange = worksheet.UsedRange;
+        int startRow = usedRange.Row;
+        int rowCount = usedRange.Rows.Count;
+        int lastRow = Math.Max(1, startRow + rowCount - 1);
+        Excel.Range idColumnRange = worksheet.Range[worksheet.Cells[2, 1], worksheet.Cells[lastRow, 1]];
+        object[,] idValues = ExcelExtensions.GetValuesAs2DArray(idColumnRange.Value2);
+
+        for (int offset = 1; offset <= idValues.GetLength(0); offset++)
+        {
+            object value = idValues[offset, 1];
+            string existingSheetId = value == null ? null : value.ToString();
+            if (string.Equals(existingSheetId, sheetId, StringComparison.Ordinal))
+            {
+                return offset + 1;
+            }
+        }
+
+        return 0;
+    }
+
+    private static int GetNextSharedSheetBaseStoreRow(Excel.Worksheet worksheet)
+    {
+        if (worksheet == null)
+        {
+            return 2;
+        }
+
+        Excel.Range usedRange = worksheet.UsedRange;
+        int startRow = usedRange.Row;
+        int rowCount = usedRange.Rows.Count;
+        int lastRow = Math.Max(1, startRow + rowCount - 1);
+        return Math.Max(2, lastRow + 1);
+    }
+
+    private static List<string> SplitSharedSheetBaseJson(string jsonText, int chunkLength = 30000)
+    {
+        var result = new List<string>();
+        string normalizedJsonText = jsonText ?? string.Empty;
+
+        if (normalizedJsonText.Length == 0)
+        {
+            result.Add(string.Empty);
+            return result;
+        }
+
+        for (int i = 0; i < normalizedJsonText.Length; i += chunkLength)
+        {
+            int length = Math.Min(chunkLength, normalizedJsonText.Length - i);
+            result.Add(normalizedJsonText.Substring(i, length));
+        }
+
+        return result;
+    }
+
+    private static void SaveSharedSheetBaseDocument(Excel.Workbook workbook, SharedSheetDocument sharedSheetDocument)
+    {
+        if (workbook == null || sharedSheetDocument == null || string.IsNullOrWhiteSpace(sharedSheetDocument.SheetId))
+        {
+            return;
+        }
+
+        string jsonText = CreateSharedSheetJsonText(sharedSheetDocument);
+        List<string> chunks = SplitSharedSheetBaseJson(jsonText);
+        Excel.Worksheet worksheet = GetSharedSheetBaseStoreSheet(workbook, createIfMissing: true);
+        int row = FindSharedSheetBaseStoreRow(worksheet, sharedSheetDocument.SheetId);
+        if (row == 0)
+        {
+            row = GetNextSharedSheetBaseStoreRow(worksheet);
+        }
+
+        int previousChunkCount = 0;
+        object previousChunkCountValue = worksheet.Cells[row, 4].Value2;
+        if (previousChunkCountValue != null)
+        {
+            int.TryParse(previousChunkCountValue.ToString(), out previousChunkCount);
+        }
+
+        int totalColumns = Math.Max(4 + Math.Max(chunks.Count, previousChunkCount), 4);
+        object[,] rowValues = (object[,])Array.CreateInstance(typeof(object), new int[] { 1, totalColumns }, new int[] { 1, 1 });
+        rowValues[1, 1] = sharedSheetDocument.SheetId;
+        rowValues[1, 2] = sharedSheetDocument.SheetName ?? string.Empty;
+        rowValues[1, 3] = sharedSheetDocument.Hash ?? string.Empty;
+        rowValues[1, 4] = chunks.Count;
+
+        for (int i = 0; i < chunks.Count; i++)
+        {
+            rowValues[1, 5 + i] = chunks[i];
+        }
+
+        worksheet.Range[worksheet.Cells[row, 1], worksheet.Cells[row, totalColumns]].Value2 = rowValues;
+    }
+
+    private static SharedSheetDocument GetSharedSheetBaseDocument(Excel.Workbook workbook, string sheetId)
+    {
+        if (workbook == null || string.IsNullOrWhiteSpace(sheetId))
+        {
+            return null;
+        }
+
+        Excel.Worksheet worksheet = GetSharedSheetBaseStoreSheet(workbook, createIfMissing: false);
+        int row = FindSharedSheetBaseStoreRow(worksheet, sheetId);
+        if (row == 0)
+        {
+            return null;
+        }
+
+        int chunkCount;
+        object chunkCountValue = worksheet.Cells[row, 4].Value2;
+        if (chunkCountValue == null || !int.TryParse(chunkCountValue.ToString(), out chunkCount) || chunkCount <= 0)
+        {
+            return null;
+        }
+
+        var builder = new StringBuilder();
+        for (int i = 0; i < chunkCount; i++)
+        {
+            object chunkValue = worksheet.Cells[row, 5 + i].Value2;
+            if (chunkValue != null)
+            {
+                builder.Append(chunkValue.ToString());
+            }
+        }
+
+        SharedSheetDocument sharedSheetDocument = ParseSharedSheetDocument(builder.ToString());
+        if (sharedSheetDocument != null)
+        {
+            sharedSheetDocument.SheetId = string.IsNullOrWhiteSpace(sharedSheetDocument.SheetId)
+                ? sheetId
+                : sharedSheetDocument.SheetId;
+
+            object storedSheetName = worksheet.Cells[row, 2].Value2;
+            if (string.IsNullOrWhiteSpace(sharedSheetDocument.SheetName) && storedSheetName != null)
+            {
+                sharedSheetDocument.SheetName = storedSheetName.ToString();
+            }
+
+            object storedBaseHash = worksheet.Cells[row, 3].Value2;
+            if (string.IsNullOrWhiteSpace(sharedSheetDocument.Hash) && storedBaseHash != null)
+            {
+                sharedSheetDocument.Hash = storedBaseHash.ToString();
+            }
+        }
+
+        return sharedSheetDocument;
     }
 
     private static void SetSharedSheetBaseHashes(
@@ -1706,6 +1943,23 @@ public class RibbonController : ExcelRibbon
         return result;
     }
 
+    private static object[] ParseSharedSheetRowIds(JsonNode rowIdsNode)
+    {
+        JsonArray rowIdsArray = rowIdsNode as JsonArray;
+        if (rowIdsArray == null)
+        {
+            return new object[0];
+        }
+
+        var result = new object[rowIdsArray.Count];
+        for (int i = 0; i < rowIdsArray.Count; i++)
+        {
+            result[i] = ReadSharedJsonValue(rowIdsArray[i]);
+        }
+
+        return result;
+    }
+
     private static SharedRangeInfo ParseSharedRangeInfo(JsonNode rangeInfoNode)
     {
         JsonObject rangeInfoObject = rangeInfoNode as JsonObject;
@@ -1771,6 +2025,7 @@ public class RibbonController : ExcelRibbon
             SheetName = root["sheetName"]?.GetValue<string>(),
             RangeAddress = root["rangeAddress"]?.GetValue<string>(),
             RangeInfo = ParseSharedRangeInfo(root["rangeInfo"]),
+            RowIds = ParseSharedSheetRowIds(root["rowIds"]),
             Values = ParseSharedSheetValues(root["values"]),
             Hash = root["hash"]?.GetValue<string>()
         };
@@ -1851,9 +2106,17 @@ public class RibbonController : ExcelRibbon
     private static IEnumerable<object> GetIdsFromSharedSheetDocument(SharedSheetDocument sheetDocument)
     {
         if (sheetDocument == null ||
-            sheetDocument.RangeInfo == null ||
-            !sheetDocument.RangeInfo.IdColumnOffset.HasValue ||
             sheetDocument.Values == null)
+        {
+            return Enumerable.Empty<object>();
+        }
+
+        if (sheetDocument.RowIds != null && sheetDocument.RowIds.Length > 0)
+        {
+            return sheetDocument.RowIds;
+        }
+
+        if (sheetDocument.RangeInfo == null || !sheetDocument.RangeInfo.IdColumnOffset.HasValue)
         {
             return Enumerable.Empty<object>();
         }
@@ -1868,6 +2131,24 @@ public class RibbonController : ExcelRibbon
 
             return row[idColumnOffset];
         });
+    }
+
+    private static bool HasAnyNonEmptySharedIds(IEnumerable<object> ids)
+    {
+        if (ids == null)
+        {
+            return false;
+        }
+
+        foreach (object id in ids)
+        {
+            if (id != null && !string.IsNullOrWhiteSpace(id.ToString()))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static bool AreSharedCellValuesEqual(object left, object right)
@@ -2009,12 +2290,22 @@ public class RibbonController : ExcelRibbon
         }
 
         object[,] mergedValues;
-        if (sharedSheetDocument.RangeInfo != null &&
-            sharedSheetDocument.RangeInfo.IdColumnOffset.HasValue &&
+        object[] remoteIds = null;
+        bool canMergeById = false;
+        object[,] remoteValues = ConvertJaggedArrayTo2DArray(sharedSheetDocument.Values);
+        if (sharedSheetDocument.RowIds != null &&
+            sharedSheetDocument.RowIds.Length > 0 &&
             currentSheetValuesInfo.Ids != null)
         {
-            object[,] remoteValues = ConvertJaggedArrayTo2DArray(sharedSheetDocument.Values);
-            IEnumerable<object> remoteIds = GetIdsFromSharedSheetDocument(sharedSheetDocument);
+            remoteIds = GetIdsFromSharedSheetDocument(sharedSheetDocument).ToArray();
+            canMergeById =
+                remoteIds.Length == remoteValues.GetLength(0) &&
+                HasAnyNonEmptySharedIds(currentSheetValuesInfo.Ids) &&
+                HasAnyNonEmptySharedIds(remoteIds);
+        }
+
+        if (canMergeById)
+        {
             Dictionary<string, List<object>> remoteDictionary = CreateRowDictionaryWithIDKeys(remoteValues, remoteIds);
             mergedValues = CopyValuesById(
                 currentSheetValuesInfo.Values,
@@ -2024,14 +2315,14 @@ public class RibbonController : ExcelRibbon
         }
         else
         {
-            object[,] remoteValues = ConvertJaggedArrayTo2DArray(sharedSheetDocument.Values);
             if (remoteValues.GetLength(0) != currentSheetValuesInfo.Values.GetLength(0) ||
                 remoteValues.GetLength(1) != currentSheetValuesInfo.Values.GetLength(1))
             {
                 throw new InvalidOperationException(
                     "Shared sheet size mismatch. " +
                     "sheetId='" + sharedSheetDocument.SheetId + "', " +
-                    "sheetName='" + sheet.Name + "'.");
+                    "sheetName='" + sheet.Name + "', " +
+                    "remoteRowIdsAvailable='" + canMergeById + "'.");
             }
 
             mergedValues = remoteValues;
@@ -2041,12 +2332,12 @@ public class RibbonController : ExcelRibbon
         currentSheetValuesInfo.Range.Value2 = mergedValues;
     }
 
-    private async Task<SharedProjectManifest> TryDownloadSharedProjectManifestAsync(
+    private async Task<byte[]> TryDownloadSharedProjectManifestBytesAsync(
         GitLabShareInfo shareInfo,
         string projectId,
+        string refName,
         string token)
     {
-        string refName = GetNormalizedShareRefName(shareInfo);
         string manifestPath = BuildSharedProjectManifestPath(projectId);
         byte[] manifestBytes = await GitLabClient.TryDownloadFileRawByPathAsync(
             shareInfo.BaseUrl,
@@ -2055,7 +2346,38 @@ public class RibbonController : ExcelRibbon
             refName,
             token).ConfigureAwait(false);
 
+        if (manifestBytes == null)
+        {
+            manifestBytes = await GitLabClient.TryDownloadFileViaTreeAsync(
+                shareInfo.BaseUrl,
+                shareInfo.ProjectId,
+                projectId,
+                "_manifest.json",
+                refName,
+                token).ConfigureAwait(false);
+        }
+
         if (manifestBytes == null || manifestBytes.Length == 0)
+        {
+            return null;
+        }
+
+        return manifestBytes;
+    }
+
+    private async Task<SharedProjectManifest> TryDownloadSharedProjectManifestAsync(
+        GitLabShareInfo shareInfo,
+        string projectId,
+        string token)
+    {
+        string refName = GetNormalizedShareRefName(shareInfo);
+        byte[] manifestBytes = await TryDownloadSharedProjectManifestBytesAsync(
+            shareInfo,
+            projectId,
+            refName,
+            token).ConfigureAwait(false);
+
+        if (manifestBytes == null)
         {
             return null;
         }
@@ -2078,6 +2400,17 @@ public class RibbonController : ExcelRibbon
             refName,
             token).ConfigureAwait(false);
 
+        if (sheetBytes == null)
+        {
+            sheetBytes = await GitLabClient.TryDownloadFileViaTreeAsync(
+                shareInfo.BaseUrl,
+                shareInfo.ProjectId,
+                projectId,
+                sheetId + ".json",
+                refName,
+                token).ConfigureAwait(false);
+        }
+
         if (sheetBytes == null || sheetBytes.Length == 0)
         {
             return null;
@@ -2093,14 +2426,18 @@ public class RibbonController : ExcelRibbon
     {
         if (workbook == null || shareInfo == null)
         {
+            progressReporter?.Invoke("共有設定が無いため共有値確認をスキップしました");
             return;
         }
 
         string projectId = workbook.GetCustomProperty(ssProjectIdCustomPropertyName);
         if (string.IsNullOrWhiteSpace(projectId))
         {
+            progressReporter?.Invoke("SSProjectId が無いため共有値確認をスキップしました");
             return;
         }
+
+        InitializeLoggerForSharedReceive(workbook);
 
         string token = GitLabAuth.GetOrPromptToken(shareInfo.BaseUrl, shareInfo.ProjectId);
         if (string.IsNullOrWhiteSpace(token))
@@ -2110,20 +2447,86 @@ public class RibbonController : ExcelRibbon
         }
 
         await EnsureValidatedShareRefNameAsync(shareInfo, token, workbook);
+        string configuredRefName = GetNormalizedShareRefName(shareInfo);
+        string manifestPath = BuildSharedProjectManifestPath(projectId);
 
         progressReporter?.Invoke("共有値を確認しています");
-        SharedProjectManifest manifest = await TryDownloadSharedProjectManifestAsync(
-            shareInfo,
-            projectId,
-            token);
+        progressReporter?.Invoke("共有先 Project ID: " + (shareInfo.ProjectId ?? ""));
+        progressReporter?.Invoke("共有先 Ref: " + configuredRefName);
+        progressReporter?.Invoke("共有マニフェスト Path: " + manifestPath);
+        GitLabProjectInfo projectInfo = await GitLabClient.GetProjectInfoAsync(
+            shareInfo.BaseUrl,
+            shareInfo.ProjectId,
+            token).ConfigureAwait(false);
+        string defaultBranch = projectInfo == null ? null : projectInfo.DefaultBranch;
+
+        var candidateRefs = new List<string>();
+        foreach (string candidate in new[] { configuredRefName, defaultBranch })
+        {
+            if (string.IsNullOrWhiteSpace(candidate))
+            {
+                continue;
+            }
+
+            if (candidateRefs.Any(x => string.Equals(x, candidate, StringComparison.OrdinalIgnoreCase)))
+            {
+                continue;
+            }
+
+            candidateRefs.Add(candidate);
+        }
+
+        byte[] manifestBytes = null;
+        string refName = configuredRefName;
+        foreach (string candidateRef in candidateRefs)
+        {
+            progressReporter?.Invoke("共有マニフェストを確認します: " + candidateRef);
+            manifestBytes = await TryDownloadSharedProjectManifestBytesAsync(
+                shareInfo,
+                projectId,
+                candidateRef,
+                token).ConfigureAwait(false);
+
+            if (manifestBytes != null && manifestBytes.Length > 0)
+            {
+                refName = candidateRef;
+                break;
+            }
+        }
+
+        if (manifestBytes == null)
+        {
+            throw new InvalidOperationException(
+                "共有マニフェストが見つかりません。\n" +
+                "Project ID: " + shareInfo.ProjectId + "\n" +
+                "Path: " + manifestPath + "\n" +
+                "Tried Refs: " + string.Join(", ", candidateRefs));
+        }
+
+        if (!string.Equals(refName, configuredRefName, StringComparison.OrdinalIgnoreCase))
+        {
+            shareInfo.RefName = refName;
+            GitLabShareInfoStore.Save(shareInfo);
+            workbook.SetCustomProperty(gitLabShareInfoCustomPropertyName, shareInfo);
+            progressReporter?.Invoke("共有 branch を切り替えました: " + refName);
+            FileLogger.Info("[SharedManifestRefFallback] manifest found on branch: " + refName);
+        }
+
+        progressReporter?.Invoke("共有マニフェスト取得サイズ: " + manifestBytes.Length + " bytes");
+        SharedProjectManifest manifest = ParseSharedProjectManifest(Encoding.UTF8.GetString(manifestBytes));
 
         if (manifest == null || manifest.Sheets == null || manifest.Sheets.Count == 0)
         {
-            FileLogger.Info("[SharedReceive] shared manifest not found or empty. project=" + projectId);
+            FileLogger.Info("[SharedReceive] shared manifest not found or empty. project=" + projectId + " path=" + manifestPath + " ref=" + refName + " shareRepo=" + shareInfo.ProjectId);
+            progressReporter?.Invoke("共有マニフェストが見つからないか空です");
             return;
         }
 
+        GetSharedSheetBaseStoreSheet(workbook, createIfMissing: true);
+        progressReporter?.Invoke("共有マニフェストを読み込みました: " + manifest.Sheets.Count + " シート");
+
         var sheetsById = new Dictionary<string, Excel.Worksheet>(StringComparer.Ordinal);
+        var sheetsByName = new Dictionary<string, List<Excel.Worksheet>>(StringComparer.Ordinal);
         foreach (Excel.Worksheet sheet in workbook.Sheets)
         {
             string sheetId = sheet.GetCustomProperty(sheetIdCustomPropertyName);
@@ -2131,7 +2534,23 @@ public class RibbonController : ExcelRibbon
             {
                 sheetsById[sheetId] = sheet;
             }
+
+             List<Excel.Worksheet> sameNameSheets;
+             if (!sheetsByName.TryGetValue(sheet.Name, out sameNameSheets))
+             {
+                 sameNameSheets = new List<Excel.Worksheet>();
+                 sheetsByName[sheet.Name] = sameNameSheets;
+             }
+
+             sameNameSheets.Add(sheet);
         }
+
+        progressReporter?.Invoke("ローカルシートを確認しました: " + sheetsById.Count + " シート");
+
+        int appliedCount = 0;
+        int missingLocalSheetCount = 0;
+        int missingSharedDocumentCount = 0;
+        int fallbackMatchedCount = 0;
 
         foreach (SharedProjectManifestEntry entry in manifest.Sheets)
         {
@@ -2143,7 +2562,27 @@ public class RibbonController : ExcelRibbon
             Excel.Worksheet sheet;
             if (!sheetsById.TryGetValue(entry.SheetId, out sheet))
             {
-                continue;
+                List<Excel.Worksheet> sameNameSheets;
+                if (!string.IsNullOrWhiteSpace(entry.SheetName) &&
+                    sheetsByName.TryGetValue(entry.SheetName, out sameNameSheets) &&
+                    sameNameSheets.Count == 1)
+                {
+                    sheet = sameNameSheets[0];
+                    string currentSheetId = sheet.GetCustomProperty(sheetIdCustomPropertyName);
+                    if (string.IsNullOrWhiteSpace(currentSheetId))
+                    {
+                        sheet.SetCustomProperty(sheetIdCustomPropertyName, entry.SheetId);
+                    }
+                    sheetsById[entry.SheetId] = sheet;
+                    fallbackMatchedCount++;
+                    progressReporter?.Invoke("シート名で対応付けました: " + sheet.Name + " -> " + entry.SheetId);
+                }
+                else
+                {
+                    missingLocalSheetCount++;
+                    progressReporter?.Invoke("ローカルに対象シートがありません: " + entry.SheetId);
+                    continue;
+                }
             }
 
             progressReporter?.Invoke("共有値を取得しています: " + sheet.Name);
@@ -2155,6 +2594,8 @@ public class RibbonController : ExcelRibbon
 
             if (sharedSheetDocument == null)
             {
+                missingSharedDocumentCount++;
+                progressReporter?.Invoke("共有JSONが見つかりません: " + entry.SheetId);
                 continue;
             }
 
@@ -2164,21 +2605,30 @@ public class RibbonController : ExcelRibbon
             }
 
             ApplySharedSheetDocumentToWorksheet(sheet, sharedSheetDocument);
-            SetSharedSheetBaseHash(workbook, entry.SheetId, sharedSheetDocument.Hash);
+            SaveSharedSheetBaseDocument(workbook, sharedSheetDocument);
             FileLogger.Info("[SharedReceive] applied sheetId=" + entry.SheetId + " hash=" + sharedSheetDocument.Hash);
+            progressReporter?.Invoke("共有値を反映しました: " + sheet.Name);
+            appliedCount++;
+        }
+
+        if (appliedCount == 0)
+        {
+            progressReporter?.Invoke(
+                "共有値の反映対象はありませんでした"
+                + " (manifest=" + manifest.Sheets.Count
+                + ", localMissing=" + missingLocalSheetCount
+                + ", jsonMissing=" + missingSharedDocumentCount
+                + ", fallbackMatched=" + fallbackMatchedCount
+                + ")");
         }
     }
 
     private static void InitializeLoggerForWorkbookSession(Excel.Workbook workbook, string baseName)
     {
-        if (workbook == null)
-        {
-            return;
-        }
-
+        string fallbackDirectoryPath = Path.Combine(Path.GetTempPath(), "SheetRenderer", "SharedReceive");
         try
         {
-            string workbookPath = workbook.FullName;
+            string workbookPath = workbook == null ? null : workbook.FullName;
             string directoryPath = null;
 
             if (!string.IsNullOrWhiteSpace(workbookPath))
@@ -2188,13 +2638,20 @@ public class RibbonController : ExcelRibbon
 
             if (string.IsNullOrWhiteSpace(directoryPath))
             {
-                directoryPath = Path.Combine(Path.GetTempPath(), "SheetRenderer", "SharedReceive");
+                directoryPath = fallbackDirectoryPath;
             }
 
             FileLogger.InitializeForSession(directoryPath, baseName, timestamped: false);
         }
         catch
         {
+            try
+            {
+                FileLogger.InitializeForSession(fallbackDirectoryPath, baseName, timestamped: false);
+            }
+            catch
+            {
+            }
         }
     }
 
@@ -5549,6 +6006,8 @@ public class RibbonController : ExcelRibbon
                     progressForm.AppendLine("Pull 元は最新版です");
                     progressForm.AppendLine("共有値を確認します");
                     await ReceiveSharedSheetsAsync(activeWorkbook, shareInfo, progressForm.AppendLine);
+                    progressForm.ShowContinueButton("閉じる", "共有値確認が完了しました");
+                    await progressForm.WaitForContinueAsync();
                     return;
                 }
             }

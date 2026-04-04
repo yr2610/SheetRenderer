@@ -102,6 +102,38 @@ public static class GitLabClient
         }
     }
 
+    public static async Task<byte[]> TryDownloadFileViaTreeAsync(
+        string baseUrl,
+        string projectId,
+        string folderPath,
+        string fileName,
+        string refName,
+        string privateToken,
+        CancellationToken cancellationToken = default(CancellationToken))
+    {
+        try
+        {
+            return await DownloadFileViaTreeAsync(
+                baseUrl,
+                projectId,
+                folderPath,
+                fileName,
+                refName,
+                privateToken,
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (InvalidOperationException ex)
+        {
+            if (ex.Message != null &&
+                ex.Message.StartsWith("File not found in tree.", StringComparison.Ordinal))
+            {
+                return null;
+            }
+
+            throw;
+        }
+    }
+
     internal static async Task<List<GitLabTreeItem>> ListTreeItemsAsync(
         string baseUrl,
         string projectId,
