@@ -6056,11 +6056,6 @@ public class RibbonController : ExcelRibbon
                 string outputFileName = GetOutputWorkbookFileNameFromJson(pullResult.JsonFilePath);
                 string outputFilePath = Path.Combine(outputDirectory, outputFileName);
 
-                if (!ConfirmOverwriteForPullNewWorkbook(outputFilePath))
-                {
-                    return;
-                }
-
                 var pullInfo = new GitLabLastInput
                 {
                     BaseUrl = input.BaseUrl,
@@ -6138,11 +6133,6 @@ public class RibbonController : ExcelRibbon
             string outputDirectory = GetPullWorkbookOutputDirectory(input.ProjectId, projectFolderName);
             string outputFileName = GetOutputWorkbookFileNameFromJson(pullResult.JsonFilePath);
             string outputFilePath = Path.Combine(outputDirectory, outputFileName);
-
-            if (!ConfirmOverwriteForPullNewWorkbook(outputFilePath))
-            {
-                return;
-            }
 
             var pullInfo = new GitLabLastInput
             {
