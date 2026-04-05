@@ -3332,6 +3332,9 @@ public class RibbonController : ExcelRibbon
                 SheetName = document.SheetName,
                 SheetId = document.SheetId,
                 ActionLabel = string.IsNullOrWhiteSpace(remoteHash) ? "新規" : "更新",
+                StatusDetail = string.IsNullOrWhiteSpace(remoteHash)
+                    ? "共有先にまだありません"
+                    : "ローカル変更があります",
                 Document = document
             });
         }
@@ -3408,6 +3411,9 @@ public class RibbonController : ExcelRibbon
 
             if (remoteDocument == null)
             {
+                item.HasConflict = true;
+                item.ActionLabel = "競合";
+                item.StatusDetail = "共有先シートを取得できません";
                 conflictSheetNames.Add(item.SheetName);
                 continue;
             }
@@ -3416,12 +3422,18 @@ public class RibbonController : ExcelRibbon
             SharedSheetMergeResult mergeResult = TryMergeSharedSheetDocuments(baseDocument, item.Document, remoteDocument);
             if (mergeResult == null || mergeResult.ConflictCount > 0 || mergeResult.MergedDocument == null)
             {
+                item.HasConflict = true;
+                item.ActionLabel = "競合";
+                item.StatusDetail = mergeResult == null
+                    ? "競合判定に失敗しました"
+                    : ("競合セル " + mergeResult.ConflictCount + " 件");
                 conflictSheetNames.Add(item.SheetName);
                 continue;
             }
 
             item.Document = mergeResult.MergedDocument;
             item.ActionLabel = "マージ";
+            item.StatusDetail = "共有先変更を取り込みます";
         }
 
         return conflictSheetNames
@@ -7100,10 +7112,7 @@ public class RibbonController : ExcelRibbon
 
             if (conflictSheetNames.Count > 0)
             {
-                MessageBox.Show(
-                    "共有内容の競合があるため変更共有できません。先に最新版取得を実行してください。\n\n" +
-                    string.Join("\n", conflictSheetNames),
-                    "変更共有");
+                SharedSheetSelectionDialog.ShowConflictReview(null, selectionItems);
                 return;
             }
 
