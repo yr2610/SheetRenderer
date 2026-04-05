@@ -3351,11 +3351,16 @@ public class RibbonController : ExcelRibbon
             "Update shared sheets: " + projectId,
             actions).ConfigureAwait(true);
 
-        // TODO:
-        // 共有成功直後の workbook カスタムプロパティ更新で UI が戻らないことがあるため、
-        // いったん base hash の即時書き戻しは止めておく。
-        // 安定化後に復活させる。
-        // SetSharedSheetBaseHashes(workbook, items);
+        progressReporter?.Invoke("ローカル base を更新しています");
+        foreach (SharedSheetSelectionItem item in items ?? Enumerable.Empty<SharedSheetSelectionItem>())
+        {
+            if (item == null || item.Document == null || string.IsNullOrWhiteSpace(item.SheetId))
+            {
+                continue;
+            }
+
+            SaveSharedSheetBaseDocument(workbook, item.Document);
+        }
 
         foreach (SharedSheetSelectionItem item in items)
         {
