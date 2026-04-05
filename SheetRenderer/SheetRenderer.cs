@@ -6600,6 +6600,11 @@ public class RibbonController : ExcelRibbon
 
     public async void OnShareButtonPressed(IRibbonControl control)
     {
+        if (SynchronizationContext.Current == null)
+        {
+            SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());
+        }
+
         Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
         Excel.Workbook workbook = excelApp.ActiveWorkbook as Excel.Workbook;
         PullProgressForm progressForm = null;
