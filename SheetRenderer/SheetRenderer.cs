@@ -260,6 +260,47 @@ public class PullProgressForm : Form
     }
 }
 
+public sealed class ExcelUiSuspendScope : IDisposable
+{
+    private readonly Excel.Application excelApp;
+    private readonly bool originalDisplayAlerts;
+    private readonly bool originalScreenUpdating;
+    private readonly Excel.XlCalculation originalCalculation;
+    private readonly bool originalEnableEvents;
+
+    public ExcelUiSuspendScope(Excel.Application excelApp)
+    {
+        this.excelApp = excelApp;
+        if (this.excelApp == null)
+        {
+            return;
+        }
+
+        originalDisplayAlerts = this.excelApp.DisplayAlerts;
+        originalScreenUpdating = this.excelApp.ScreenUpdating;
+        originalCalculation = this.excelApp.Calculation;
+        originalEnableEvents = this.excelApp.EnableEvents;
+
+        this.excelApp.DisplayAlerts = false;
+        this.excelApp.ScreenUpdating = false;
+        this.excelApp.Calculation = Excel.XlCalculation.xlCalculationManual;
+        this.excelApp.EnableEvents = false;
+    }
+
+    public void Dispose()
+    {
+        if (excelApp == null)
+        {
+            return;
+        }
+
+        excelApp.EnableEvents = originalEnableEvents;
+        excelApp.Calculation = originalCalculation;
+        excelApp.ScreenUpdating = originalScreenUpdating;
+        excelApp.DisplayAlerts = originalDisplayAlerts;
+    }
+}
+
 
 //public static class Class1
 //{
@@ -1526,6 +1567,149 @@ public class RibbonController : ExcelRibbon
         workbook.SetCustomProperty(sharedSheetSyncStateCustomPropertyName, state);
     }
 
+    private static SheetViewState CaptureActiveWorkbookViewState(Excel.Workbook workbook)
+    {
+        if (workbook == null)
+        {
+            return null;
+        }
+
+        Excel.Application excelApp;
+        try
+        {
+            excelApp = workbook.Application;
+        }
+        catch
+        {
+            return null;
+        }
+
+        Excel.Worksheet activeSheet = excelApp.ActiveSheet as Excel.Worksheet;
+        if (activeSheet == null)
+        {
+            return null;
+        }
+
+        return new SheetViewState
+        {
+            SheetId = activeSheet.GetCustomProperty(sheetIdCustomPropertyName),
+            SheetName = activeSheet.Name,
+            ActiveCellPosition = excelApp.GetActiveCellPosition(),
+            ScrollPosition = excelApp.GetScrollPosition(),
+            Zoom = excelApp.GetActiveSheetZoom(),
+        };
+    }
+
+    private static void RestoreActiveWorkbookViewState(Excel.Workbook workbook, SheetViewState viewState)
+    {
+        if (workbook == null || viewState == null)
+        {
+            return;
+        }
+
+        Excel.Application excelApp;
+        try
+        {
+            excelApp = workbook.Application;
+        }
+        catch
+        {
+            return;
+        }
+
+        Excel.Worksheet targetSheet = null;
+
+        if (!string.IsNullOrWhiteSpace(viewState.SheetId))
+        {
+            foreach (Excel.Worksheet sheet in workbook.Worksheets)
+            {
+                if (string.Equals(sheet.GetCustomProperty(sheetIdCustomPropertyName), viewState.SheetId, StringComparison.Ordinal))
+                {
+                    targetSheet = sheet;
+                    break;
+                }
+            }
+        }
+
+        if (targetSheet == null && !string.IsNullOrWhiteSpace(viewState.SheetName))
+        {
+            try
+            {
+                targetSheet = workbook.Worksheets[viewState.SheetName] as Excel.Worksheet;
+            }
+            catch
+            {
+            }
+        }
+
+        if (targetSheet == null)
+        {
+            return;
+        }
+
+        ApplyViewState(excelApp, targetSheet, viewState);
+    }
+
+    private static ExcelUiSuspendScope TryCreateExcelUiSuspendScope(Excel.Workbook workbook)
+    {
+        Excel.Application excelApp = null;
+
+        try
+        {
+            excelApp = workbook == null ? null : workbook.Application;
+        }
+        catch
+        {
+        }
+
+        if (excelApp == null)
+        {
+            try
+            {
+                excelApp = (Excel.Application)ExcelDnaUtil.Application;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        try
+        {
+            return new ExcelUiSuspendScope(excelApp);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static void EnsureSharedSheetBaseStorePrepared(Excel.Workbook workbook, Action<string> progressReporter = null)
+    {
+        if (workbook == null)
+        {
+            return;
+        }
+
+        if (GetSharedSheetBaseStoreSheet(workbook, createIfMissing: false) != null)
+        {
+            return;
+        }
+
+        progressReporter?.Invoke("共有状態シートを準備しています");
+        ExcelUiSuspendScope uiSuspendScope = TryCreateExcelUiSuspendScope(workbook);
+        if (uiSuspendScope == null)
+        {
+            GetSharedSheetBaseStoreSheet(workbook, createIfMissing: true);
+            return;
+        }
+
+        using (uiSuspendScope)
+        {
+            GetSharedSheetBaseStoreSheet(workbook, createIfMissing: true);
+        }
+    }
+
     private static Excel.Worksheet GetSharedSheetBaseStoreSheet(Excel.Workbook workbook, bool createIfMissing)
     {
         if (workbook == null)
@@ -1537,7 +1721,7 @@ public class RibbonController : ExcelRibbon
         {
             if (string.Equals(worksheet.Name, sharedSheetBaseStoreSheetName, StringComparison.OrdinalIgnoreCase))
             {
-                worksheet.Visible = Excel.XlSheetVisibility.xlSheetVisible;
+                worksheet.Visible = Excel.XlSheetVisibility.xlSheetHidden;
                 EnsureSharedSheetBaseStoreHeader(worksheet);
                 return worksheet;
             }
@@ -1548,11 +1732,13 @@ public class RibbonController : ExcelRibbon
             return null;
         }
 
+        SheetViewState originalViewState = CaptureActiveWorkbookViewState(workbook);
         Excel.Worksheet newWorksheet = (Excel.Worksheet)workbook.Worksheets.Add(
             After: workbook.Worksheets[workbook.Worksheets.Count]);
         newWorksheet.Name = sharedSheetBaseStoreSheetName;
-        newWorksheet.Visible = Excel.XlSheetVisibility.xlSheetVisible;
+        newWorksheet.Visible = Excel.XlSheetVisibility.xlSheetHidden;
         EnsureSharedSheetBaseStoreHeader(newWorksheet);
+        RestoreActiveWorkbookViewState(workbook, originalViewState);
         return newWorksheet;
     }
 
@@ -2489,7 +2675,7 @@ public class RibbonController : ExcelRibbon
             return;
         }
 
-        GetSharedSheetBaseStoreSheet(workbook, createIfMissing: true);
+        EnsureSharedSheetBaseStorePrepared(workbook, progressReporter);
         progressReporter?.Invoke("共有マニフェストを読み込みました: " + manifest.Sheets.Count + " シート");
 
         var sheetsById = new Dictionary<string, Excel.Worksheet>(StringComparer.Ordinal);
@@ -2606,8 +2792,20 @@ public class RibbonController : ExcelRibbon
                     "sheetName='" + sheet.Name + "'.");
             }
 
-            ApplySharedSheetDocumentToWorksheet(sheet, mergeResult.MergedDocument);
-            SaveSharedSheetBaseDocument(workbook, sharedSheetDocument);
+            ExcelUiSuspendScope uiSuspendScope = TryCreateExcelUiSuspendScope(workbook);
+            if (uiSuspendScope == null)
+            {
+                ApplySharedSheetDocumentToWorksheet(sheet, mergeResult.MergedDocument);
+                SaveSharedSheetBaseDocument(workbook, sharedSheetDocument);
+            }
+            else
+            {
+                using (uiSuspendScope)
+                {
+                    ApplySharedSheetDocumentToWorksheet(sheet, mergeResult.MergedDocument);
+                    SaveSharedSheetBaseDocument(workbook, sharedSheetDocument);
+                }
+            }
             FileLogger.Info("[SharedReceive] applied sheetId=" + entry.SheetId + " hash=" + sharedSheetDocument.Hash);
             if (mergeResult.ConflictCount > 0)
             {
@@ -3352,14 +3550,34 @@ public class RibbonController : ExcelRibbon
             actions).ConfigureAwait(true);
 
         progressReporter?.Invoke("ローカル base を更新しています");
-        foreach (SharedSheetSelectionItem item in items ?? Enumerable.Empty<SharedSheetSelectionItem>())
+        EnsureSharedSheetBaseStorePrepared(workbook, progressReporter);
+        ExcelUiSuspendScope uiSuspendScope = TryCreateExcelUiSuspendScope(workbook);
+        if (uiSuspendScope == null)
         {
-            if (item == null || item.Document == null || string.IsNullOrWhiteSpace(item.SheetId))
+            foreach (SharedSheetSelectionItem item in items ?? Enumerable.Empty<SharedSheetSelectionItem>())
             {
-                continue;
-            }
+                if (item == null || item.Document == null || string.IsNullOrWhiteSpace(item.SheetId))
+                {
+                    continue;
+                }
 
-            SaveSharedSheetBaseDocument(workbook, item.Document);
+                SaveSharedSheetBaseDocument(workbook, item.Document);
+            }
+        }
+        else
+        {
+            using (uiSuspendScope)
+            {
+                foreach (SharedSheetSelectionItem item in items ?? Enumerable.Empty<SharedSheetSelectionItem>())
+                {
+                    if (item == null || item.Document == null || string.IsNullOrWhiteSpace(item.SheetId))
+                    {
+                        continue;
+                    }
+
+                    SaveSharedSheetBaseDocument(workbook, item.Document);
+                }
+            }
         }
 
         foreach (SharedSheetSelectionItem item in items)
@@ -3722,7 +3940,7 @@ public class RibbonController : ExcelRibbon
         return null;
     }
 
-    void ApplyViewState(Excel.Application excelApp, Excel.Worksheet sheet, SheetViewState viewState)
+    static void ApplyViewState(Excel.Application excelApp, Excel.Worksheet sheet, SheetViewState viewState)
     {
         if (viewState == null)
         {
@@ -6526,6 +6744,11 @@ public class RibbonController : ExcelRibbon
 
     public async void OnPullCreateButtonPressed(IRibbonControl control)
     {
+        if (SynchronizationContext.Current == null)
+        {
+            SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());
+        }
+
         PullProgressForm progressForm = new PullProgressForm();
         try
         {
