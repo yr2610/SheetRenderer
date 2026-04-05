@@ -141,6 +141,7 @@
     <Compile Include="GitLabAuth.cs" />
     <Compile Include="GitLabClient.cs" />
     <Compile Include="GitLabCommitInfo.cs" />
+    <Compile Include="GitLabFilePathDialog.cs" />
     <Compile Include="GitLabInitialSetupDialog.cs" />
     <Compile Include="GitLabLastInput.cs" />
     <Compile Include="GitLabLastInputStore.cs" />
@@ -149,6 +150,7 @@
     <Compile Include="GitLabRepoDialog.cs" />
     <Compile Include="GitLabRepositoryFileInfo.cs" />
     <Compile Include="GitLabShareInfo.cs" />
+    <Compile Include="GitLabShareSettingsDialog.cs" />
     <Compile Include="GitLabShareInfoStore.cs" />
     <Compile Include="GitLabTokenManagerDialog.cs">
       <SubType>Form</SubType>

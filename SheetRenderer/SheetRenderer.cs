@@ -610,6 +610,14 @@ public class RibbonController : ExcelRibbon
                                         label='新規作成'
                                         screentip='Pull 情報を入力して新しくブックを作成します'
                                         onAction='OnPullCreateButtonPressed'/>
+                                <button id='buttonPullSourceSettings'
+                                        label='取得元設定'
+                                        screentip='Pull 新規作成で使う取得元 GitLab 情報を設定します'
+                                        onAction='OnPullSourceSettingsButtonPressed'/>
+                                <button id='buttonPullShareSettings'
+                                        label='共有先設定'
+                                        screentip='共有値同期で使う共有先 GitLab 情報を設定します'
+                                        onAction='OnPullShareSettingsButtonPressed'/>
                             </menu>
                         </splitButton>
                         <button id='buttonShare'
@@ -6591,6 +6599,172 @@ public class RibbonController : ExcelRibbon
 
     }
 
+    private static bool HasPullSourceSettings(GitLabLastInput input)
+    {
+        return input != null &&
+               !string.IsNullOrWhiteSpace(input.BaseUrl) &&
+               !string.IsNullOrWhiteSpace(input.ProjectId);
+    }
+
+    private static bool HasShareSettings(GitLabShareInfo shareInfo)
+    {
+        return shareInfo != null &&
+               !string.IsNullOrWhiteSpace(shareInfo.BaseUrl) &&
+               !string.IsNullOrWhiteSpace(shareInfo.ProjectId);
+    }
+
+    private static GitLabShareInfo CreateInitialShareSettings(GitLabShareInfo shareInfo, GitLabLastInput pullInfo)
+    {
+        if (shareInfo == null)
+        {
+            shareInfo = new GitLabShareInfo();
+        }
+
+        return new GitLabShareInfo
+        {
+            BaseUrl = !string.IsNullOrWhiteSpace(shareInfo.BaseUrl)
+                ? shareInfo.BaseUrl
+                : (pullInfo == null ? null : pullInfo.BaseUrl),
+            ProjectId = shareInfo.ProjectId,
+            RefName = !string.IsNullOrWhiteSpace(shareInfo.RefName)
+                ? shareInfo.RefName
+                : (pullInfo == null || string.IsNullOrWhiteSpace(pullInfo.RefName) ? "main" : pullInfo.RefName)
+        };
+    }
+
+    private static GitLabLastInput GetInitialPullSettingsForDialog(Excel.Workbook workbook)
+    {
+        WorkbookInfo workbookInfo = workbook == null ? null : WorkbookInfo.CreateFromWorkbook(workbook);
+        GitLabLastInput input = workbookInfo == null ? null : workbookInfo.PullInfo;
+        if (input == null)
+        {
+            input = GitLabLastInputStore.Load();
+        }
+
+        return input ?? new GitLabLastInput();
+    }
+
+    private static GitLabShareInfo GetInitialShareSettingsForDialog(Excel.Workbook workbook, GitLabLastInput pullInfo)
+    {
+        WorkbookInfo workbookInfo = workbook == null ? null : WorkbookInfo.CreateFromWorkbook(workbook);
+        GitLabShareInfo shareInfo = workbookInfo == null ? null : workbookInfo.ShareInfo;
+        if (shareInfo == null)
+        {
+            shareInfo = GitLabShareInfoStore.Load();
+        }
+
+        return CreateInitialShareSettings(shareInfo, pullInfo);
+    }
+
+    private void SavePullSourceSettings(GitLabLastInput input, Excel.Workbook workbook)
+    {
+        if (input == null)
+        {
+            return;
+        }
+
+        GitLabLastInputStore.Save(input, false);
+
+        WorkbookInfo workbookInfo = workbook == null ? null : WorkbookInfo.CreateFromWorkbook(workbook);
+        if (workbookInfo == null)
+        {
+            return;
+        }
+
+        workbook.SetCustomProperty(gitLabPullInfoCustomPropertyName, input);
+        workbook.SetCustomProperty(gitLabPullCommitIdCustomPropertyName, "");
+    }
+
+    private void SaveShareSettings(GitLabShareInfo shareInfo, Excel.Workbook workbook)
+    {
+        if (shareInfo == null)
+        {
+            return;
+        }
+
+        GitLabShareInfoStore.Save(shareInfo);
+
+        WorkbookInfo workbookInfo = workbook == null ? null : WorkbookInfo.CreateFromWorkbook(workbook);
+        if (workbookInfo == null)
+        {
+            return;
+        }
+
+        workbook.SetCustomProperty(gitLabShareInfoCustomPropertyName, shareInfo);
+    }
+
+    private bool TryGetPullNewWorkbookInputs(
+        Excel.Workbook workbook,
+        out GitLabLastInput input,
+        out GitLabShareInfo shareInfo)
+    {
+        input = GetInitialPullSettingsForDialog(workbook);
+        shareInfo = GetInitialShareSettingsForDialog(workbook, input);
+
+        if (!HasPullSourceSettings(input))
+        {
+            if (!GitLabRepoDialog.TryShow(input, out input))
+            {
+                shareInfo = null;
+                return false;
+            }
+
+            SavePullSourceSettings(input, workbook);
+        }
+
+        if (!HasShareSettings(shareInfo))
+        {
+            if (!GitLabShareSettingsDialog.TryShow(shareInfo, input, out shareInfo))
+            {
+                return false;
+            }
+
+            SaveShareSettings(shareInfo, workbook);
+        }
+
+        string filePath;
+        if (!GitLabFilePathDialog.TryShow(input.FilePath, out filePath))
+        {
+            return false;
+        }
+
+        input.FilePath = filePath;
+        GitLabLastInputStore.Save(input, false);
+        GitLabShareInfoStore.Save(shareInfo);
+        return true;
+    }
+
+    public void OnPullSourceSettingsButtonPressed(IRibbonControl control)
+    {
+        Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
+        Excel.Workbook workbook = excelApp.ActiveWorkbook as Excel.Workbook;
+        GitLabLastInput initial = GetInitialPullSettingsForDialog(workbook);
+        GitLabLastInput updated;
+
+        if (!GitLabRepoDialog.TryShow(initial, out updated))
+        {
+            return;
+        }
+
+        SavePullSourceSettings(updated, workbook);
+    }
+
+    public void OnPullShareSettingsButtonPressed(IRibbonControl control)
+    {
+        Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
+        Excel.Workbook workbook = excelApp.ActiveWorkbook as Excel.Workbook;
+        GitLabLastInput pullInfo = GetInitialPullSettingsForDialog(workbook);
+        GitLabShareInfo initial = GetInitialShareSettingsForDialog(workbook, pullInfo);
+        GitLabShareInfo updated;
+
+        if (!GitLabShareSettingsDialog.TryShow(initial, pullInfo, out updated))
+        {
+            return;
+        }
+
+        SaveShareSettings(updated, workbook);
+    }
+
     public async void OnPullButtonPressed(IRibbonControl control)
     {
         Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
@@ -6657,17 +6831,10 @@ public class RibbonController : ExcelRibbon
             }
             else
             {
-                var last = GitLabLastInputStore.Load();
-                var lastShare = GitLabShareInfoStore.Load();
-                bool clearFilePathEachTime = false;
-
-                if (!GitLabInitialSetupDialog.TryShow(last, lastShare, out input, out shareInfo))
+                if (!TryGetPullNewWorkbookInputs(null, out input, out shareInfo))
                 {
-                    return; // Cancel
+                    return;
                 }
-
-                GitLabLastInputStore.Save(input, clearFilePathEachTime);
-                GitLabShareInfoStore.Save(shareInfo);
             }
 
             progressForm.Show();
@@ -6753,20 +6920,13 @@ public class RibbonController : ExcelRibbon
         try
         {
             ClearPullSessionState();
-
-            var last = GitLabLastInputStore.Load();
-            var lastShare = GitLabShareInfoStore.Load();
             GitLabLastInput input;
             GitLabShareInfo shareInfo;
-            bool clearFilePathEachTime = false;
 
-            if (!GitLabInitialSetupDialog.TryShow(last, lastShare, out input, out shareInfo))
+            if (!TryGetPullNewWorkbookInputs(null, out input, out shareInfo))
             {
                 return;
             }
-
-            GitLabLastInputStore.Save(input, clearFilePathEachTime);
-            GitLabShareInfoStore.Save(shareInfo);
 
             progressForm.Show();
             progressForm.AppendLine("最新版の取得を開始します");
