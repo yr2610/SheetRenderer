@@ -582,6 +582,11 @@ public class RibbonController : ExcelRibbon
 
     public override string GetCustomUI(string RibbonID)
     {
+        if (!AuthorizationHelper.IsAuthorizedUser())
+        {
+            return string.Empty;
+        }
+
         string projectName = Assembly.GetExecutingAssembly().GetName().Name;
         return $@"
                 <customUI xmlns='http://schemas.microsoft.com/office/2006/01/customui' onLoad='OnLoad'>
@@ -8564,6 +8569,11 @@ public class AddIn : IExcelAddIn
 {
     public void AutoOpen()
     {
+        if (!AuthorizationHelper.EnsureAuthorizedUser())
+        {
+            return;
+        }
+
         Notifier.Initialize();
         //Notifier.Info("アドイン起動", "準備が完了しました。");
 
