@@ -12,17 +12,18 @@ internal sealed class SharedSheetSelectionItem
     public string ActionLabel { get; set; }
     public string StatusDetail { get; set; }
     public bool HasConflict { get; set; }
+    public string DiffText { get; set; }
     public SharedSheetDocument Document { get; set; }
 }
 
 internal sealed class SharedSheetSelectionDialog : Form
 {
-    private readonly DataGridView _grid;
-    private readonly Button _btnOk;
-    private readonly Button _btnCancel;
-    private readonly Label _lblInfo;
-    private readonly BindingSource _bindingSource;
-    private readonly List<SharedSheetSelectionItem> _items;
+    private readonly DataGridView grid;
+    private readonly Button btnOk;
+    private readonly Button btnCancel;
+    private readonly Label lblInfo;
+    private readonly BindingSource bindingSource;
+    private readonly List<SharedSheetSelectionItem> items;
 
     public SharedSheetSelectionDialog(
         IEnumerable<SharedSheetSelectionItem> items,
@@ -30,7 +31,7 @@ internal sealed class SharedSheetSelectionDialog : Form
         bool readOnlyMode = false,
         string okButtonText = "共有開始")
     {
-        _items = (items ?? Enumerable.Empty<SharedSheetSelectionItem>()).ToList();
+        this.items = (items ?? Enumerable.Empty<SharedSheetSelectionItem>()).ToList();
 
         Text = "変更共有";
         StartPosition = FormStartPosition.CenterParent;
@@ -41,35 +42,35 @@ internal sealed class SharedSheetSelectionDialog : Form
         Width = 920;
         Height = 460;
 
-        _lblInfo = new Label();
-        _lblInfo.AutoSize = false;
-        _lblInfo.Left = 12;
-        _lblInfo.Top = 12;
-        _lblInfo.Width = ClientSize.Width - 24;
-        _lblInfo.Height = 40;
-        _lblInfo.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-        _lblInfo.Text = string.IsNullOrWhiteSpace(infoText)
-            ? "共有するシートを選択してください。"
+        lblInfo = new Label();
+        lblInfo.AutoSize = false;
+        lblInfo.Left = 12;
+        lblInfo.Top = 12;
+        lblInfo.Width = ClientSize.Width - 24;
+        lblInfo.Height = 40;
+        lblInfo.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+        lblInfo.Text = string.IsNullOrWhiteSpace(infoText)
+            ? "共有するシートを選択してください。ダブルクリックで差分を確認できます。"
             : infoText;
-        Controls.Add(_lblInfo);
+        Controls.Add(lblInfo);
 
-        _grid = new DataGridView();
-        _grid.Left = 12;
-        _grid.Top = 60;
-        _grid.Width = ClientSize.Width - 24;
-        _grid.Height = ClientSize.Height - 120;
-        _grid.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
-        _grid.AllowUserToAddRows = false;
-        _grid.AllowUserToDeleteRows = false;
-        _grid.AllowUserToResizeRows = false;
-        _grid.RowHeadersVisible = false;
-        _grid.MultiSelect = false;
-        _grid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
-        _grid.AutoGenerateColumns = false;
-        _grid.EditMode = DataGridViewEditMode.EditOnEnter;
-        _grid.Font = new Font("Meiryo UI", 9f);
+        grid = new DataGridView();
+        grid.Left = 12;
+        grid.Top = 60;
+        grid.Width = ClientSize.Width - 24;
+        grid.Height = ClientSize.Height - 120;
+        grid.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
+        grid.AllowUserToAddRows = false;
+        grid.AllowUserToDeleteRows = false;
+        grid.AllowUserToResizeRows = false;
+        grid.RowHeadersVisible = false;
+        grid.MultiSelect = false;
+        grid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
+        grid.AutoGenerateColumns = false;
+        grid.EditMode = DataGridViewEditMode.EditOnEnter;
+        grid.Font = new Font("Meiryo UI", 9f);
 
-        _grid.Columns.Add(new DataGridViewCheckBoxColumn
+        grid.Columns.Add(new DataGridViewCheckBoxColumn
         {
             DataPropertyName = "Selected",
             Name = "Selected",
@@ -77,7 +78,7 @@ internal sealed class SharedSheetSelectionDialog : Form
             Width = 40,
             ReadOnly = readOnlyMode
         });
-        _grid.Columns.Add(new DataGridViewTextBoxColumn
+        grid.Columns.Add(new DataGridViewTextBoxColumn
         {
             DataPropertyName = "SheetName",
             Name = "SheetName",
@@ -85,7 +86,7 @@ internal sealed class SharedSheetSelectionDialog : Form
             Width = 220,
             ReadOnly = true
         });
-        _grid.Columns.Add(new DataGridViewTextBoxColumn
+        grid.Columns.Add(new DataGridViewTextBoxColumn
         {
             DataPropertyName = "ActionLabel",
             Name = "ActionLabel",
@@ -93,7 +94,7 @@ internal sealed class SharedSheetSelectionDialog : Form
             Width = 80,
             ReadOnly = true
         });
-        _grid.Columns.Add(new DataGridViewTextBoxColumn
+        grid.Columns.Add(new DataGridViewTextBoxColumn
         {
             DataPropertyName = "StatusDetail",
             Name = "StatusDetail",
@@ -101,7 +102,7 @@ internal sealed class SharedSheetSelectionDialog : Form
             Width = 260,
             ReadOnly = true
         });
-        _grid.Columns.Add(new DataGridViewTextBoxColumn
+        grid.Columns.Add(new DataGridViewTextBoxColumn
         {
             DataPropertyName = "SheetId",
             Name = "SheetId",
@@ -110,76 +111,68 @@ internal sealed class SharedSheetSelectionDialog : Form
             ReadOnly = true
         });
 
-        _bindingSource = new BindingSource();
-        _bindingSource.DataSource = _items;
-        _grid.DataSource = _bindingSource;
-        Controls.Add(_grid);
+        bindingSource = new BindingSource();
+        bindingSource.DataSource = this.items;
+        grid.DataSource = bindingSource;
+        Controls.Add(grid);
 
-        _btnOk = new Button();
-        _btnOk.Text = okButtonText;
-        _btnOk.Left = ClientSize.Width - 196;
-        _btnOk.Top = ClientSize.Height - 46;
-        _btnOk.Width = 90;
-        _btnOk.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
-        _btnOk.DialogResult = DialogResult.OK;
-        Controls.Add(_btnOk);
+        btnOk = new Button();
+        btnOk.Text = okButtonText;
+        btnOk.Left = ClientSize.Width - 196;
+        btnOk.Top = ClientSize.Height - 46;
+        btnOk.Width = 90;
+        btnOk.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
+        btnOk.DialogResult = DialogResult.OK;
+        Controls.Add(btnOk);
 
-        _btnCancel = new Button();
-        _btnCancel.Text = "Cancel";
-        _btnCancel.Left = ClientSize.Width - 98;
-        _btnCancel.Top = ClientSize.Height - 46;
-        _btnCancel.Width = 90;
-        _btnCancel.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
-        _btnCancel.DialogResult = DialogResult.Cancel;
-        Controls.Add(_btnCancel);
+        btnCancel = new Button();
+        btnCancel.Text = "Cancel";
+        btnCancel.Left = ClientSize.Width - 98;
+        btnCancel.Top = ClientSize.Height - 46;
+        btnCancel.Width = 90;
+        btnCancel.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
+        btnCancel.DialogResult = DialogResult.Cancel;
+        Controls.Add(btnCancel);
 
         if (readOnlyMode)
         {
-            _btnCancel.Visible = false;
-            _btnOk.Left = ClientSize.Width - _btnOk.Width - 12;
+            btnCancel.Visible = false;
+            btnOk.Left = ClientSize.Width - btnOk.Width - 12;
         }
 
-        AcceptButton = _btnOk;
-        CancelButton = _btnCancel;
+        AcceptButton = btnOk;
+        CancelButton = btnCancel;
 
         if (!readOnlyMode)
         {
-            _grid.CurrentCellDirtyStateChanged += (s, e) =>
+            grid.CurrentCellDirtyStateChanged += (s, e) =>
             {
-                if (_grid.IsCurrentCellDirty)
+                if (grid.IsCurrentCellDirty)
                 {
-                    _grid.CommitEdit(DataGridViewDataErrorContexts.Commit);
+                    grid.CommitEdit(DataGridViewDataErrorContexts.Commit);
                 }
             };
         }
 
-        _grid.CellDoubleClick += (s, e) =>
+        grid.CellDoubleClick += (s, e) =>
         {
-            if (e.RowIndex < 0 || e.RowIndex >= _items.Count)
+            if (e.RowIndex < 0 || e.RowIndex >= this.items.Count)
             {
                 return;
             }
 
-            SharedSheetSelectionItem item = _items[e.RowIndex];
+            SharedSheetSelectionItem item = this.items[e.RowIndex];
             if (item == null)
             {
                 return;
             }
 
-            MessageBox.Show(
-                this,
-                "詳細表示は後で追加予定です。\n\n" +
-                "シート名: " + item.SheetName + "\n" +
-                "状態: " + item.ActionLabel + "\n" +
-                "詳細: " + (item.StatusDetail ?? ""),
-                "変更共有",
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Information);
+            ShowDiffDialog(this, item);
         };
 
-        _grid.DataBindingComplete += (s, e) =>
+        grid.DataBindingComplete += (s, e) =>
         {
-            foreach (DataGridViewRow row in _grid.Rows)
+            foreach (DataGridViewRow row in grid.Rows)
             {
                 SharedSheetSelectionItem item = row.DataBoundItem as SharedSheetSelectionItem;
                 if (item == null)
@@ -205,16 +198,63 @@ internal sealed class SharedSheetSelectionDialog : Form
 
         Shown += (s, e) =>
         {
-            if (_grid.Rows.Count > 0)
+            if (grid.Rows.Count > 0)
             {
-                _grid.CurrentCell = _grid.Rows[0].Cells[0];
+                grid.CurrentCell = grid.Rows[0].Cells[0];
             }
         };
     }
 
+    private static void ShowDiffDialog(IWin32Window owner, SharedSheetSelectionItem item)
+    {
+        using (var form = new Form())
+        using (var textBox = new TextBox())
+        using (var closeButton = new Button())
+        {
+            form.Text = "差分確認: " + (item.SheetName ?? item.SheetId ?? "");
+            form.StartPosition = FormStartPosition.CenterParent;
+            form.FormBorderStyle = FormBorderStyle.Sizable;
+            form.MinimizeBox = false;
+            form.MaximizeBox = true;
+            form.ShowInTaskbar = false;
+            form.Width = 980;
+            form.Height = 620;
+            form.Font = new Font("Meiryo UI", 9f);
+
+            textBox.Multiline = true;
+            textBox.ScrollBars = ScrollBars.Both;
+            textBox.ReadOnly = true;
+            textBox.WordWrap = false;
+            textBox.Left = 12;
+            textBox.Top = 12;
+            textBox.Width = form.ClientSize.Width - 24;
+            textBox.Height = form.ClientSize.Height - 56;
+            textBox.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
+            textBox.Font = new Font("Meiryo UI", 9f);
+            textBox.Text = string.IsNullOrWhiteSpace(item.DiffText)
+                ? "差分はありません。"
+                : item.DiffText;
+
+            closeButton.Text = "閉じる";
+            closeButton.Width = 90;
+            closeButton.Height = 28;
+            closeButton.Left = form.ClientSize.Width - closeButton.Width - 12;
+            closeButton.Top = form.ClientSize.Height - closeButton.Height - 12;
+            closeButton.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
+            closeButton.DialogResult = DialogResult.OK;
+
+            form.Controls.Add(textBox);
+            form.Controls.Add(closeButton);
+            form.AcceptButton = closeButton;
+            form.CancelButton = closeButton;
+
+            form.ShowDialog(owner);
+        }
+    }
+
     public List<SharedSheetSelectionItem> GetSelectedItems()
     {
-        return _items.Where(x => x != null && x.Selected && x.Document != null).ToList();
+        return items.Where(x => x != null && x.Selected && x.Document != null).ToList();
     }
 
     public static void ShowConflictReview(
@@ -223,7 +263,7 @@ internal sealed class SharedSheetSelectionDialog : Form
     {
         using (var dialog = new SharedSheetSelectionDialog(
             items,
-            "競合があるため変更共有できません。先に最新版取得を実行してください。",
+            "競合があるため変更共有できません。先に最新版取得を実行してください。ダブルクリックで差分を確認できます。",
             readOnlyMode: true,
             okButtonText: "閉じる"))
         {
