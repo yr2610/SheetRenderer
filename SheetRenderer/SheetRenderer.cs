@@ -2106,31 +2106,13 @@ public class RibbonController : ExcelRibbon
     private static IEnumerable<object> GetIdsFromSharedSheetDocument(SharedSheetDocument sheetDocument)
     {
         if (sheetDocument == null ||
-            sheetDocument.Values == null)
+            sheetDocument.RowIds == null ||
+            sheetDocument.RowIds.Length == 0)
         {
             return Enumerable.Empty<object>();
         }
 
-        if (sheetDocument.RowIds != null && sheetDocument.RowIds.Length > 0)
-        {
-            return sheetDocument.RowIds;
-        }
-
-        if (sheetDocument.RangeInfo == null || !sheetDocument.RangeInfo.IdColumnOffset.HasValue)
-        {
-            return Enumerable.Empty<object>();
-        }
-
-        int idColumnOffset = sheetDocument.RangeInfo.IdColumnOffset.Value;
-        return sheetDocument.Values.Select(row =>
-        {
-            if (row == null || idColumnOffset < 0 || idColumnOffset >= row.Length)
-            {
-                return null;
-            }
-
-            return row[idColumnOffset];
-        });
+        return sheetDocument.RowIds;
     }
 
     private static bool HasAnyNonEmptySharedIds(IEnumerable<object> ids)
@@ -2290,43 +2272,28 @@ public class RibbonController : ExcelRibbon
         }
 
         object[,] mergedValues;
-        object[] remoteIds = null;
-        bool canMergeById = false;
         object[,] remoteValues = ConvertJaggedArrayTo2DArray(sharedSheetDocument.Values);
-        if (sharedSheetDocument.RowIds != null &&
-            sharedSheetDocument.RowIds.Length > 0 &&
-            currentSheetValuesInfo.Ids != null)
+        object[] remoteIds = GetIdsFromSharedSheetDocument(sharedSheetDocument).ToArray();
+        bool canMergeById =
+            remoteIds.Length == remoteValues.GetLength(0) &&
+            currentSheetValuesInfo.Ids != null &&
+            HasAnyNonEmptySharedIds(currentSheetValuesInfo.Ids) &&
+            HasAnyNonEmptySharedIds(remoteIds);
+
+        if (!canMergeById)
         {
-            remoteIds = GetIdsFromSharedSheetDocument(sharedSheetDocument).ToArray();
-            canMergeById =
-                remoteIds.Length == remoteValues.GetLength(0) &&
-                HasAnyNonEmptySharedIds(currentSheetValuesInfo.Ids) &&
-                HasAnyNonEmptySharedIds(remoteIds);
+            throw new InvalidOperationException(
+                "Shared sheet rowIds are required. " +
+                "sheetId='" + sharedSheetDocument.SheetId + "', " +
+                "sheetName='" + sheet.Name + "'.");
         }
 
-        if (canMergeById)
-        {
-            Dictionary<string, List<object>> remoteDictionary = CreateRowDictionaryWithIDKeys(remoteValues, remoteIds);
-            mergedValues = CopyValuesById(
-                currentSheetValuesInfo.Values,
-                currentSheetValuesInfo.Ids,
-                remoteDictionary,
-                currentSheetValuesInfo.IgnoreColumnOffsets);
-        }
-        else
-        {
-            if (remoteValues.GetLength(0) != currentSheetValuesInfo.Values.GetLength(0) ||
-                remoteValues.GetLength(1) != currentSheetValuesInfo.Values.GetLength(1))
-            {
-                throw new InvalidOperationException(
-                    "Shared sheet size mismatch. " +
-                    "sheetId='" + sharedSheetDocument.SheetId + "', " +
-                    "sheetName='" + sheet.Name + "', " +
-                    "remoteRowIdsAvailable='" + canMergeById + "'.");
-            }
-
-            mergedValues = remoteValues;
-        }
+        Dictionary<string, List<object>> remoteDictionary = CreateRowDictionaryWithIDKeys(remoteValues, remoteIds);
+        mergedValues = CopyValuesById(
+            currentSheetValuesInfo.Values,
+            currentSheetValuesInfo.Ids,
+            remoteDictionary,
+            currentSheetValuesInfo.IgnoreColumnOffsets);
 
         LogSharedOverwriteDifferences(sheet, currentSheetValuesInfo, mergedValues);
         currentSheetValuesInfo.Range.Value2 = mergedValues;
@@ -2721,6 +2688,240 @@ public class RibbonController : ExcelRibbon
         return true;
     }
 
+    private sealed class SharedSheetMergeResult
+    {
+        public SharedSheetDocument MergedDocument { get; set; }
+        public int ConflictCount { get; set; }
+    }
+
+    private static bool CanMergeSharedSheetByRowIds(SharedSheetDocument document)
+    {
+        if (document == null ||
+            document.Values == null ||
+            document.RowIds == null)
+        {
+            return false;
+        }
+
+        if (document.RowIds.Length != document.Values.Length)
+        {
+            return false;
+        }
+
+        return HasAnyNonEmptySharedIds(document.RowIds);
+    }
+
+    private static string NormalizeSharedRowId(object rowId)
+    {
+        if (rowId == null)
+        {
+            return null;
+        }
+
+        string text = rowId.ToString();
+        return string.IsNullOrWhiteSpace(text) ? null : text;
+    }
+
+    private static int GetSharedSheetColumnCount(SharedSheetDocument document)
+    {
+        if (document == null || document.Values == null || document.Values.Length == 0)
+        {
+            return 0;
+        }
+
+        return document.Values.Max(row => row == null ? 0 : row.Length);
+    }
+
+    private static object GetSharedSheetCellValue(object[] row, int columnIndex)
+    {
+        if (row == null || columnIndex < 0 || columnIndex >= row.Length)
+        {
+            return null;
+        }
+
+        return row[columnIndex];
+    }
+
+    private static Dictionary<string, object[]> CreateSharedSheetRowMap(SharedSheetDocument document)
+    {
+        var result = new Dictionary<string, object[]>(StringComparer.Ordinal);
+        if (!CanMergeSharedSheetByRowIds(document))
+        {
+            return result;
+        }
+
+        for (int i = 0; i < document.RowIds.Length; i++)
+        {
+            string rowId = NormalizeSharedRowId(document.RowIds[i]);
+            if (string.IsNullOrWhiteSpace(rowId))
+            {
+                continue;
+            }
+
+            result[rowId] = document.Values[i] ?? new object[0];
+        }
+
+        return result;
+    }
+
+    private static List<string> BuildSharedSheetRowOrder(
+        SharedSheetDocument localDocument,
+        SharedSheetDocument remoteDocument,
+        SharedSheetDocument baseDocument)
+    {
+        var result = new List<string>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+
+        Action<SharedSheetDocument> append = document =>
+        {
+            if (!CanMergeSharedSheetByRowIds(document))
+            {
+                return;
+            }
+
+            foreach (object rowIdValue in document.RowIds)
+            {
+                string rowId = NormalizeSharedRowId(rowIdValue);
+                if (string.IsNullOrWhiteSpace(rowId) || !seen.Add(rowId))
+                {
+                    continue;
+                }
+
+                result.Add(rowId);
+            }
+        };
+
+        append(localDocument);
+        append(remoteDocument);
+        append(baseDocument);
+
+        return result;
+    }
+
+    private static SharedSheetMergeResult TryMergeSharedSheetDocuments(
+        SharedSheetDocument baseDocument,
+        SharedSheetDocument localDocument,
+        SharedSheetDocument remoteDocument)
+    {
+        if (localDocument == null)
+        {
+            return null;
+        }
+
+        int columnCount = Math.Max(
+            GetSharedSheetColumnCount(localDocument),
+            Math.Max(GetSharedSheetColumnCount(baseDocument), GetSharedSheetColumnCount(remoteDocument)));
+
+        var ignoreColumnOffsets = localDocument.RangeInfo == null || localDocument.RangeInfo.IgnoreColumnOffsets == null
+            ? new HashSet<int>()
+            : new HashSet<int>(localDocument.RangeInfo.IgnoreColumnOffsets);
+
+        bool useRowIdMerge =
+            CanMergeSharedSheetByRowIds(localDocument) &&
+            (baseDocument == null || CanMergeSharedSheetByRowIds(baseDocument)) &&
+            (remoteDocument == null || CanMergeSharedSheetByRowIds(remoteDocument));
+
+        if (!useRowIdMerge)
+        {
+            return new SharedSheetMergeResult
+            {
+                MergedDocument = localDocument,
+                ConflictCount = 1
+            };
+        }
+
+        var mergedRows = new List<object[]>();
+        var mergedRowIds = new List<object>();
+        int conflictCount = 0;
+
+        Dictionary<string, object[]> localRows = CreateSharedSheetRowMap(localDocument);
+        Dictionary<string, object[]> remoteRows = CreateSharedSheetRowMap(remoteDocument);
+        Dictionary<string, object[]> baseRows = CreateSharedSheetRowMap(baseDocument);
+        List<string> rowOrder = BuildSharedSheetRowOrder(localDocument, remoteDocument, baseDocument);
+
+        foreach (string rowId in rowOrder)
+        {
+            object[] localRow;
+            localRows.TryGetValue(rowId, out localRow);
+
+            object[] remoteRow;
+            remoteRows.TryGetValue(rowId, out remoteRow);
+
+            object[] baseRow;
+            baseRows.TryGetValue(rowId, out baseRow);
+
+            var mergedRow = new object[columnCount];
+            for (int col = 0; col < columnCount; col++)
+            {
+                object baseValue = GetSharedSheetCellValue(baseRow, col);
+                object localValue = localRow == null ? baseValue : GetSharedSheetCellValue(localRow, col);
+                object remoteValue = remoteRow == null ? baseValue : GetSharedSheetCellValue(remoteRow, col);
+
+                if (ignoreColumnOffsets.Contains(col))
+                {
+                    mergedRow[col] = NormalizeSharedCellValue(localValue);
+                    continue;
+                }
+
+                if (AreSharedCellValuesEqual(localValue, baseValue))
+                {
+                    mergedRow[col] = NormalizeSharedCellValue(remoteValue);
+                }
+                else if (AreSharedCellValuesEqual(remoteValue, baseValue))
+                {
+                    mergedRow[col] = NormalizeSharedCellValue(localValue);
+                }
+                else if (AreSharedCellValuesEqual(localValue, remoteValue))
+                {
+                    mergedRow[col] = NormalizeSharedCellValue(localValue);
+                }
+                else
+                {
+                    mergedRow[col] = NormalizeSharedCellValue(localValue);
+                    conflictCount++;
+                }
+            }
+
+            mergedRows.Add(mergedRow);
+            mergedRowIds.Add(rowId);
+        }
+
+        if (mergedRows.Count == 0 && localDocument.Values != null && localDocument.Values.Length > 0)
+        {
+            return new SharedSheetMergeResult
+            {
+                MergedDocument = localDocument,
+                ConflictCount = 1
+            };
+        }
+
+        var mergedDocument = new SharedSheetDocument
+        {
+            Project = localDocument.Project,
+            SheetId = localDocument.SheetId,
+            SheetName = localDocument.SheetName,
+            RangeAddress = localDocument.RangeAddress,
+            RangeInfo = localDocument.RangeInfo == null ? null : new SharedRangeInfo
+            {
+                IdColumnOffset = localDocument.RangeInfo.IdColumnOffset,
+                IgnoreColumnOffsets = localDocument.RangeInfo.IgnoreColumnOffsets == null
+                    ? new HashSet<int>()
+                    : new HashSet<int>(localDocument.RangeInfo.IgnoreColumnOffsets)
+            },
+            RowIds = mergedRowIds.Count == 0
+                ? (localDocument.RowIds ?? new object[0])
+                : mergedRowIds.Cast<object>().ToArray(),
+            Values = mergedRows.ToArray()
+        };
+        mergedDocument.Hash = ComputeSharedSheetHash(mergedDocument);
+
+        return new SharedSheetMergeResult
+        {
+            MergedDocument = mergedDocument,
+            ConflictCount = conflictCount
+        };
+    }
+
     private static string GetRemoteSharedHash(SharedProjectManifest manifest, string sheetId)
     {
         if (manifest == null || manifest.Sheets == null || string.IsNullOrWhiteSpace(sheetId))
@@ -2798,6 +2999,61 @@ public class RibbonController : ExcelRibbon
         }
 
         return staleSheetNames
+            .Distinct(StringComparer.CurrentCulture)
+            .OrderBy(x => x, StringComparer.CurrentCulture)
+            .ToList();
+    }
+
+    private async Task<List<string>> MergeSharedSelectionItemsWithRemoteAsync(
+        Excel.Workbook workbook,
+        GitLabShareInfo shareInfo,
+        string token,
+        IEnumerable<SharedSheetSelectionItem> items,
+        SharedProjectManifest remoteManifest)
+    {
+        var conflictSheetNames = new List<string>();
+
+        foreach (SharedSheetSelectionItem item in items ?? Enumerable.Empty<SharedSheetSelectionItem>())
+        {
+            if (item == null || item.Document == null || string.IsNullOrWhiteSpace(item.SheetId))
+            {
+                continue;
+            }
+
+            string baseHash = GetSharedSheetBaseHash(workbook, item.SheetId);
+            string remoteHash = GetRemoteSharedHash(remoteManifest, item.SheetId);
+
+            if (string.IsNullOrWhiteSpace(remoteHash) ||
+                string.Equals(baseHash, remoteHash, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            SharedSheetDocument remoteDocument = await TryDownloadSharedSheetDocumentAsync(
+                shareInfo,
+                workbook.GetCustomProperty(ssProjectIdCustomPropertyName),
+                item.SheetId,
+                token).ConfigureAwait(true);
+
+            if (remoteDocument == null)
+            {
+                conflictSheetNames.Add(item.SheetName);
+                continue;
+            }
+
+            SharedSheetDocument baseDocument = GetSharedSheetBaseDocument(workbook, item.SheetId);
+            SharedSheetMergeResult mergeResult = TryMergeSharedSheetDocuments(baseDocument, item.Document, remoteDocument);
+            if (mergeResult == null || mergeResult.ConflictCount > 0 || mergeResult.MergedDocument == null)
+            {
+                conflictSheetNames.Add(item.SheetName);
+                continue;
+            }
+
+            item.Document = mergeResult.MergedDocument;
+            item.ActionLabel = "マージ";
+        }
+
+        return conflictSheetNames
             .Distinct(StringComparer.CurrentCulture)
             .OrderBy(x => x, StringComparer.CurrentCulture)
             .ToList();
@@ -6254,12 +6510,18 @@ public class RibbonController : ExcelRibbon
                 return;
             }
 
-            List<string> staleSheetNames = CollectStaleSharedSheetNames(workbook, selectionItems, remoteManifest);
-            if (staleSheetNames.Count > 0)
+            List<string> conflictSheetNames = await MergeSharedSelectionItemsWithRemoteAsync(
+                workbook,
+                workbookInfo.ShareInfo,
+                shareToken,
+                selectionItems,
+                remoteManifest).ConfigureAwait(true);
+
+            if (conflictSheetNames.Count > 0)
             {
                 MessageBox.Show(
-                    "共有先が最新ではありません。先に最新版取得を実行してください。\n\n" +
-                    string.Join("\n", staleSheetNames),
+                    "共有内容の競合があるため変更共有できません。先に最新版取得を実行してください。\n\n" +
+                    string.Join("\n", conflictSheetNames),
                     "変更共有");
                 return;
             }
