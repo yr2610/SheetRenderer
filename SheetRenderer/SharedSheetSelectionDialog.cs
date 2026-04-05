@@ -214,7 +214,7 @@ internal sealed class SharedSheetSelectionDialog : Form
 
     public List<SharedSheetSelectionItem> GetSelectedItems()
     {
-        return _items.Where(x => x != null && x.Selected).ToList();
+        return _items.Where(x => x != null && x.Selected && x.Document != null).ToList();
     }
 
     public static void ShowConflictReview(

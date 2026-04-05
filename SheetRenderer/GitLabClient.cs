@@ -125,6 +125,12 @@ public static class GitLabClient
         catch (InvalidOperationException ex)
         {
             if (ex.Message != null &&
+                ex.Message.IndexOf("GitLab resource not found.", StringComparison.Ordinal) >= 0)
+            {
+                return null;
+            }
+
+            if (ex.Message != null &&
                 ex.Message.StartsWith("File not found in tree.", StringComparison.Ordinal))
             {
                 return null;

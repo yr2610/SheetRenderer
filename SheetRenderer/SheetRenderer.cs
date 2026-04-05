@@ -2657,11 +2657,13 @@ public class RibbonController : ExcelRibbon
 
         if (manifestBytes == null)
         {
-            throw new InvalidOperationException(
-                "共有マニフェストが見つかりません。\n" +
-                "Project ID: " + shareInfo.ProjectId + "\n" +
-                "Path: " + manifestPath + "\n" +
-                "Tried Refs: " + string.Join(", ", candidateRefs));
+            FileLogger.Info(
+                "[SharedReceive] shared manifest not found. project=" + projectId +
+                " path=" + manifestPath +
+                " refs=" + string.Join(",", candidateRefs ?? new List<string>()) +
+                " shareRepo=" + shareInfo.ProjectId);
+            progressReporter?.Invoke("共有値はまだありません");
+            return;
         }
 
         if (!string.Equals(refName, configuredRefName, StringComparison.OrdinalIgnoreCase))
@@ -2937,6 +2939,122 @@ public class RibbonController : ExcelRibbon
         }
 
         return true;
+    }
+
+    private static bool IsSharedSheetRowEmpty(SharedSheetDocument sharedSheetDocument, object[] rowValues)
+    {
+        if (rowValues == null || rowValues.Length == 0)
+        {
+            return true;
+        }
+
+        var ignoreColumnOffsets = sharedSheetDocument == null ||
+                                  sharedSheetDocument.RangeInfo == null ||
+                                  sharedSheetDocument.RangeInfo.IgnoreColumnOffsets == null
+            ? new HashSet<int>()
+            : new HashSet<int>(sharedSheetDocument.RangeInfo.IgnoreColumnOffsets);
+
+        for (int col = 0; col < rowValues.Length; col++)
+        {
+            if (ignoreColumnOffsets.Contains(col))
+            {
+                continue;
+            }
+
+            if (!IsEmptySharedCellValue(rowValues[col]))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static HashSet<string> CollectSharedExistingRowIds(params SharedSheetDocument[] documents)
+    {
+        var result = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (SharedSheetDocument document in documents ?? new SharedSheetDocument[0])
+        {
+            if (!CanMergeSharedSheetByRowIds(document))
+            {
+                continue;
+            }
+
+            foreach (object rowIdValue in document.RowIds)
+            {
+                string rowId = NormalizeSharedRowId(rowIdValue);
+                if (!string.IsNullOrWhiteSpace(rowId))
+                {
+                    result.Add(rowId);
+                }
+            }
+        }
+
+        return result;
+    }
+
+    private static SharedSheetDocument CreateCommitReadySharedSheetDocument(
+        SharedSheetDocument localDocument,
+        SharedSheetDocument baseDocument,
+        SharedSheetDocument remoteDocument)
+    {
+        if (localDocument == null)
+        {
+            return null;
+        }
+
+        if (!CanMergeSharedSheetByRowIds(localDocument))
+        {
+            return localDocument;
+        }
+
+        HashSet<string> existingRowIds = CollectSharedExistingRowIds(baseDocument, remoteDocument);
+        var keptRowIds = new List<object>();
+        var keptRows = new List<object[]>();
+
+        for (int i = 0; i < localDocument.RowIds.Length; i++)
+        {
+            string rowId = NormalizeSharedRowId(localDocument.RowIds[i]);
+            object[] rowValues = i < localDocument.Values.Length
+                ? (localDocument.Values[i] ?? new object[0])
+                : new object[0];
+
+            bool rowExists = !string.IsNullOrWhiteSpace(rowId) && existingRowIds.Contains(rowId);
+            bool rowEmpty = IsSharedSheetRowEmpty(localDocument, rowValues);
+
+            if (rowEmpty && !rowExists)
+            {
+                continue;
+            }
+
+            keptRowIds.Add(localDocument.RowIds[i]);
+            keptRows.Add(rowValues);
+        }
+
+        if (keptRows.Count == 0)
+        {
+            return null;
+        }
+
+        var document = new SharedSheetDocument
+        {
+            Project = localDocument.Project,
+            SheetId = localDocument.SheetId,
+            SheetName = localDocument.SheetName,
+            RangeAddress = localDocument.RangeAddress,
+            RangeInfo = localDocument.RangeInfo == null ? null : new SharedRangeInfo
+            {
+                IdColumnOffset = localDocument.RangeInfo.IdColumnOffset,
+                IgnoreColumnOffsets = localDocument.RangeInfo.IgnoreColumnOffsets == null
+                    ? new HashSet<int>()
+                    : new HashSet<int>(localDocument.RangeInfo.IgnoreColumnOffsets)
+            },
+            RowIds = keptRowIds.ToArray(),
+            Values = keptRows.ToArray()
+        };
+        document.Hash = ComputeSharedSheetHash(document);
+        return document;
     }
 
     private sealed class SharedSheetMergeResult
@@ -3311,17 +3429,24 @@ public class RibbonController : ExcelRibbon
         var items = new List<SharedSheetSelectionItem>();
         foreach (SharedSheetDocument document in CollectSharedSheetDocuments(workbook))
         {
+            SharedSheetDocument baseDocument = GetSharedSheetBaseDocument(workbook, document.SheetId);
+            SharedSheetDocument commitDocument = CreateCommitReadySharedSheetDocument(document, baseDocument, null);
+            if (commitDocument == null)
+            {
+                continue;
+            }
+
             string baseHash = GetSharedSheetBaseHash(workbook, document.SheetId);
             string remoteHash = GetRemoteSharedHash(remoteManifest, document.SheetId);
 
-            if (string.Equals(document.Hash, baseHash, StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(commitDocument.Hash, baseHash, StringComparison.OrdinalIgnoreCase))
             {
                 continue;
             }
 
             if (string.IsNullOrWhiteSpace(remoteHash) &&
                 string.IsNullOrWhiteSpace(baseHash) &&
-                IsSharedSheetEmpty(document))
+                IsSharedSheetEmpty(commitDocument))
             {
                 continue;
             }
@@ -3329,13 +3454,13 @@ public class RibbonController : ExcelRibbon
             items.Add(new SharedSheetSelectionItem
             {
                 Selected = true,
-                SheetName = document.SheetName,
-                SheetId = document.SheetId,
+                SheetName = commitDocument.SheetName,
+                SheetId = commitDocument.SheetId,
                 ActionLabel = string.IsNullOrWhiteSpace(remoteHash) ? "新規" : "更新",
                 StatusDetail = string.IsNullOrWhiteSpace(remoteHash)
                     ? "共有先にまだありません"
                     : "ローカル変更があります",
-                Document = document
+                Document = commitDocument
             });
         }
 
@@ -3431,7 +3556,22 @@ public class RibbonController : ExcelRibbon
                 continue;
             }
 
-            item.Document = mergeResult.MergedDocument;
+            SharedSheetDocument commitDocument = CreateCommitReadySharedSheetDocument(
+                mergeResult.MergedDocument,
+                baseDocument,
+                remoteDocument);
+
+            if (commitDocument == null ||
+                string.Equals(commitDocument.Hash, remoteHash, StringComparison.OrdinalIgnoreCase))
+            {
+                item.Selected = false;
+                item.ActionLabel = "対象外";
+                item.StatusDetail = "共有先と同じため送信しません";
+                item.Document = null;
+                continue;
+            }
+
+            item.Document = commitDocument;
             item.ActionLabel = "マージ";
             item.StatusDetail = "共有先変更を取り込みます";
         }
@@ -7113,6 +7253,12 @@ public class RibbonController : ExcelRibbon
             if (conflictSheetNames.Count > 0)
             {
                 SharedSheetSelectionDialog.ShowConflictReview(null, selectionItems);
+                return;
+            }
+
+            if (!selectionItems.Any(x => x != null && x.Document != null))
+            {
+                MessageBox.Show("共有する変更はありません。", "変更共有");
                 return;
             }
 
