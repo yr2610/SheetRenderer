@@ -620,12 +620,19 @@ public class RibbonController : ExcelRibbon
                                         onAction='OnPullShareSettingsButtonPressed'/>
                             </menu>
                         </splitButton>
-                        <button id='buttonShare'
-                                label='変更共有'
-                                screentip='変更したシートの入力値を共有先へ送信します'
-                                size='large'
-                                imageMso='FileSendAsAttachment'
-                                onAction='OnShareButtonPressed'/>
+                        <splitButton id='splitButtonShare' size='large'>
+                            <button id='buttonShare'
+                                    label='シート共有'
+                                    screentip='表示中のシートの入力値を共有先へ送信します'
+                                    imageMso='FileSendAsAttachment'
+                                    onAction='OnShareCurrentSheetButtonPressed'/>
+                            <menu id='menuShare'>
+                                <button id='buttonShareAll'
+                                        label='全シート共有'
+                                        screentip='変更した全シートの入力値を共有先へ送信します'
+                                        onAction='OnShareButtonPressed'/>
+                            </menu>
+                        </splitButton>
                         <button id='buttonTokenManager'
                                 label='トークン管理'
                                 screentip='保存済みトークンを一覧表示し、不要なものを削除します'
@@ -3556,11 +3563,18 @@ public class RibbonController : ExcelRibbon
 
     private static List<SharedSheetSelectionItem> CollectSharedSheetSelectionItems(
         Excel.Workbook workbook,
-        SharedProjectManifest remoteManifest)
+        SharedProjectManifest remoteManifest,
+        string targetSheetName = null)
     {
         var items = new List<SharedSheetSelectionItem>();
         foreach (SharedSheetDocument document in CollectSharedSheetDocuments(workbook))
         {
+            if (!string.IsNullOrWhiteSpace(targetSheetName) &&
+                !string.Equals(document.SheetName, targetSheetName, StringComparison.CurrentCulture))
+            {
+                continue;
+            }
+
             SharedSheetDocument baseDocument = GetSharedSheetBaseDocument(workbook, document.SheetId);
             SharedSheetDocument commitDocument = CreateCommitReadySharedSheetDocument(document, baseDocument, null);
             if (commitDocument == null)
@@ -7297,7 +7311,25 @@ public class RibbonController : ExcelRibbon
         await ReceiveSharedSheetsAsync(createdWorkbook, shareInfo, progressForm.AppendLine);
     }
 
-    public async void OnShareButtonPressed(IRibbonControl control)
+    public void OnShareCurrentSheetButtonPressed(IRibbonControl control)
+    {
+        Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
+        Excel.Worksheet activeSheet = excelApp.ActiveSheet as Excel.Worksheet;
+        if (activeSheet == null)
+        {
+            MessageBox.Show("アクティブなシートがありません。", "シート共有");
+            return;
+        }
+
+        OnShareButtonPressed(control, activeSheet.Name);
+    }
+
+    public void OnShareButtonPressed(IRibbonControl control)
+    {
+        OnShareButtonPressed(control, null);
+    }
+
+    private async void OnShareButtonPressed(IRibbonControl control, string targetSheetName)
     {
         if (SynchronizationContext.Current == null)
         {
@@ -7307,10 +7339,11 @@ public class RibbonController : ExcelRibbon
         Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
         Excel.Workbook workbook = excelApp.ActiveWorkbook as Excel.Workbook;
         PullProgressForm progressForm = null;
+        string dialogTitle = string.IsNullOrWhiteSpace(targetSheetName) ? "変更共有" : "シート共有";
 
         if (workbook == null)
         {
-            MessageBox.Show("アクティブなブックがありません。", "変更共有");
+            MessageBox.Show("アクティブなブックがありません。", dialogTitle);
             return;
         }
 
@@ -7320,19 +7353,19 @@ public class RibbonController : ExcelRibbon
             if (workbookInfo == null)
             {
                 string projectName = Assembly.GetExecutingAssembly().GetName().Name;
-                MessageBox.Show($"{projectName} で生成されたブックではありません。", "変更共有");
+                MessageBox.Show($"{projectName} で生成されたブックではありません。", dialogTitle);
                 return;
             }
 
             if (workbookInfo.PullInfo == null)
             {
-                MessageBox.Show("このブックには最新版取得用の情報が保存されていません。", "変更共有");
+                MessageBox.Show("このブックには最新版取得用の情報が保存されていません。", dialogTitle);
                 return;
             }
 
             if (workbookInfo.ShareInfo == null)
             {
-                MessageBox.Show("このブックには共有先の情報が保存されていません。", "変更共有");
+                MessageBox.Show("このブックには共有先の情報が保存されていません。", dialogTitle);
                 return;
             }
 
@@ -7341,7 +7374,7 @@ public class RibbonController : ExcelRibbon
                 workbookInfo.PullInfo.ProjectId);
             if (string.IsNullOrWhiteSpace(pullToken))
             {
-                MessageBox.Show("共有をキャンセルしました（トークン未入力）", "変更共有");
+                MessageBox.Show("共有をキャンセルしました（トークン未入力）", dialogTitle);
                 return;
             }
 
@@ -7354,7 +7387,7 @@ public class RibbonController : ExcelRibbon
             if (!string.IsNullOrWhiteSpace(currentCommitId) &&
                 !string.Equals(workbookInfo.PullCommitId, currentCommitId, StringComparison.OrdinalIgnoreCase))
             {
-                MessageBox.Show("Pull 元が最新ではありません。先に最新版取得を実行してください。", "変更共有");
+                MessageBox.Show("Pull 元が最新ではありません。先に最新版取得を実行してください。", dialogTitle);
                 return;
             }
 
@@ -7363,7 +7396,7 @@ public class RibbonController : ExcelRibbon
                 workbookInfo.ShareInfo.ProjectId);
             if (string.IsNullOrWhiteSpace(shareToken))
             {
-                MessageBox.Show("共有をキャンセルしました（トークン未入力）", "変更共有");
+                MessageBox.Show("共有をキャンセルしました（トークン未入力）", dialogTitle);
                 return;
             }
 
@@ -7377,10 +7410,10 @@ public class RibbonController : ExcelRibbon
                 workbookInfo.ProjectId,
                 shareToken).ConfigureAwait(true);
 
-            List<SharedSheetSelectionItem> selectionItems = CollectSharedSheetSelectionItems(workbook, remoteManifest);
+            List<SharedSheetSelectionItem> selectionItems = CollectSharedSheetSelectionItems(workbook, remoteManifest, targetSheetName);
             if (selectionItems.Count == 0)
             {
-                MessageBox.Show("共有する変更はありません。", "変更共有");
+                MessageBox.Show("共有する変更はありません。", dialogTitle);
                 return;
             }
 
@@ -7399,7 +7432,7 @@ public class RibbonController : ExcelRibbon
 
             if (!selectionItems.Any(x => x != null && x.Document != null))
             {
-                MessageBox.Show("共有する変更はありません。", "変更共有");
+                MessageBox.Show("共有する変更はありません。", dialogTitle);
                 return;
             }
 
@@ -7411,13 +7444,13 @@ public class RibbonController : ExcelRibbon
 
             if (selectedItems == null || selectedItems.Count == 0)
             {
-                MessageBox.Show("共有するシートが選択されていません。", "変更共有");
+                MessageBox.Show("共有するシートが選択されていません。", dialogTitle);
                 return;
             }
 
             InitializeLoggerForWorkbookSession(workbook, "shared-commit");
 
-            progressForm = new PullProgressForm("変更共有", "共有中...");
+            progressForm = new PullProgressForm(dialogTitle, "共有中...");
             progressForm.Show();
             Action<string> shareProgressReporter = message =>
             {
@@ -7449,7 +7482,7 @@ public class RibbonController : ExcelRibbon
                 progressForm.CloseForm();
                 progressForm = null;
             }
-            MessageBox.Show(ex.ToString(), "変更共有");
+            MessageBox.Show(ex.ToString(), dialogTitle);
         }
         finally
         {
