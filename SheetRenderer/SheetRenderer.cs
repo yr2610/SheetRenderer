@@ -6502,6 +6502,8 @@ public class RibbonController : ExcelRibbon
                 {
                     return;
                 }
+
+                await ReceiveSharedSheetsAfterNewWorkbookCreatedAsync(shareInfo, progressForm);
             }
 
             string manifestPath = WritePullManifest(currentPullSession);
@@ -6581,6 +6583,8 @@ public class RibbonController : ExcelRibbon
                 return;
             }
 
+            await ReceiveSharedSheetsAfterNewWorkbookCreatedAsync(shareInfo, progressForm);
+
             string manifestPath = WritePullManifest(currentPullSession);
             FileLogger.Info("[PullManifest] written: " + manifestPath);
 
@@ -6596,6 +6600,25 @@ public class RibbonController : ExcelRibbon
             progressForm.CloseForm();
             ClearPullSessionState();
         }
+    }
+
+    private async Task ReceiveSharedSheetsAfterNewWorkbookCreatedAsync(GitLabShareInfo shareInfo, PullProgressForm progressForm)
+    {
+        if (shareInfo == null)
+        {
+            return;
+        }
+
+        Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
+        Excel.Workbook createdWorkbook = excelApp.ActiveWorkbook as Excel.Workbook;
+        if (createdWorkbook == null)
+        {
+            return;
+        }
+
+        progressForm.SetStatusText("共有値を反映しています");
+        progressForm.AppendLine("共有値を反映しています");
+        await ReceiveSharedSheetsAsync(createdWorkbook, shareInfo, progressForm.AppendLine);
     }
 
     public async void OnShareButtonPressed(IRibbonControl control)
