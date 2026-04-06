@@ -615,14 +615,6 @@ public class RibbonController : ExcelRibbon
                                         label='新規作成'
                                         screentip='Pull 情報を入力して新しくブックを作成します'
                                         onAction='OnPullCreateButtonPressed'/>
-                                <button id='buttonPullSourceSettings'
-                                        label='取得元設定'
-                                        screentip='Pull 新規作成で使う取得元 GitLab 情報を設定します'
-                                        onAction='OnPullSourceSettingsButtonPressed'/>
-                                <button id='buttonPullShareSettings'
-                                        label='共有先設定'
-                                        screentip='共有値同期で使う共有先 GitLab 情報を設定します'
-                                        onAction='OnPullShareSettingsButtonPressed'/>
                             </menu>
                         </splitButton>
                         <splitButton id='splitButtonShare' size='large'>
@@ -638,6 +630,20 @@ public class RibbonController : ExcelRibbon
                                         onAction='OnShareButtonPressed'/>
                             </menu>
                         </splitButton>
+                        </group>
+                        <group id='groupSettings' label='設定'>
+                        <button id='buttonPullSourceSettings'
+                                label='取得元設定'
+                                screentip='Pull 新規作成で使う取得元 GitLab 情報を設定します'
+                                size='large'
+                                imageMso='CurrentViewSettings'
+                                onAction='OnPullSourceSettingsButtonPressed'/>
+                        <button id='buttonPullShareSettings'
+                                label='共有先設定'
+                                screentip='共有値同期で使う共有先 GitLab 情報を設定します'
+                                size='large'
+                                imageMso='CurrentViewSettings'
+                                onAction='OnPullShareSettingsButtonPressed'/>
                         <button id='buttonTokenManager'
                                 label='トークン管理'
                                 screentip='保存済みトークンを一覧表示し、不要なものを削除します'
