@@ -1730,6 +1730,69 @@ public class RibbonController : ExcelRibbon
         }
     }
 
+    private static void TryHideSharedSheetBaseStoreSheet(Excel.Worksheet worksheet)
+    {
+        if (worksheet == null)
+        {
+            return;
+        }
+
+        try
+        {
+            Excel.XlSheetVisibility currentVisibility = (Excel.XlSheetVisibility)worksheet.Visible;
+            if (currentVisibility != Excel.XlSheetVisibility.xlSheetVisible)
+            {
+                return;
+            }
+        }
+        catch
+        {
+            return;
+        }
+
+        Excel.Workbook workbook = null;
+        try
+        {
+            workbook = worksheet.Parent as Excel.Workbook;
+        }
+        catch
+        {
+        }
+
+        if (workbook == null)
+        {
+            return;
+        }
+
+        int visibleSheetCount = 0;
+        foreach (Excel.Worksheet sheet in workbook.Worksheets)
+        {
+            try
+            {
+                if ((Excel.XlSheetVisibility)sheet.Visible == Excel.XlSheetVisibility.xlSheetVisible)
+                {
+                    visibleSheetCount++;
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        if (visibleSheetCount <= 1)
+        {
+            return;
+        }
+
+        try
+        {
+            worksheet.Visible = Excel.XlSheetVisibility.xlSheetHidden;
+        }
+        catch
+        {
+        }
+    }
+
     private static Excel.Worksheet GetSharedSheetBaseStoreSheet(Excel.Workbook workbook, bool createIfMissing)
     {
         if (workbook == null)
@@ -1741,7 +1804,7 @@ public class RibbonController : ExcelRibbon
         {
             if (string.Equals(worksheet.Name, sharedSheetBaseStoreSheetName, StringComparison.OrdinalIgnoreCase))
             {
-                worksheet.Visible = Excel.XlSheetVisibility.xlSheetHidden;
+                TryHideSharedSheetBaseStoreSheet(worksheet);
                 EnsureSharedSheetBaseStoreHeader(worksheet);
                 return worksheet;
             }
