@@ -2558,6 +2558,52 @@ public class RibbonController : ExcelRibbon
         return startRow;
     }
 
+    private static int? TryGetSharedSheetStartColumn(string rangeAddress)
+    {
+        if (string.IsNullOrWhiteSpace(rangeAddress))
+        {
+            return null;
+        }
+
+        Match match = Regex.Match(rangeAddress, @"\$?([A-Za-z]+)\$?\d+");
+        if (!match.Success)
+        {
+            return null;
+        }
+
+        string columnText = match.Groups[1].Value;
+        int column = 0;
+        foreach (char ch in columnText.ToUpperInvariant())
+        {
+            if (ch < 'A' || ch > 'Z')
+            {
+                return null;
+            }
+
+            column = (column * 26) + (ch - 'A' + 1);
+        }
+
+        return column > 0 ? (int?)column : null;
+    }
+
+    private static string GetExcelColumnLetter(int column)
+    {
+        if (column <= 0)
+        {
+            return "?";
+        }
+
+        string result = "";
+        while (column > 0)
+        {
+            int mod = (column - 1) % 26;
+            result = (char)('A' + mod) + result;
+            column = (column - mod - 1) / 26;
+        }
+
+        return result;
+    }
+
     private static Dictionary<string, int> CreateSharedSheetDisplayRowMap(SharedSheetDocument localDocument)
     {
         var result = new Dictionary<string, int>(StringComparer.Ordinal);
@@ -2640,6 +2686,7 @@ public class RibbonController : ExcelRibbon
         Dictionary<string, object[]> baseRows = CreateSharedSheetRowMap(baseDocument);
         List<string> rowOrder = BuildSharedSheetRowOrder(localDocument, remoteDocument, baseDocument);
         Dictionary<string, int> displayRows = CreateSharedSheetDisplayRowMap(localDocument);
+        int? startColumn = TryGetSharedSheetStartColumn(localDocument.RangeAddress);
 
         var lines = new List<string>();
         lines.Add("sheetName: " + (localDocument.SheetName ?? ""));
@@ -2683,9 +2730,11 @@ public class RibbonController : ExcelRibbon
                 string stateLabel = BuildSharedDiffStateLabel(baseValue, localValue, remoteValue);
                 int displayRow;
                 bool hasDisplayRow = displayRows.TryGetValue(rowId, out displayRow);
+                string displayAddress = hasDisplayRow && startColumn.HasValue
+                    ? GetExcelColumnLetter(startColumn.Value + col) + displayRow
+                    : "?";
                 lines.Add(
-                    "row=" + (hasDisplayRow ? displayRow.ToString() : "?") +
-                    "\tcol=" + (col + 1) +
+                    "addr=" + displayAddress +
                     "\tstate=" + stateLabel +
                     "\tbase=" + FormatSharedCellValueForDiff(baseValue) +
                     "\tlocal=" + FormatSharedCellValueForDiff(localValue) +
