@@ -2536,6 +2536,56 @@ public class RibbonController : ExcelRibbon
         return value.ToString();
     }
 
+    private static int? TryGetSharedSheetStartRow(string rangeAddress)
+    {
+        if (string.IsNullOrWhiteSpace(rangeAddress))
+        {
+            return null;
+        }
+
+        Match match = Regex.Match(rangeAddress, @"\$?[A-Za-z]+\$?(\d+)");
+        if (!match.Success)
+        {
+            return null;
+        }
+
+        int startRow;
+        if (!int.TryParse(match.Groups[1].Value, out startRow))
+        {
+            return null;
+        }
+
+        return startRow;
+    }
+
+    private static Dictionary<string, int> CreateSharedSheetDisplayRowMap(SharedSheetDocument localDocument)
+    {
+        var result = new Dictionary<string, int>(StringComparer.Ordinal);
+        if (!CanMergeSharedSheetByRowIds(localDocument))
+        {
+            return result;
+        }
+
+        int? startRow = TryGetSharedSheetStartRow(localDocument.RangeAddress);
+        if (!startRow.HasValue)
+        {
+            return result;
+        }
+
+        for (int i = 0; i < localDocument.RowIds.Length; i++)
+        {
+            string rowId = NormalizeSharedRowId(localDocument.RowIds[i]);
+            if (string.IsNullOrWhiteSpace(rowId) || result.ContainsKey(rowId))
+            {
+                continue;
+            }
+
+            result[rowId] = startRow.Value + i;
+        }
+
+        return result;
+    }
+
     private static string BuildSharedDiffStateLabel(object baseValue, object localValue, object remoteValue)
     {
         if (AreSharedCellValuesEqual(localValue, baseValue) &&
@@ -2589,6 +2639,7 @@ public class RibbonController : ExcelRibbon
         Dictionary<string, object[]> remoteRows = CreateSharedSheetRowMap(remoteDocument);
         Dictionary<string, object[]> baseRows = CreateSharedSheetRowMap(baseDocument);
         List<string> rowOrder = BuildSharedSheetRowOrder(localDocument, remoteDocument, baseDocument);
+        Dictionary<string, int> displayRows = CreateSharedSheetDisplayRowMap(localDocument);
 
         var lines = new List<string>();
         lines.Add("sheetName: " + (localDocument.SheetName ?? ""));
@@ -2630,8 +2681,10 @@ public class RibbonController : ExcelRibbon
                 }
 
                 string stateLabel = BuildSharedDiffStateLabel(baseValue, localValue, remoteValue);
+                int displayRow;
+                bool hasDisplayRow = displayRows.TryGetValue(rowId, out displayRow);
                 lines.Add(
-                    "rowId=" + rowId +
+                    "row=" + (hasDisplayRow ? displayRow.ToString() : "?") +
                     "\tcol=" + (col + 1) +
                     "\tstate=" + stateLabel +
                     "\tbase=" + FormatSharedCellValueForDiff(baseValue) +
@@ -2663,12 +2716,14 @@ public class RibbonController : ExcelRibbon
         var ids = currentSheetValuesInfo.Ids == null
             ? null
             : currentSheetValuesInfo.Ids.Select(x => x == null ? null : x.ToString()).ToArray();
+        int rangeStartRow = currentSheetValuesInfo.Range?.Row ?? 1;
 
         int rowCount = currentSheetValuesInfo.Values.GetLength(0);
         int columnCount = currentSheetValuesInfo.Values.GetLength(1);
         for (int row = 1; row <= rowCount; row++)
         {
             string rowId = ids != null && row - 1 < ids.Length ? ids[row - 1] : null;
+            int displayRow = rangeStartRow + row - 1;
 
             for (int col = 1; col <= columnCount; col++)
             {
@@ -2691,6 +2746,7 @@ public class RibbonController : ExcelRibbon
                     "sheetId=" + sheet.GetCustomProperty(sheetIdCustomPropertyName) +
                     " sheetName=" + sheet.Name +
                     " rowId=" + (rowId ?? "") +
+                    " row=" + displayRow +
                     " cell=" + cell.Address[false, false] +
                     " local=" + (currentValue ?? "") +
                     " remote=" + (mergedValue ?? ""));
