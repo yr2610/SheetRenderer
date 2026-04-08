@@ -264,6 +264,84 @@ internal sealed class SharedSheetSelectionDialog : Form
         ShowDiffDialog(owner, item);
     }
 
+    public static bool TryShowRevertConfirmation(
+        IWin32Window owner,
+        SharedSheetSelectionItem item,
+        string infoText = null,
+        string okButtonText = "取り消す")
+    {
+        if (item == null)
+        {
+            return false;
+        }
+
+        using (var form = new Form())
+        using (var infoLabel = new Label())
+        using (var textBox = new TextBox())
+        using (var okButton = new Button())
+        using (var cancelButton = new Button())
+        {
+            form.Text = "変更の取り消し: " + (item.SheetName ?? item.SheetId ?? "");
+            form.StartPosition = FormStartPosition.CenterParent;
+            form.FormBorderStyle = FormBorderStyle.Sizable;
+            form.MinimizeBox = false;
+            form.MaximizeBox = true;
+            form.ShowInTaskbar = false;
+            form.Width = 980;
+            form.Height = 620;
+            form.Font = new Font("Meiryo UI", 9f);
+
+            infoLabel.AutoSize = false;
+            infoLabel.Left = 12;
+            infoLabel.Top = 12;
+            infoLabel.Width = form.ClientSize.Width - 24;
+            infoLabel.Height = 44;
+            infoLabel.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+            infoLabel.Text = string.IsNullOrWhiteSpace(infoText)
+                ? "このシートの未共有の変更を取り消します。元に戻せません。本当に取り消しますか？"
+                : infoText;
+
+            textBox.Multiline = true;
+            textBox.ScrollBars = ScrollBars.Both;
+            textBox.ReadOnly = true;
+            textBox.WordWrap = false;
+            textBox.Left = 12;
+            textBox.Top = infoLabel.Bottom + 8;
+            textBox.Width = form.ClientSize.Width - 24;
+            textBox.Height = form.ClientSize.Height - 108;
+            textBox.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
+            textBox.Font = new Font("Meiryo UI", 9f);
+            textBox.Text = string.IsNullOrWhiteSpace(item.DiffText)
+                ? "差分はありません。"
+                : item.DiffText;
+
+            okButton.Text = okButtonText;
+            okButton.Width = 90;
+            okButton.Height = 28;
+            okButton.Left = form.ClientSize.Width - 192;
+            okButton.Top = form.ClientSize.Height - okButton.Height - 12;
+            okButton.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
+            okButton.DialogResult = DialogResult.OK;
+
+            cancelButton.Text = "キャンセル";
+            cancelButton.Width = 90;
+            cancelButton.Height = 28;
+            cancelButton.Left = form.ClientSize.Width - 96;
+            cancelButton.Top = form.ClientSize.Height - cancelButton.Height - 12;
+            cancelButton.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
+            cancelButton.DialogResult = DialogResult.Cancel;
+
+            form.Controls.Add(infoLabel);
+            form.Controls.Add(textBox);
+            form.Controls.Add(okButton);
+            form.Controls.Add(cancelButton);
+            form.AcceptButton = okButton;
+            form.CancelButton = cancelButton;
+
+            return form.ShowDialog(owner) == DialogResult.OK;
+        }
+    }
+
     public List<SharedSheetSelectionItem> GetSelectedItems()
     {
         return items.Where(x => x != null && x.Selected && x.Document != null).ToList();

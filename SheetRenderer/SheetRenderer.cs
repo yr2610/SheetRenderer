@@ -639,6 +639,10 @@ public class RibbonController : ExcelRibbon
                                         label='シートの差分を表示'
                                         screentip='表示中のシートの共有差分を確認します'
                                         onAction='OnShowCurrentSheetDiffButtonPressed'/>
+                                <button id='buttonShareRevert'
+                                        label='シートの変更を取り消す'
+                                        screentip='表示中のシートの未共有の変更を共有前の状態に戻します'
+                                        onAction='OnRevertCurrentSheetChangesButtonPressed'/>
                                 <button id='buttonShareAll'
                                         label='全シート共有'
                                         screentip='変更した全シートの入力値を共有先へ送信します'
@@ -2801,6 +2805,98 @@ public class RibbonController : ExcelRibbon
                     " remote=" + (mergedValue ?? ""));
             }
         }
+    }
+
+    private static object[,] BuildSharedSheetRevertValues(SheetValuesInfo currentSheetValuesInfo, SharedSheetDocument baseDocument)
+    {
+        if (currentSheetValuesInfo == null)
+        {
+            throw new ArgumentNullException(nameof(currentSheetValuesInfo));
+        }
+
+        object[,] result = (object[,])currentSheetValuesInfo.Values.Clone();
+
+        if (currentSheetValuesInfo.Ids == null || !HasAnyNonEmptySharedIds(currentSheetValuesInfo.Ids))
+        {
+            throw new InvalidOperationException("Shared sheet rowIds are required for revert.");
+        }
+
+        Dictionary<string, object[]> baseRows = CreateSharedSheetRowMap(baseDocument);
+        int rowCount = currentSheetValuesInfo.Values.GetLength(0);
+        int columnCount = currentSheetValuesInfo.Values.GetLength(1);
+
+        var ids = currentSheetValuesInfo.Ids.ToArray();
+        for (int row = 1; row <= rowCount; row++)
+        {
+            string rowId = row - 1 < ids.Length ? NormalizeSharedRowId(ids[row - 1]) : null;
+            object[] baseRow = null;
+            bool hasBaseRow = !string.IsNullOrWhiteSpace(rowId) && baseRows.TryGetValue(rowId, out baseRow);
+
+            for (int col = 1; col <= columnCount; col++)
+            {
+                if (currentSheetValuesInfo.IgnoreColumnOffsets.Contains(col - 1))
+                {
+                    continue;
+                }
+
+                result[row, col] = hasBaseRow
+                    ? GetSharedSheetCellValue(baseRow, col - 1)
+                    : null;
+            }
+        }
+
+        return result;
+    }
+
+    private static int LogSharedRevertDifferences(Excel.Worksheet sheet, SheetValuesInfo currentSheetValuesInfo, object[,] revertedValues)
+    {
+        if (sheet == null || currentSheetValuesInfo == null || revertedValues == null)
+        {
+            return 0;
+        }
+
+        var ids = currentSheetValuesInfo.Ids == null
+            ? null
+            : currentSheetValuesInfo.Ids.Select(x => x == null ? null : x.ToString()).ToArray();
+        int rangeStartRow = currentSheetValuesInfo.Range?.Row ?? 1;
+        int rowCount = currentSheetValuesInfo.Values.GetLength(0);
+        int columnCount = currentSheetValuesInfo.Values.GetLength(1);
+        int diffCount = 0;
+
+        for (int row = 1; row <= rowCount; row++)
+        {
+            string rowId = ids != null && row - 1 < ids.Length ? ids[row - 1] : null;
+            int displayRow = rangeStartRow + row - 1;
+
+            for (int col = 1; col <= columnCount; col++)
+            {
+                if (currentSheetValuesInfo.IgnoreColumnOffsets.Contains(col - 1))
+                {
+                    continue;
+                }
+
+                object currentValue = currentSheetValuesInfo.Values[row, col];
+                object revertedValue = revertedValues[row, col];
+                if (AreSharedCellValuesEqual(currentValue, revertedValue))
+                {
+                    continue;
+                }
+
+                Excel.Range cell = currentSheetValuesInfo.Range.Cells[row, col];
+                FileLogger.Info(
+                    "[SharedRevert] " +
+                    "sheetId=" + sheet.GetCustomProperty(sheetIdCustomPropertyName) +
+                    " sheetName=" + sheet.Name +
+                    " rowId=" + (rowId ?? "") +
+                    " row=" + displayRow +
+                    " cell=" + cell.Address[false, false] +
+                    " local=" + (currentValue ?? "") +
+                    " base=" + (revertedValue ?? ""));
+                diffCount++;
+            }
+        }
+
+        return diffCount;
     }
 
     private static void ApplySharedSheetDocumentToWorksheet(Excel.Worksheet sheet, SharedSheetDocument sharedSheetDocument)
@@ -7703,6 +7799,104 @@ public class RibbonController : ExcelRibbon
             };
 
             SharedSheetSelectionDialog.ShowDiff(null, item);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(ex.ToString(), dialogTitle);
+        }
+    }
+
+    public void OnRevertCurrentSheetChangesButtonPressed(IRibbonControl control)
+    {
+        string dialogTitle = "シートの変更を取り消す";
+
+        try
+        {
+            Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
+            Excel.Workbook workbook = excelApp.ActiveWorkbook as Excel.Workbook;
+            Excel.Worksheet activeSheet = excelApp.ActiveSheet as Excel.Worksheet;
+
+            if (workbook == null || activeSheet == null)
+            {
+                MessageBox.Show("アクティブなシートがありません。", dialogTitle);
+                return;
+            }
+
+            WorkbookInfo workbookInfo = WorkbookInfo.CreateFromWorkbook(workbook);
+            if (workbookInfo == null)
+            {
+                string projectName = Assembly.GetExecutingAssembly().GetName().Name;
+                MessageBox.Show($"{projectName} で生成されたブックではありません。", dialogTitle);
+                return;
+            }
+
+            SharedSheetDocument localDocument = CreateSharedSheetDocument(activeSheet);
+            if (localDocument == null)
+            {
+                MessageBox.Show("このシートは共有対象ではありません。", dialogTitle);
+                return;
+            }
+
+            SharedSheetDocument baseDocument = GetSharedSheetBaseDocument(workbook, localDocument.SheetId);
+            if (baseDocument == null)
+            {
+                MessageBox.Show("このシートを元に戻す共有状態がありません。", dialogTitle);
+                return;
+            }
+
+            string diffText = BuildSharedSheetDiffText(baseDocument, localDocument, null);
+            if (string.Equals(diffText, "差分はありません。", StringComparison.Ordinal))
+            {
+                MessageBox.Show("取り消す変更はありません。", dialogTitle);
+                return;
+            }
+
+            var item = new SharedSheetSelectionItem
+            {
+                SheetName = localDocument.SheetName,
+                SheetId = localDocument.SheetId,
+                DiffText = diffText,
+                Document = localDocument
+            };
+
+            bool confirmed = SharedSheetSelectionDialog.TryShowRevertConfirmation(
+                null,
+                item,
+                "このシートの未共有の変更を取り消します。元に戻せません。本当に取り消しますか？",
+                "取り消す");
+            if (!confirmed)
+            {
+                return;
+            }
+
+            InitializeLoggerForWorkbookSession(workbook, "shared-revert");
+
+            SheetValuesInfo currentSheetValuesInfo = SheetValuesInfo.CreateFromSheet(activeSheet);
+            if (currentSheetValuesInfo == null)
+            {
+                MessageBox.Show("このシートは共有対象ではありません。", dialogTitle);
+                return;
+            }
+
+            object[,] revertedValues = BuildSharedSheetRevertValues(currentSheetValuesInfo, baseDocument);
+            int revertedCellCount = LogSharedRevertDifferences(activeSheet, currentSheetValuesInfo, revertedValues);
+
+            using (ExcelUiSuspendScope uiSuspendScope = TryCreateExcelUiSuspendScope(workbook))
+            {
+                currentSheetValuesInfo.Range.Value2 = revertedValues;
+            }
+
+            DialogResult openLog = MessageBox.Show(
+                "シートの変更を取り消しました。" + Environment.NewLine +
+                "変更セル数: " + revertedCellCount + Environment.NewLine + Environment.NewLine +
+                "ログファイルを開きますか？",
+                dialogTitle,
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Information);
+            if (openLog == DialogResult.Yes)
+            {
+                FileLogger.OpenLog();
+            }
         }
         catch (Exception ex)
         {
