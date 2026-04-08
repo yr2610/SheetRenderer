@@ -478,6 +478,17 @@ public class RibbonController : ExcelRibbon
         public string RefCommitId;
     }
 
+    private sealed class SharedReceiveResult
+    {
+        public int AppliedCount;
+
+        public int ConflictAppliedSheetCount;
+
+        public int ConflictAppliedCellCount;
+
+        public List<string> ConflictSheetNames = new List<string>();
+    }
+
     private sealed class PullSessionLog
     {
         private readonly List<PullFileActivity> activities;
@@ -2816,22 +2827,68 @@ public class RibbonController : ExcelRibbon
         return ParseSharedSheetDocument(Encoding.UTF8.GetString(sheetBytes));
     }
 
-    private async Task ReceiveSharedSheetsAsync(
+    private static void ShowSharedReceiveConflictDialogIfNeeded(SharedReceiveResult result)
+    {
+        if (result == null || result.ConflictAppliedSheetCount <= 0)
+        {
+            return;
+        }
+
+        string detail = string.Empty;
+        if (result.ConflictSheetNames != null && result.ConflictSheetNames.Count > 0)
+        {
+            int maxNames = Math.Min(5, result.ConflictSheetNames.Count);
+            detail = Environment.NewLine +
+                     "対象シート: " +
+                     string.Join(", ", result.ConflictSheetNames.Take(maxNames));
+
+            if (result.ConflictSheetNames.Count > maxNames)
+            {
+                detail += " ほか " + (result.ConflictSheetNames.Count - maxNames) + " シート";
+            }
+        }
+
+        DialogResult dialogResult = MessageBox.Show(
+            "共有値の競合があり、共有先の値で上書きされました。" + Environment.NewLine +
+            "競合シート数: " + result.ConflictAppliedSheetCount + Environment.NewLine +
+            "競合セル数: " + result.ConflictAppliedCellCount +
+            detail + Environment.NewLine + Environment.NewLine +
+            "ログファイルを開きますか？",
+            "最新版取得",
+            MessageBoxButtons.YesNo,
+            MessageBoxIcon.Warning);
+
+        if (dialogResult == DialogResult.Yes)
+        {
+            try
+            {
+                FileLogger.OpenLog();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(ex.ToString(), "ログファイルを開けませんでした");
+            }
+        }
+    }
+
+    private async Task<SharedReceiveResult> ReceiveSharedSheetsAsync(
         Excel.Workbook workbook,
         GitLabShareInfo shareInfo,
         Action<string> progressReporter = null)
     {
+        SharedReceiveResult result = new SharedReceiveResult();
+
         if (workbook == null || shareInfo == null)
         {
             progressReporter?.Invoke("共有設定が無いため共有値確認をスキップしました");
-            return;
+            return result;
         }
 
         string projectId = workbook.GetCustomProperty(ssProjectIdCustomPropertyName);
         if (string.IsNullOrWhiteSpace(projectId))
         {
             progressReporter?.Invoke("SSProjectId が無いため共有値確認をスキップしました");
-            return;
+            return result;
         }
 
         InitializeLoggerForSharedReceive(workbook);
@@ -2840,7 +2897,7 @@ public class RibbonController : ExcelRibbon
         if (string.IsNullOrWhiteSpace(token))
         {
             MessageBox.Show("共有値の取得をキャンセルしました（トークン未入力）", "最新版取得");
-            return;
+            return result;
         }
 
         await EnsureValidatedShareRefNameAsync(shareInfo, token, workbook);
@@ -2899,7 +2956,7 @@ public class RibbonController : ExcelRibbon
                 " refs=" + string.Join(",", candidateRefs ?? new List<string>()) +
                 " shareRepo=" + shareInfo.ProjectId);
             progressReporter?.Invoke("共有値はまだありません");
-            return;
+            return result;
         }
 
         if (!string.Equals(refName, configuredRefName, StringComparison.OrdinalIgnoreCase))
@@ -2918,7 +2975,7 @@ public class RibbonController : ExcelRibbon
         {
             FileLogger.Info("[SharedReceive] shared manifest not found or empty. project=" + projectId + " path=" + manifestPath + " ref=" + refName + " shareRepo=" + shareInfo.ProjectId);
             progressReporter?.Invoke("共有マニフェストが見つからないか空です");
-            return;
+            return result;
         }
 
         EnsureSharedSheetBaseStorePrepared(workbook, progressReporter);
@@ -3056,6 +3113,8 @@ public class RibbonController : ExcelRibbon
             if (mergeResult.ConflictCount > 0)
             {
                 conflictAppliedCount++;
+                result.ConflictAppliedCellCount += mergeResult.ConflictCount;
+                result.ConflictSheetNames.Add(sheet.Name);
                 progressReporter?.Invoke("共有値の競合を反映しました: " + sheet.Name + " (" + mergeResult.ConflictCount + "セル)");
             }
             progressReporter?.Invoke("共有値を反映しました: " + sheet.Name);
@@ -3077,6 +3136,10 @@ public class RibbonController : ExcelRibbon
         {
             progressReporter?.Invoke("共有値の競合上書きがありました: " + conflictAppliedCount + " シート");
         }
+
+        result.AppliedCount = appliedCount;
+        result.ConflictAppliedSheetCount = conflictAppliedCount;
+        return result;
     }
 
     private static void InitializeLoggerForWorkbookSession(Excel.Workbook workbook, string baseName)
@@ -7253,9 +7316,12 @@ public class RibbonController : ExcelRibbon
                     progressForm.Show();
                     progressForm.AppendLine("Pull 元は最新版です");
                     progressForm.AppendLine("共有値を確認します");
-                    await ReceiveSharedSheetsAsync(activeWorkbook, shareInfo, progressForm.AppendLine);
+                    SharedReceiveResult sharedReceiveResult = await ReceiveSharedSheetsAsync(activeWorkbook, shareInfo, progressForm.AppendLine);
                     progressForm.ShowContinueButton("閉じる", "共有値確認が完了しました");
                     await progressForm.WaitForContinueAsync();
+                    progressForm.CloseForm();
+                    progressForm = null;
+                    ShowSharedReceiveConflictDialogIfNeeded(sharedReceiveResult);
                     return;
                 }
             }
@@ -7284,7 +7350,8 @@ public class RibbonController : ExcelRibbon
                 if (shareInfo != null)
                 {
                     progressForm.AppendLine("共有値を反映しています");
-                    await ReceiveSharedSheetsAsync(activeWorkbook, shareInfo, progressForm.AppendLine);
+                    SharedReceiveResult sharedReceiveResult = await ReceiveSharedSheetsAsync(activeWorkbook, shareInfo, progressForm.AppendLine);
+                    ShowSharedReceiveConflictDialogIfNeeded(sharedReceiveResult);
                 }
             }
             else
@@ -7432,7 +7499,8 @@ public class RibbonController : ExcelRibbon
 
         progressForm.SetStatusText("共有値を反映しています");
         progressForm.AppendLine("共有値を反映しています");
-        await ReceiveSharedSheetsAsync(createdWorkbook, shareInfo, progressForm.AppendLine);
+        SharedReceiveResult sharedReceiveResult = await ReceiveSharedSheetsAsync(createdWorkbook, shareInfo, progressForm.AppendLine);
+        ShowSharedReceiveConflictDialogIfNeeded(sharedReceiveResult);
     }
 
     public void OnShareCurrentSheetButtonPressed(IRibbonControl control)
