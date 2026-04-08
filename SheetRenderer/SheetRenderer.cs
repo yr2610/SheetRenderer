@@ -636,11 +636,11 @@ public class RibbonController : ExcelRibbon
                                     onAction='OnShareCurrentSheetButtonPressed'/>
                             <menu id='menuShare'>
                                 <button id='buttonShareDiff'
-                                        label='シートの差分を表示'
+                                        label='シート差分表示'
                                         screentip='表示中のシートの共有差分を確認します'
                                         onAction='OnShowCurrentSheetDiffButtonPressed'/>
                                 <button id='buttonShareRevert'
-                                        label='シートの変更を取り消す'
+                                        label='シート変更を戻す'
                                         screentip='表示中のシートの未共有の変更を共有前の状態に戻します'
                                         onAction='OnRevertCurrentSheetChangesButtonPressed'/>
                                 <button id='buttonShareAll'
@@ -7723,7 +7723,7 @@ public class RibbonController : ExcelRibbon
 
     public async void OnShowCurrentSheetDiffButtonPressed(IRibbonControl control)
     {
-        string dialogTitle = "シートの差分を表示";
+        string dialogTitle = "シート差分表示";
 
         try
         {
@@ -7808,7 +7808,7 @@ public class RibbonController : ExcelRibbon
 
     public void OnRevertCurrentSheetChangesButtonPressed(IRibbonControl control)
     {
-        string dialogTitle = "シートの変更を取り消す";
+        string dialogTitle = "シート変更を戻す";
 
         try
         {
@@ -7847,7 +7847,7 @@ public class RibbonController : ExcelRibbon
             string diffText = BuildSharedSheetDiffText(baseDocument, localDocument, null);
             if (string.Equals(diffText, "差分はありません。", StringComparison.Ordinal))
             {
-                MessageBox.Show("取り消す変更はありません。", dialogTitle);
+                MessageBox.Show("戻す変更はありません。", dialogTitle);
                 return;
             }
 
@@ -7862,8 +7862,8 @@ public class RibbonController : ExcelRibbon
             bool confirmed = SharedSheetSelectionDialog.TryShowRevertConfirmation(
                 null,
                 item,
-                "このシートの未共有の変更を取り消します。元に戻せません。本当に取り消しますか？",
-                "取り消す");
+                "このシートの未共有の変更を戻します。この操作は元に戻せません。本当に戻しますか？",
+                "戻す");
             if (!confirmed)
             {
                 return;

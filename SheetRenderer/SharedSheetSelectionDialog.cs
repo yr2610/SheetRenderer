@@ -268,7 +268,7 @@ internal sealed class SharedSheetSelectionDialog : Form
         IWin32Window owner,
         SharedSheetSelectionItem item,
         string infoText = null,
-        string okButtonText = "取り消す")
+        string okButtonText = "戻す")
     {
         if (item == null)
         {
@@ -281,7 +281,7 @@ internal sealed class SharedSheetSelectionDialog : Form
         using (var okButton = new Button())
         using (var cancelButton = new Button())
         {
-            form.Text = "変更の取り消し: " + (item.SheetName ?? item.SheetId ?? "");
+            form.Text = "シート変更を戻す: " + (item.SheetName ?? item.SheetId ?? "");
             form.StartPosition = FormStartPosition.CenterParent;
             form.FormBorderStyle = FormBorderStyle.Sizable;
             form.MinimizeBox = false;
@@ -298,7 +298,7 @@ internal sealed class SharedSheetSelectionDialog : Form
             infoLabel.Height = 44;
             infoLabel.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
             infoLabel.Text = string.IsNullOrWhiteSpace(infoText)
-                ? "このシートの未共有の変更を取り消します。元に戻せません。本当に取り消しますか？"
+                ? "このシートの未共有の変更を戻します。この操作は元に戻せません。本当に戻しますか？"
                 : infoText;
 
             textBox.Multiline = true;
