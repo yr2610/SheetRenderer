@@ -252,6 +252,18 @@ internal sealed class SharedSheetSelectionDialog : Form
         }
     }
 
+    public static void ShowDiff(
+        IWin32Window owner,
+        SharedSheetSelectionItem item)
+    {
+        if (item == null)
+        {
+            return;
+        }
+
+        ShowDiffDialog(owner, item);
+    }
+
     public List<SharedSheetSelectionItem> GetSelectedItems()
     {
         return items.Where(x => x != null && x.Selected && x.Document != null).ToList();

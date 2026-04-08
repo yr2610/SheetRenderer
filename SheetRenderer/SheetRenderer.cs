@@ -635,6 +635,10 @@ public class RibbonController : ExcelRibbon
                                     imageMso='FileSendAsAttachment'
                                     onAction='OnShareCurrentSheetButtonPressed'/>
                             <menu id='menuShare'>
+                                <button id='buttonShareDiff'
+                                        label='シートの差分を表示'
+                                        screentip='表示中のシートの共有差分を確認します'
+                                        onAction='OnShowCurrentSheetDiffButtonPressed'/>
                                 <button id='buttonShareAll'
                                         label='全シート共有'
                                         screentip='変更した全シートの入力値を共有先へ送信します'
@@ -7514,6 +7518,91 @@ public class RibbonController : ExcelRibbon
         }
 
         OnShareButtonPressed(control, activeSheet.Name);
+    }
+
+    public async void OnShowCurrentSheetDiffButtonPressed(IRibbonControl control)
+    {
+        string dialogTitle = "シートの差分を表示";
+
+        try
+        {
+            Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
+            Excel.Workbook workbook = excelApp.ActiveWorkbook as Excel.Workbook;
+            Excel.Worksheet activeSheet = excelApp.ActiveSheet as Excel.Worksheet;
+
+            if (workbook == null || activeSheet == null)
+            {
+                MessageBox.Show("アクティブなシートがありません。", dialogTitle);
+                return;
+            }
+
+            WorkbookInfo workbookInfo = WorkbookInfo.CreateFromWorkbook(workbook);
+            if (workbookInfo == null)
+            {
+                string projectName = Assembly.GetExecutingAssembly().GetName().Name;
+                MessageBox.Show($"{projectName} で生成されたブックではありません。", dialogTitle);
+                return;
+            }
+
+            if (workbookInfo.ShareInfo == null)
+            {
+                MessageBox.Show("このブックには共有先の情報が保存されていません。", dialogTitle);
+                return;
+            }
+
+            SharedSheetDocument localDocument = CreateSharedSheetDocument(activeSheet);
+            if (localDocument == null)
+            {
+                MessageBox.Show("このシートは共有対象ではありません。", dialogTitle);
+                return;
+            }
+
+            SharedSheetDocument baseDocument = GetSharedSheetBaseDocument(workbook, localDocument.SheetId);
+            SharedSheetDocument remoteDocument = null;
+
+            string shareToken = GitLabAuth.GetOrPromptToken(
+                workbookInfo.ShareInfo.BaseUrl,
+                workbookInfo.ShareInfo.ProjectId);
+            if (!string.IsNullOrWhiteSpace(shareToken))
+            {
+                await EnsureValidatedShareRefNameAsync(
+                    workbookInfo.ShareInfo,
+                    shareToken,
+                    workbook).ConfigureAwait(true);
+
+                SharedProjectManifest remoteManifest = await TryDownloadSharedProjectManifestAsync(
+                    workbookInfo.ShareInfo,
+                    workbookInfo.ProjectId,
+                    shareToken).ConfigureAwait(true);
+
+                SharedProjectManifestEntry remoteEntry = remoteManifest == null || remoteManifest.Sheets == null
+                    ? null
+                    : remoteManifest.Sheets.FirstOrDefault(x => x != null && string.Equals(x.SheetId, localDocument.SheetId, StringComparison.Ordinal));
+
+                if (remoteEntry != null)
+                {
+                    remoteDocument = await TryDownloadSharedSheetDocumentAsync(
+                        workbookInfo.ShareInfo,
+                        workbookInfo.ProjectId,
+                        localDocument.SheetId,
+                        shareToken).ConfigureAwait(true);
+                }
+            }
+
+            var item = new SharedSheetSelectionItem
+            {
+                SheetName = localDocument.SheetName,
+                SheetId = localDocument.SheetId,
+                DiffText = BuildSharedSheetDiffText(baseDocument, localDocument, remoteDocument),
+                Document = localDocument
+            };
+
+            SharedSheetSelectionDialog.ShowDiff(null, item);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(ex.ToString(), dialogTitle);
+        }
     }
 
     public void OnShareButtonPressed(IRibbonControl control)
