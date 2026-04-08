@@ -1759,7 +1759,7 @@ public class RibbonController : ExcelRibbon
         Excel.Workbook workbook = null;
         try
         {
-            workbook = worksheet.Parent as Excel.Workbook;
+            workbook = ExecuteExcelComWithRetry(() => worksheet.Parent as Excel.Workbook);
         }
         catch
         {
@@ -1771,8 +1771,28 @@ public class RibbonController : ExcelRibbon
         }
 
         int visibleSheetCount = 0;
-        foreach (Excel.Worksheet sheet in workbook.Worksheets)
+        int worksheetCount;
+        try
         {
+            worksheetCount = ExecuteExcelComWithRetry(() => workbook.Worksheets.Count);
+        }
+        catch
+        {
+            return;
+        }
+
+        for (int i = 1; i <= worksheetCount; i++)
+        {
+            Excel.Worksheet sheet;
+            try
+            {
+                sheet = ExecuteExcelComWithRetry(() => workbook.Worksheets[i] as Excel.Worksheet);
+            }
+            catch
+            {
+                continue;
+            }
+
             try
             {
                 if ((Excel.XlSheetVisibility)sheet.Visible == Excel.XlSheetVisibility.xlSheetVisible)
@@ -1806,8 +1826,10 @@ public class RibbonController : ExcelRibbon
             return null;
         }
 
-        foreach (Excel.Worksheet worksheet in workbook.Worksheets)
+        int worksheetCount = ExecuteExcelComWithRetry(() => workbook.Worksheets.Count);
+        for (int i = 1; i <= worksheetCount; i++)
         {
+            Excel.Worksheet worksheet = ExecuteExcelComWithRetry(() => workbook.Worksheets[i] as Excel.Worksheet);
             if (string.Equals(worksheet.Name, sharedSheetBaseStoreSheetName, StringComparison.OrdinalIgnoreCase))
             {
                 TryHideSharedSheetBaseStoreSheet(worksheet);
@@ -1822,8 +1844,9 @@ public class RibbonController : ExcelRibbon
         }
 
         SheetViewState originalViewState = CaptureActiveWorkbookViewState(workbook);
-        Excel.Worksheet newWorksheet = (Excel.Worksheet)workbook.Worksheets.Add(
-            After: workbook.Worksheets[workbook.Worksheets.Count]);
+        Excel.Worksheet newWorksheet = ExecuteExcelComWithRetry(
+            () => (Excel.Worksheet)workbook.Worksheets.Add(
+                After: workbook.Worksheets[worksheetCount]));
         newWorksheet.Name = sharedSheetBaseStoreSheetName;
         newWorksheet.Visible = Excel.XlSheetVisibility.xlSheetHidden;
         EnsureSharedSheetBaseStoreHeader(newWorksheet);
@@ -4209,6 +4232,31 @@ public class RibbonController : ExcelRibbon
         workbook.SetCustomProperty("RenderLog", renderLog);
     }
 
+    private static bool IsExcelBusyComException(COMException ex)
+    {
+        return ex != null && ex.HResult == unchecked((int)0x8001010A);
+    }
+
+    private static T ExecuteExcelComWithRetry<T>(Func<T> action)
+    {
+        COMException lastException = null;
+
+        for (int attempt = 0; attempt < 8; attempt++)
+        {
+            try
+            {
+                return action();
+            }
+            catch (COMException ex) when (IsExcelBusyComException(ex))
+            {
+                lastException = ex;
+                Thread.Sleep(100);
+            }
+        }
+
+        throw new InvalidOperationException("セルの編集を確定してから実行してください。", lastException);
+    }
+
     public async void OnUpdateCurrentSheetButtonPressed(IRibbonControl control)
     {
         Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
@@ -5422,6 +5470,7 @@ public class RibbonController : ExcelRibbon
 
     public async void OnCreateNewButtonPressed(IRibbonControl control)
     {
+        Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
         string txtFilePath = OpenSourceFile();
         if (txtFilePath == null)
         {
@@ -5437,8 +5486,6 @@ public class RibbonController : ExcelRibbon
         }
 
         string jsonFilePath = TxtToJsonPath(txtFilePath);
-
-        Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
 
         await CreateNewWorkbook(txtFilePath, jsonFilePath);
 
@@ -6850,6 +6897,7 @@ public class RibbonController : ExcelRibbon
 
     public void OnDebugParseButtonPressed(IRibbonControl control)
     {
+        Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
         string txtPath2 = OpenSourceFile();
         if (txtPath2 == null)
         {
@@ -6861,6 +6909,7 @@ public class RibbonController : ExcelRibbon
 
     public void OnDebugValidateNestedLazyReadButtonPressed(IRibbonControl control)
     {
+        Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
         PullSessionContext debugSession = lastSuccessfulPullSession;
         if (debugSession == null ||
             string.IsNullOrEmpty(debugSession.WorkRoot) ||
@@ -6918,6 +6967,7 @@ public class RibbonController : ExcelRibbon
 
     public async void OnRenderOnlyDebugButtonPressed(IRibbonControl control)
     {
+        Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
         string selectedPath = SelectInputFileForRenderOnly();
         if (selectedPath == null)
         {
@@ -6936,7 +6986,6 @@ public class RibbonController : ExcelRibbon
             jsonFilePath = TxtToJsonPath(txtFilePath);
         }
 
-        Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
         var sheet = excelApp.ActiveSheet as Excel.Worksheet;
         bool isNewWorkbook = sheet == null;
         Excel.Workbook workbook = isNewWorkbook ? null : sheet.Parent as Excel.Workbook;
@@ -7292,6 +7341,7 @@ public class RibbonController : ExcelRibbon
 
     public async void OnPullCreateButtonPressed(IRibbonControl control)
     {
+        Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
         if (SynchronizationContext.Current == null)
         {
             SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());
@@ -7411,9 +7461,9 @@ public class RibbonController : ExcelRibbon
         }
 
         Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
+        string dialogTitle = string.IsNullOrWhiteSpace(targetSheetName) ? "変更共有" : "シート共有";
         Excel.Workbook workbook = excelApp.ActiveWorkbook as Excel.Workbook;
         PullProgressForm progressForm = null;
-        string dialogTitle = string.IsNullOrWhiteSpace(targetSheetName) ? "変更共有" : "シート共有";
 
         if (workbook == null)
         {
@@ -8622,6 +8672,7 @@ public class RibbonController : ExcelRibbon
 
     public void OnTokenManagerButtonPressed(IRibbonControl control)
     {
+        Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
         try
         {
             GitLabTokenManagerDialog.ShowDialogSafe(null);
