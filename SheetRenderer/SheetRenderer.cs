@@ -4404,26 +4404,6 @@ public class RibbonController : ExcelRibbon
             }
         }
 
-        // ファイルが変更されて保存されてない場合
-        if (workbook.Saved == false)
-        {
-            // 保存確認ダイアログを表示
-            DialogResult yesNoCancel = MessageBox.Show($"シートを更新する前にファイルの変更内容を保存しますか？", "確認", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Exclamation);
-
-            switch (yesNoCancel)
-            {
-                case DialogResult.Yes:
-                    workbook.Save();
-                    break;
-                case DialogResult.No:
-                    // 保存せずに続行
-                    break;
-                case DialogResult.Cancel:
-                    // キャンセルされた場合、処理を中止
-                    return;
-            }
-        }
-
         if (newSheetName != sheetName)
         {
             // シート名が変わっていたら index sheet にも反映
