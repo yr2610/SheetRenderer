@@ -2174,6 +2174,99 @@ public class RibbonController : ExcelRibbon
         }
     }
 
+    private async Task<bool> HasSharedUpdatesAsync(
+        Excel.Workbook workbook,
+        GitLabShareInfo shareInfo,
+        string token)
+    {
+        if (workbook == null || shareInfo == null || string.IsNullOrWhiteSpace(token))
+        {
+            return false;
+        }
+
+        string projectId = workbook.GetCustomProperty(ssProjectIdCustomPropertyName);
+        if (string.IsNullOrWhiteSpace(projectId))
+        {
+            return false;
+        }
+
+        await EnsureValidatedShareRefNameAsync(shareInfo, token, workbook);
+        string configuredRefName = GetNormalizedShareRefName(shareInfo);
+
+        GitLabProjectInfo projectInfo = await GitLabClient.GetProjectInfoAsync(
+            shareInfo.BaseUrl,
+            shareInfo.ProjectId,
+            token).ConfigureAwait(true);
+        string defaultBranch = projectInfo == null ? null : projectInfo.DefaultBranch;
+
+        var candidateRefs = new List<string>();
+        foreach (string candidate in new[] { configuredRefName, defaultBranch })
+        {
+            if (string.IsNullOrWhiteSpace(candidate))
+            {
+                continue;
+            }
+
+            if (candidateRefs.Any(x => string.Equals(x, candidate, StringComparison.OrdinalIgnoreCase)))
+            {
+                continue;
+            }
+
+            candidateRefs.Add(candidate);
+        }
+
+        byte[] manifestBytes = null;
+        string refName = configuredRefName;
+        foreach (string candidateRef in candidateRefs)
+        {
+            manifestBytes = await TryDownloadSharedProjectManifestBytesAsync(
+                shareInfo,
+                projectId,
+                candidateRef,
+                token).ConfigureAwait(true);
+
+            if (manifestBytes != null && manifestBytes.Length > 0)
+            {
+                refName = candidateRef;
+                break;
+            }
+        }
+
+        if (manifestBytes == null)
+        {
+            return false;
+        }
+
+        if (!string.Equals(refName, configuredRefName, StringComparison.OrdinalIgnoreCase))
+        {
+            shareInfo.RefName = refName;
+            GitLabShareInfoStore.Save(shareInfo);
+            workbook.SetCustomProperty(gitLabShareInfoCustomPropertyName, shareInfo);
+        }
+
+        SharedProjectManifest manifest = ParseSharedProjectManifest(Encoding.UTF8.GetString(manifestBytes));
+        if (manifest == null || manifest.Sheets == null || manifest.Sheets.Count == 0)
+        {
+            return false;
+        }
+
+        foreach (SharedProjectManifestEntry entry in manifest.Sheets)
+        {
+            if (entry == null || string.IsNullOrWhiteSpace(entry.SheetId))
+            {
+                continue;
+            }
+
+            string baseHash = GetSharedSheetBaseHash(workbook, entry.SheetId);
+            if (!string.Equals(baseHash, entry.Hash, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private static string BuildSharedSheetPath(string projectId, string sheetId)
     {
         return GitLabPathResolver.NormalizeGitLabRelativePath(projectId + "/" + sheetId + ".json");
@@ -7508,11 +7601,6 @@ public class RibbonController : ExcelRibbon
                     return;
                 }
 
-                if (!ConfirmSaveBeforeLatestFetch(activeWorkbook))
-                {
-                    return;
-                }
-
                 input = workbookInfo.PullInfo;
                 shareInfo = workbookInfo.ShareInfo;
 
@@ -7529,8 +7617,11 @@ public class RibbonController : ExcelRibbon
                     input.RefName,
                     token).ConfigureAwait(true);
 
-                if (!string.IsNullOrWhiteSpace(workbookInfo.PullCommitId) &&
-                    string.Equals(workbookInfo.PullCommitId, currentCommitId, StringComparison.OrdinalIgnoreCase))
+                bool hasPullUpdate =
+                    string.IsNullOrWhiteSpace(workbookInfo.PullCommitId) ||
+                    !string.Equals(workbookInfo.PullCommitId, currentCommitId, StringComparison.OrdinalIgnoreCase);
+
+                if (!hasPullUpdate)
                 {
                     if (shareInfo == null)
                     {
@@ -7538,6 +7629,28 @@ public class RibbonController : ExcelRibbon
                         return;
                     }
 
+                    string shareToken = GitLabAuth.GetOrPromptToken(shareInfo.BaseUrl, shareInfo.ProjectId);
+                    if (string.IsNullOrWhiteSpace(shareToken))
+                    {
+                        MessageBox.Show("共有値の取得をキャンセルしました（トークン未入力）", "最新版取得");
+                        return;
+                    }
+
+                    bool hasSharedUpdates = await HasSharedUpdatesAsync(activeWorkbook, shareInfo, shareToken).ConfigureAwait(true);
+                    if (!hasSharedUpdates)
+                    {
+                        MessageBox.Show("最新版です。更新はありません。", "最新版取得");
+                        return;
+                    }
+                }
+
+                if (!ConfirmSaveBeforeLatestFetch(activeWorkbook))
+                {
+                    return;
+                }
+
+                if (!hasPullUpdate)
+                {
                     InitializeLoggerForSharedReceive(activeWorkbook);
                     progressForm.Show();
                     progressForm.AppendLine("Pull 元は最新版です");
