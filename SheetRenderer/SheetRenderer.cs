@@ -3151,6 +3151,7 @@ public class RibbonController : ExcelRibbon
             "競合シート数: " + result.ConflictAppliedSheetCount + Environment.NewLine +
             "競合セル数: " + result.ConflictAppliedCellCount +
             detail + Environment.NewLine + Environment.NewLine +
+            "保存せずにブックを閉じると、取得前の状態に戻せます。" + Environment.NewLine + Environment.NewLine +
             "ログファイルを開きますか？",
             "最新版取得",
             MessageBoxButtons.YesNo,
