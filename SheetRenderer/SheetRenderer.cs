@@ -3392,6 +3392,17 @@ public class RibbonController : ExcelRibbon
             : jsonNode.ToJsonString();
     }
 
+    private static string CreateSharedSheetUploadJsonText(SharedSheetDocument sharedSheetDocument)
+    {
+        return JsonSerializer.Serialize(
+            sharedSheetDocument ?? new SharedSheetDocument(),
+            new JsonSerializerOptions
+            {
+                WriteIndented = true,
+                PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+            });
+    }
+
     private static string CreateSharedProjectManifestJsonText(SharedProjectManifest manifest)
     {
         return JsonSerializer.Serialize(
@@ -4201,7 +4212,7 @@ public class RibbonController : ExcelRibbon
             {
                 { "action", actionName },
                 { "file_path", filePath },
-                { "content", CreateSharedSheetJsonText(document) },
+                { "content", CreateSharedSheetUploadJsonText(document) },
                 { "encoding", "text" }
             });
         }
@@ -7586,7 +7597,10 @@ public class RibbonController : ExcelRibbon
         }
         finally
         {
-            progressForm.CloseForm();
+            if (progressForm != null)
+            {
+                progressForm.CloseForm();
+            }
             ClearPullSessionState();
         }
     }
