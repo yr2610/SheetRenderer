@@ -744,14 +744,17 @@ public class RibbonController : ExcelRibbon
         var lastRenderLog = workbookInfo.LastRenderLog;
         bool isSameUser = lastRenderLog.User == Environment.UserName;
         string storedSourceFilePath = NormalizeSourceFilePath(lastRenderLog.SourceFilePath);
-        bool sourceFileExists = File.Exists(storedSourceFilePath);
+        bool isPullWorkSourceFile = IsPullWorkSourceFilePath(storedSourceFilePath);
+        bool sourceFileExists = CanReuseStoredSourceFilePath(storedSourceFilePath);
         string txtFilePath;
 
         if (!isSameUser || !sourceFileExists)
         {
             string message = !isSameUser
                 ? "最後に更新された環境と異なります。"
-                : "ソースファイルが見つかりません。";
+                : isPullWorkSourceFile
+                    ? "Pull で取得した一時ファイルはローカル更新に使用できません。"
+                    : "ソースファイルが見つかりません。";
 
             DialogResult fileSelectionResult = MessageBox.Show(
                 $"{message}\nProject ID が「{projectId}」の TXT を選択し直してください。", "確認",
@@ -795,6 +798,66 @@ public class RibbonController : ExcelRibbon
         return storedPath;
     }
 
+    static bool IsPathUnderDirectory(string path, string directoryPath)
+    {
+        if (string.IsNullOrWhiteSpace(path) || string.IsNullOrWhiteSpace(directoryPath))
+        {
+            return false;
+        }
+
+        try
+        {
+            string fullPath = Path.GetFullPath(path)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            string fullDirectoryPath = Path.GetFullPath(directoryPath)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+            if (string.Equals(fullPath, fullDirectoryPath, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            string directoryWithSeparator = fullDirectoryPath + Path.DirectorySeparatorChar;
+            return fullPath.StartsWith(directoryWithSeparator, StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    static bool IsPullWorkSourceFilePath(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return false;
+        }
+
+        string normalizedPath = NormalizeSourceFilePath(path);
+        return IsPathUnderDirectory(normalizedPath, GetPullWorkParentDirectory());
+    }
+
+    static bool CanReuseStoredSourceFilePath(string storedPath)
+    {
+        if (string.IsNullOrWhiteSpace(storedPath))
+        {
+            return false;
+        }
+
+        string normalizedPath = NormalizeSourceFilePath(storedPath);
+        if (string.IsNullOrWhiteSpace(normalizedPath))
+        {
+            return false;
+        }
+
+        if (IsPullWorkSourceFilePath(normalizedPath))
+        {
+            return false;
+        }
+
+        return File.Exists(normalizedPath);
+    }
+
     static string GetStoredSourceFilePathFromWorkbook(Excel.Workbook workbook)
     {
         if (workbook == null)
@@ -809,7 +872,7 @@ public class RibbonController : ExcelRibbon
         }
 
         string storedSourceFilePath = NormalizeSourceFilePath(renderLog.SourceFilePath);
-        if (!File.Exists(storedSourceFilePath))
+        if (!CanReuseStoredSourceFilePath(storedSourceFilePath))
         {
             return null;
         }
@@ -4405,7 +4468,8 @@ public class RibbonController : ExcelRibbon
         var lastRenderLog = workbookInfo.LastRenderLog;
         bool isSameUser = lastRenderLog.User == Environment.UserName;
         string storedSourceFilePath = NormalizeSourceFilePath(lastRenderLog.SourceFilePath);
-        bool sourceFileExists = File.Exists(storedSourceFilePath);
+        bool isPullWorkSourceFile = IsPullWorkSourceFilePath(storedSourceFilePath);
+        bool sourceFileExists = CanReuseStoredSourceFilePath(storedSourceFilePath);
         string txtFilePath = txtFilePathOverride;
 
         if (txtFilePath == null)
@@ -4416,6 +4480,10 @@ public class RibbonController : ExcelRibbon
                 if (!isSameUser)
                 {
                     message = "最後に更新された環境と異なります。";
+                }
+                else if (isPullWorkSourceFile)
+                {
+                    message = "Pull で取得した一時ファイルはローカル更新に使用できません。";
                 }
                 else if (!sourceFileExists)
                 {
@@ -4875,13 +4943,16 @@ public class RibbonController : ExcelRibbon
             var lastRenderLog = workbookInfo.LastRenderLog;
             bool isSameUser = lastRenderLog.User == Environment.UserName;
             string storedSourceFilePath = NormalizeSourceFilePath(lastRenderLog.SourceFilePath);
-            bool sourceFileExists = File.Exists(storedSourceFilePath);
+            bool isPullWorkSourceFile = IsPullWorkSourceFilePath(storedSourceFilePath);
+            bool sourceFileExists = CanReuseStoredSourceFilePath(storedSourceFilePath);
 
             if (!isSameUser || !sourceFileExists)
             {
                 string message = !isSameUser
                     ? "最後に更新された環境と異なります。"
-                    : "ソースファイルが見つかりません。";
+                    : isPullWorkSourceFile
+                        ? "Pull で取得した一時ファイルはローカル更新に使用できません。"
+                        : "ソースファイルが見つかりません。";
 
                 DialogResult fileSelectionResult = MessageBox.Show(
                     $"{message}\nProject ID が「{projectId}」の TXT を選択し直してください。", "確認",
