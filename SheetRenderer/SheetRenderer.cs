@@ -7611,42 +7611,26 @@ public class RibbonController : ExcelRibbon
         bool required,
         out GitLabShareInfo shareInfo)
     {
-        shareInfo = workbook == null
-            ? null
-            : (WorkbookInfo.CreateFromWorkbook(workbook)?.ShareInfo);
+        WorkbookInfo workbookInfo = workbook == null ? null : WorkbookInfo.CreateFromWorkbook(workbook);
+        shareInfo = workbookInfo == null ? null : workbookInfo.ShareInfo;
 
         if (HasShareSettings(shareInfo))
         {
             return true;
         }
 
-        if (!required)
+        GitLabShareInfo initial = GetInitialShareSettingsForDialog(workbook, pullInfo);
+        if (HasShareSettings(initial) && !required)
         {
-            DialogResult setupOptionalResult = MessageBox.Show(
-                "このブックには共有先の情報が保存されていません。\n共有値も反映するために今すぐ設定しますか？",
-                dialogTitle,
-                MessageBoxButtons.YesNo,
-                MessageBoxIcon.Question);
-            if (setupOptionalResult != DialogResult.Yes)
-            {
-                shareInfo = null;
-                return true;
-            }
-        }
-        else
-        {
-            DialogResult setupRequiredResult = MessageBox.Show(
-                "このブックには共有先の情報が保存されていません。\n今すぐ設定しますか？",
-                dialogTitle,
-                MessageBoxButtons.YesNo,
-                MessageBoxIcon.Question);
-            if (setupRequiredResult != DialogResult.Yes)
-            {
-                return false;
-            }
+            shareInfo = initial;
+            return true;
         }
 
-        GitLabShareInfo initial = GetInitialShareSettingsForDialog(workbook, pullInfo);
+        if (required)
+        {
+            return false;
+        }
+
         GitLabShareInfo updated;
         if (!GitLabShareSettingsDialog.TryShow(initial, pullInfo, out updated))
         {
@@ -7812,6 +7796,20 @@ public class RibbonController : ExcelRibbon
                 if (!ConfirmSaveBeforeLatestFetch(activeWorkbook))
                 {
                     return;
+                }
+
+                bool shouldPersistPullSettings = !HasPullSourceSettings(workbookInfo.PullInfo);
+                bool shouldPersistShareSettings =
+                    shareInfo != null && !HasShareSettings(workbookInfo.ShareInfo);
+
+                if (shouldPersistPullSettings)
+                {
+                    SavePullSourceSettings(input, activeWorkbook);
+                }
+
+                if (shouldPersistShareSettings)
+                {
+                    SaveShareSettings(shareInfo, activeWorkbook);
                 }
 
                 if (!hasPullUpdate)
@@ -8240,17 +8238,14 @@ public class RibbonController : ExcelRibbon
                 return;
             }
 
-            GitLabLastInput pullInfo;
-            if (!TryEnsurePullSourceSettingsForWorkbook(workbook, dialogTitle, out pullInfo))
+            if (!HasPullSourceSettings(workbookInfo.PullInfo) || !HasShareSettings(workbookInfo.ShareInfo))
             {
+                MessageBox.Show("このブックには同期設定が保存されていません。先に最新版取得を実行してください。", dialogTitle);
                 return;
             }
 
-            GitLabShareInfo shareInfo;
-            if (!TryEnsureShareSettingsForWorkbook(workbook, pullInfo, dialogTitle, required: true, out shareInfo))
-            {
-                return;
-            }
+            GitLabLastInput pullInfo = workbookInfo.PullInfo;
+            GitLabShareInfo shareInfo = workbookInfo.ShareInfo;
 
             string pullToken = GitLabAuth.GetOrPromptToken(
                 pullInfo.BaseUrl,
