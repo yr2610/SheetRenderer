@@ -5621,6 +5621,31 @@ public class RibbonController : ExcelRibbon
         }
     }
 
+    private static bool ConfirmSaveBeforeLatestFetch(Excel.Workbook workbook)
+    {
+        if (workbook == null || workbook.Saved)
+        {
+            return true;
+        }
+
+        DialogResult yesNoCancel = MessageBox.Show(
+            "最新版取得の前にファイルの変更内容を保存しますか？",
+            "確認",
+            MessageBoxButtons.YesNoCancel,
+            MessageBoxIcon.Exclamation);
+
+        switch (yesNoCancel)
+        {
+            case DialogResult.Yes:
+                workbook.Save();
+                return true;
+            case DialogResult.No:
+                return true;
+            default:
+                return false;
+        }
+    }
+
     async Task<bool> CreateNewWorkbook(
         string txtFilePath = null,
         string jsonFilePath = null,
@@ -7483,6 +7508,11 @@ public class RibbonController : ExcelRibbon
                     return;
                 }
 
+                if (!ConfirmSaveBeforeLatestFetch(activeWorkbook))
+                {
+                    return;
+                }
+
                 input = workbookInfo.PullInfo;
                 shareInfo = workbookInfo.ShareInfo;
 
@@ -7700,6 +7730,7 @@ public class RibbonController : ExcelRibbon
         progressForm.AppendLine("共有値を反映しています");
         SharedReceiveResult sharedReceiveResult = await ReceiveSharedSheetsAsync(createdWorkbook, shareInfo, progressForm.AppendLine);
         ShowSharedReceiveConflictDialogIfNeeded(sharedReceiveResult);
+        createdWorkbook.Save();
     }
 
     public void OnShareCurrentSheetButtonPressed(IRibbonControl control)
