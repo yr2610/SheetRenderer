@@ -8186,6 +8186,7 @@ public class RibbonController : ExcelRibbon
                 selectedItems,
                 shareProgressReporter).ConfigureAwait(true);
 
+            workbook.Save();
             shareProgressReporter("共有が完了しました");
             progressForm.ShowContinueButton("閉じる", "共有が完了しました");
             await progressForm.WaitForContinueAsync();
