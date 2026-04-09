@@ -7501,6 +7501,92 @@ public class RibbonController : ExcelRibbon
         workbook.SetCustomProperty(gitLabShareInfoCustomPropertyName, shareInfo);
     }
 
+    private bool TryEnsurePullSourceSettingsForWorkbook(
+        Excel.Workbook workbook,
+        string dialogTitle,
+        out GitLabLastInput input)
+    {
+        input = GetInitialPullSettingsForDialog(workbook);
+        if (HasPullSourceSettings(input))
+        {
+            return true;
+        }
+
+        DialogResult setupResult = MessageBox.Show(
+            "このブックには取得元の情報が保存されていません。\n今すぐ設定しますか？",
+            dialogTitle,
+            MessageBoxButtons.YesNo,
+            MessageBoxIcon.Question);
+        if (setupResult != DialogResult.Yes)
+        {
+            return false;
+        }
+
+        GitLabLastInput updated;
+        if (!GitLabRepoDialog.TryShow(input, out updated))
+        {
+            return false;
+        }
+
+        SavePullSourceSettings(updated, workbook);
+        input = updated;
+        return true;
+    }
+
+    private bool TryEnsureShareSettingsForWorkbook(
+        Excel.Workbook workbook,
+        GitLabLastInput pullInfo,
+        string dialogTitle,
+        bool required,
+        out GitLabShareInfo shareInfo)
+    {
+        shareInfo = workbook == null
+            ? null
+            : (WorkbookInfo.CreateFromWorkbook(workbook)?.ShareInfo);
+
+        if (HasShareSettings(shareInfo))
+        {
+            return true;
+        }
+
+        if (!required)
+        {
+            DialogResult setupOptionalResult = MessageBox.Show(
+                "このブックには共有先の情報が保存されていません。\n共有値も反映するために今すぐ設定しますか？",
+                dialogTitle,
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Question);
+            if (setupOptionalResult != DialogResult.Yes)
+            {
+                shareInfo = null;
+                return true;
+            }
+        }
+        else
+        {
+            DialogResult setupRequiredResult = MessageBox.Show(
+                "このブックには共有先の情報が保存されていません。\n今すぐ設定しますか？",
+                dialogTitle,
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Question);
+            if (setupRequiredResult != DialogResult.Yes)
+            {
+                return false;
+            }
+        }
+
+        GitLabShareInfo initial = GetInitialShareSettingsForDialog(workbook, pullInfo);
+        GitLabShareInfo updated;
+        if (!GitLabShareSettingsDialog.TryShow(initial, pullInfo, out updated))
+        {
+            return false;
+        }
+
+        SaveShareSettings(updated, workbook);
+        shareInfo = updated;
+        return true;
+    }
+
     private bool TryGetPullNewWorkbookInputs(
         Excel.Workbook workbook,
         out GitLabLastInput input,
@@ -7596,14 +7682,21 @@ public class RibbonController : ExcelRibbon
             if (isPullUpdate)
             {
                 WorkbookInfo workbookInfo = WorkbookInfo.CreateFromWorkbook(activeWorkbook);
-                if (workbookInfo == null || workbookInfo.PullInfo == null)
+                if (workbookInfo == null)
                 {
                     MessageBox.Show("このブックには Pull 用の情報が保存されていません。", "最新版取得");
                     return;
                 }
 
-                input = workbookInfo.PullInfo;
-                shareInfo = workbookInfo.ShareInfo;
+                if (!TryEnsurePullSourceSettingsForWorkbook(activeWorkbook, "最新版取得", out input))
+                {
+                    return;
+                }
+
+                if (!TryEnsureShareSettingsForWorkbook(activeWorkbook, input, "最新版取得", required: false, out shareInfo))
+                {
+                    return;
+                }
 
                 string token = GitLabAuth.GetOrPromptToken(input.BaseUrl, input.ProjectId);
                 if (string.IsNullOrEmpty(token))
@@ -8076,21 +8169,21 @@ public class RibbonController : ExcelRibbon
                 return;
             }
 
-            if (workbookInfo.PullInfo == null)
+            GitLabLastInput pullInfo;
+            if (!TryEnsurePullSourceSettingsForWorkbook(workbook, dialogTitle, out pullInfo))
             {
-                MessageBox.Show("このブックには最新版取得用の情報が保存されていません。", dialogTitle);
                 return;
             }
 
-            if (workbookInfo.ShareInfo == null)
+            GitLabShareInfo shareInfo;
+            if (!TryEnsureShareSettingsForWorkbook(workbook, pullInfo, dialogTitle, required: true, out shareInfo))
             {
-                MessageBox.Show("このブックには共有先の情報が保存されていません。", dialogTitle);
                 return;
             }
 
             string pullToken = GitLabAuth.GetOrPromptToken(
-                workbookInfo.PullInfo.BaseUrl,
-                workbookInfo.PullInfo.ProjectId);
+                pullInfo.BaseUrl,
+                pullInfo.ProjectId);
             if (string.IsNullOrWhiteSpace(pullToken))
             {
                 MessageBox.Show("共有をキャンセルしました（トークン未入力）", dialogTitle);
@@ -8098,9 +8191,9 @@ public class RibbonController : ExcelRibbon
             }
 
             string currentCommitId = await GitLabClient.GetCommitIdAsync(
-                workbookInfo.PullInfo.BaseUrl,
-                workbookInfo.PullInfo.ProjectId,
-                workbookInfo.PullInfo.RefName,
+                pullInfo.BaseUrl,
+                pullInfo.ProjectId,
+                pullInfo.RefName,
                 pullToken).ConfigureAwait(true);
 
             if (!string.IsNullOrWhiteSpace(currentCommitId) &&
@@ -8111,8 +8204,8 @@ public class RibbonController : ExcelRibbon
             }
 
             string shareToken = GitLabAuth.GetOrPromptToken(
-                workbookInfo.ShareInfo.BaseUrl,
-                workbookInfo.ShareInfo.ProjectId);
+                shareInfo.BaseUrl,
+                shareInfo.ProjectId);
             if (string.IsNullOrWhiteSpace(shareToken))
             {
                 MessageBox.Show("共有をキャンセルしました（トークン未入力）", dialogTitle);
@@ -8120,12 +8213,12 @@ public class RibbonController : ExcelRibbon
             }
 
             await EnsureValidatedShareRefNameAsync(
-                workbookInfo.ShareInfo,
+                shareInfo,
                 shareToken,
                 workbook).ConfigureAwait(true);
 
             SharedProjectManifest remoteManifest = await TryDownloadSharedProjectManifestAsync(
-                workbookInfo.ShareInfo,
+                shareInfo,
                 workbookInfo.ProjectId,
                 shareToken).ConfigureAwait(true);
 
@@ -8181,7 +8274,7 @@ public class RibbonController : ExcelRibbon
 
             await UploadSharedSheetsAsync(
                 workbook,
-                workbookInfo.ShareInfo,
+                shareInfo,
                 shareToken,
                 remoteManifest,
                 selectedItems,
