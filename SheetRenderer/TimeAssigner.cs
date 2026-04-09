@@ -141,6 +141,11 @@ public static class TimeAssigner
             return;
         }
 
+        if (n.affectNodes == null || n.affectNodes.Count == 0)
+        {
+            return;
+        }
+
         int adjustedTime = Math.Max(0, time.Value - (int)n.exclusionTime);
         int leafTime = adjustedTime / n.affectNodes.Count;
         int remain = adjustedTime % n.affectNodes.Count;
