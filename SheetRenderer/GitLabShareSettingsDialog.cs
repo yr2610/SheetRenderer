@@ -2,15 +2,18 @@ using System;
 using System.Drawing;
 using System.Windows.Forms;
 
-internal static class GitLabRepoDialog
+internal static class GitLabShareSettingsDialog
 {
-    public static bool TryShow(GitLabLastInput initial, out GitLabLastInput result)
+    public static bool TryShow(
+        GitLabShareInfo initialShare,
+        GitLabLastInput pullDefaults,
+        out GitLabShareInfo result)
     {
         result = null;
 
-        if (initial == null)
+        if (initialShare == null)
         {
-            initial = new GitLabLastInput();
+            initialShare = new GitLabShareInfo();
         }
 
         using (var form = new Form())
@@ -23,7 +26,7 @@ internal static class GitLabRepoDialog
         using (var btnOk = new Button())
         using (var btnCancel = new Button())
         {
-            form.Text = "取得元設定";
+            form.Text = "共有先設定";
             form.FormBorderStyle = FormBorderStyle.FixedDialog;
             form.StartPosition = FormStartPosition.CenterParent;
             form.MinimizeBox = false;
@@ -67,17 +70,21 @@ internal static class GitLabRepoDialog
 
             ConfigureLabel(lblBaseUrl, "Base URL", leftLabel, top, labelW);
             ConfigureTextBox(txtBaseUrl, leftInput, top - 2, inputW);
-            txtBaseUrl.Text = initial.BaseUrl ?? "";
+            txtBaseUrl.Text = !string.IsNullOrWhiteSpace(initialShare.BaseUrl)
+                ? initialShare.BaseUrl
+                : (pullDefaults == null ? "" : (pullDefaults.BaseUrl ?? ""));
 
             top += rowH;
             ConfigureLabel(lblProjectId, "Project ID", leftLabel, top, labelW);
             ConfigureTextBox(txtProjectId, leftInput, top - 2, inputW);
-            txtProjectId.Text = initial.ProjectId ?? "";
+            txtProjectId.Text = initialShare.ProjectId ?? "";
 
             top += rowH;
             ConfigureLabel(lblRefName, "Ref (branch/tag)", leftLabel, top, labelW);
             ConfigureTextBox(txtRefName, leftInput, top - 2, inputW);
-            txtRefName.Text = string.IsNullOrWhiteSpace(initial.RefName) ? "main" : initial.RefName;
+            txtRefName.Text = !string.IsNullOrWhiteSpace(initialShare.RefName)
+                ? initialShare.RefName
+                : GetDefaultRefName(pullDefaults);
 
             btnOk.Text = "OK";
             btnOk.Width = 90;
@@ -117,7 +124,7 @@ internal static class GitLabRepoDialog
                 }
             };
 
-            GitLabLastInput tempResult = null;
+            GitLabShareInfo tempResult = null;
 
             btnOk.Click += (s, e) =>
             {
@@ -125,17 +132,16 @@ internal static class GitLabRepoDialog
                 string projectId = (txtProjectId.Text ?? "").Trim();
                 string refName = (txtRefName.Text ?? "").Trim();
 
-                // 最小バリデーション：まずは「空じゃない」を強制（FilePathは運用によって空でもOKにできる）
                 if (string.IsNullOrWhiteSpace(baseUrl))
                 {
-                    MessageBox.Show(form, "Base URL を入力してください。", "Input Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    MessageBox.Show(form, "共有先の Base URL を入力してください。", "Input Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     txtBaseUrl.Focus();
                     return;
                 }
 
                 if (string.IsNullOrWhiteSpace(projectId))
                 {
-                    MessageBox.Show(form, "Project ID を入力してください。", "Input Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    MessageBox.Show(form, "共有先の Project ID を入力してください。", "Input Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     txtProjectId.Focus();
                     return;
                 }
@@ -148,24 +154,22 @@ internal static class GitLabRepoDialog
                 if (!baseUrl.StartsWith("http://", StringComparison.OrdinalIgnoreCase) &&
                     !baseUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
                 {
-                    MessageBox.Show(form, "Base URL は http:// または https:// から始めてください。", "Input Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    MessageBox.Show(form, "共有先の Base URL は http:// または https:// から始めてください。", "Input Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     txtBaseUrl.Focus();
                     return;
                 }
 
-                tempResult = new GitLabLastInput
+                tempResult = new GitLabShareInfo
                 {
                     BaseUrl = baseUrl,
                     ProjectId = projectId,
-                    RefName = refName,
-                    FilePath = initial.FilePath
+                    RefName = refName
                 };
 
                 form.DialogResult = DialogResult.OK;
                 form.Close();
             };
 
-            // 親が無い場合でも中央に出したいので ShowDialog() でOK
             DialogResult dr = form.ShowDialog();
             if (dr == DialogResult.OK && tempResult != null)
             {
@@ -175,6 +179,16 @@ internal static class GitLabRepoDialog
 
             return false;
         }
+    }
+
+    private static string GetDefaultRefName(GitLabLastInput pullDefaults)
+    {
+        if (pullDefaults == null || string.IsNullOrWhiteSpace(pullDefaults.RefName))
+        {
+            return "main";
+        }
+
+        return pullDefaults.RefName;
     }
 
     private static void ConfigureLabel(Label label, string text, int left, int top, int width)

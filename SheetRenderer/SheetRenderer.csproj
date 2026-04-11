@@ -135,17 +135,24 @@
     </Reference>
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="AuthorizationHelper.cs" />
     <Compile Include="ExcelExtensions.cs" />
     <Compile Include="FileLogger.cs" />
     <Compile Include="FileSystemObject.cs" />
     <Compile Include="GitLabAuth.cs" />
     <Compile Include="GitLabClient.cs" />
     <Compile Include="GitLabCommitInfo.cs" />
+    <Compile Include="GitLabFilePathDialog.cs" />
+    <Compile Include="GitLabInitialSetupDialog.cs" />
     <Compile Include="GitLabLastInput.cs" />
     <Compile Include="GitLabLastInputStore.cs" />
     <Compile Include="GitLabPathResolver.cs" />
     <Compile Include="GitLabProjectInfo.cs" />
     <Compile Include="GitLabRepoDialog.cs" />
+    <Compile Include="GitLabRepositoryFileInfo.cs" />
+    <Compile Include="GitLabShareInfo.cs" />
+    <Compile Include="GitLabShareSettingsDialog.cs" />
+    <Compile Include="GitLabShareInfoStore.cs" />
     <Compile Include="GitLabTokenManagerDialog.cs">
       <SubType>Form</SubType>
     </Compile>
@@ -159,6 +166,8 @@
     </Compile>
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="ShellBridge.cs" />
+    <Compile Include="SharedSheetModels.cs" />
+    <Compile Include="SharedSheetSelectionDialog.cs" />
     <Compile Include="TimeAssigner.cs" />
     <Compile Include="TokenInputDialog.cs">
       <SubType>Form</SubType>
