@@ -28,3 +28,4 @@
 *.nupkg
 *.snupkg
 packages/
+SheetRenderer/template.xlsm
