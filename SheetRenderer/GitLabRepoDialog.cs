@@ -20,6 +20,7 @@ internal static class GitLabRepoDialog
         using (var txtProjectId = new TextBox())
         using (var lblRefName = new Label())
         using (var txtRefName = new TextBox())
+        using (var chkPullEnabled = new CheckBox())
         using (var btnOk = new Button())
         using (var btnCancel = new Button())
         {
@@ -29,7 +30,7 @@ internal static class GitLabRepoDialog
             form.MinimizeBox = false;
             form.MaximizeBox = false;
             form.ShowInTaskbar = false;
-            form.ClientSize = new Size(700, 190);
+            form.ClientSize = new Size(700, 228);
             form.Font = new Font("Meiryo UI", 11f);
 
             txtBaseUrl.AutoSize = false;
@@ -38,25 +39,6 @@ internal static class GitLabRepoDialog
             txtProjectId.Height = 28;
             txtRefName.AutoSize = false;
             txtRefName.Height = 28;
-
-            form.Shown += (s, e) =>
-            {
-                if (string.IsNullOrWhiteSpace(txtBaseUrl.Text))
-                {
-                    txtBaseUrl.Focus();
-                    txtBaseUrl.SelectAll();
-                }
-                else if (string.IsNullOrWhiteSpace(txtProjectId.Text))
-                {
-                    txtProjectId.Focus();
-                    txtProjectId.SelectAll();
-                }
-                else
-                {
-                    txtRefName.Focus();
-                    txtRefName.SelectAll();
-                }
-            };
 
             int leftLabel = 14;
             int leftInput = 160;
@@ -78,6 +60,37 @@ internal static class GitLabRepoDialog
             ConfigureLabel(lblRefName, "Ref (branch/tag)", leftLabel, top, labelW);
             ConfigureTextBox(txtRefName, leftInput, top - 2, inputW);
             txtRefName.Text = string.IsNullOrWhiteSpace(initial.RefName) ? "main" : initial.RefName;
+
+            top += rowH + 4;
+            chkPullEnabled.Left = leftInput;
+            chkPullEnabled.Top = top - 2;
+            chkPullEnabled.Width = inputW;
+            chkPullEnabled.Height = 24;
+            chkPullEnabled.Text = "取得元から最新版を取得する";
+            chkPullEnabled.Checked = initial.PullEnabled != false;
+
+            form.Shown += (s, e) =>
+            {
+                if (string.IsNullOrWhiteSpace(txtBaseUrl.Text))
+                {
+                    txtBaseUrl.Focus();
+                    txtBaseUrl.SelectAll();
+                }
+                else if (string.IsNullOrWhiteSpace(txtProjectId.Text))
+                {
+                    txtProjectId.Focus();
+                    txtProjectId.SelectAll();
+                }
+                else if (string.IsNullOrWhiteSpace(txtRefName.Text))
+                {
+                    txtRefName.Focus();
+                    txtRefName.SelectAll();
+                }
+                else
+                {
+                    chkPullEnabled.Focus();
+                }
+            };
 
             btnOk.Text = "OK";
             btnOk.Width = 90;
@@ -102,12 +115,14 @@ internal static class GitLabRepoDialog
             form.Controls.Add(txtProjectId);
             form.Controls.Add(lblRefName);
             form.Controls.Add(txtRefName);
+            form.Controls.Add(chkPullEnabled);
             form.Controls.Add(btnOk);
             form.Controls.Add(btnCancel);
 
             txtBaseUrl.KeyDown += (s, e) => MoveNextOnEnter(e, txtProjectId);
             txtProjectId.KeyDown += (s, e) => MoveNextOnEnter(e, txtRefName);
-            txtRefName.KeyDown += (s, e) =>
+            txtRefName.KeyDown += (s, e) => MoveNextOnEnter(e, chkPullEnabled);
+            chkPullEnabled.KeyDown += (s, e) =>
             {
                 if (e.KeyCode == Keys.Enter)
                 {
@@ -124,16 +139,16 @@ internal static class GitLabRepoDialog
                 string baseUrl = (txtBaseUrl.Text ?? "").Trim().TrimEnd('/');
                 string projectId = (txtProjectId.Text ?? "").Trim();
                 string refName = (txtRefName.Text ?? "").Trim();
+                bool pullEnabled = chkPullEnabled.Checked;
 
-                // 最小バリデーション：まずは「空じゃない」を強制（FilePathは運用によって空でもOKにできる）
-                if (string.IsNullOrWhiteSpace(baseUrl))
+                if (pullEnabled && string.IsNullOrWhiteSpace(baseUrl))
                 {
                     MessageBox.Show(form, "Base URL を入力してください。", "Input Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     txtBaseUrl.Focus();
                     return;
                 }
 
-                if (string.IsNullOrWhiteSpace(projectId))
+                if (pullEnabled && string.IsNullOrWhiteSpace(projectId))
                 {
                     MessageBox.Show(form, "Project ID を入力してください。", "Input Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     txtProjectId.Focus();
@@ -145,7 +160,8 @@ internal static class GitLabRepoDialog
                     refName = "main";
                 }
 
-                if (!baseUrl.StartsWith("http://", StringComparison.OrdinalIgnoreCase) &&
+                if (pullEnabled &&
+                    !baseUrl.StartsWith("http://", StringComparison.OrdinalIgnoreCase) &&
                     !baseUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
                 {
                     MessageBox.Show(form, "Base URL は http:// または https:// から始めてください。", "Input Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -158,16 +174,16 @@ internal static class GitLabRepoDialog
                     BaseUrl = baseUrl,
                     ProjectId = projectId,
                     RefName = refName,
-                    FilePath = initial.FilePath
+                    FilePath = initial.FilePath,
+                    PullEnabled = pullEnabled
                 };
 
                 form.DialogResult = DialogResult.OK;
                 form.Close();
             };
 
-            // 親が無い場合でも中央に出したいので ShowDialog() でOK
-            DialogResult dr = form.ShowDialog();
-            if (dr == DialogResult.OK && tempResult != null)
+            DialogResult dialogResult = form.ShowDialog();
+            if (dialogResult == DialogResult.OK && tempResult != null)
             {
                 result = tempResult;
                 return true;
@@ -186,12 +202,12 @@ internal static class GitLabRepoDialog
         label.Height = 20;
     }
 
-    private static void ConfigureTextBox(TextBox tb, int left, int top, int width)
+    private static void ConfigureTextBox(TextBox textBox, int left, int top, int width)
     {
-        tb.Left = left;
-        tb.Top = top;
-        tb.Width = width;
-        tb.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+        textBox.Left = left;
+        textBox.Top = top;
+        textBox.Width = width;
+        textBox.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
     }
 
     private static void MoveNextOnEnter(KeyEventArgs e, Control next)

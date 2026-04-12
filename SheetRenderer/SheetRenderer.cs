@@ -7485,6 +7485,11 @@ public class RibbonController : ExcelRibbon
                !string.IsNullOrWhiteSpace(input.ProjectId);
     }
 
+    private static bool IsPullSourceEnabled(GitLabLastInput input)
+    {
+        return input != null && input.PullEnabled != false;
+    }
+
     private static bool HasShareSettings(GitLabShareInfo shareInfo)
     {
         return shareInfo != null &&
@@ -7578,7 +7583,7 @@ public class RibbonController : ExcelRibbon
         out GitLabLastInput input)
     {
         input = GetInitialPullSettingsForDialog(workbook);
-        if (HasPullSourceSettings(input))
+        if (HasPullSourceSettings(input) || !IsPullSourceEnabled(input))
         {
             return true;
         }
@@ -7659,6 +7664,13 @@ public class RibbonController : ExcelRibbon
             }
 
             SavePullSourceSettings(input, workbook);
+        }
+
+        if (!IsPullSourceEnabled(input) || !HasPullSourceSettings(input))
+        {
+            MessageBox.Show("新規作成では取得元を有効にしてください。", "新規作成");
+            shareInfo = null;
+            return false;
         }
 
         if (!HasShareSettings(shareInfo))
@@ -7753,27 +7765,46 @@ public class RibbonController : ExcelRibbon
                     return;
                 }
 
-                string token = GitLabAuth.GetOrPromptToken(input.BaseUrl, input.ProjectId);
-                if (string.IsNullOrEmpty(token))
+                bool shouldPersistPullSettings =
+                    workbookInfo.PullInfo == null ||
+                    workbookInfo.PullInfo.PullEnabled != input.PullEnabled ||
+                    (!HasPullSourceSettings(workbookInfo.PullInfo) && (HasPullSourceSettings(input) || !IsPullSourceEnabled(input)));
+                bool shouldPersistShareSettings =
+                    shareInfo != null && !HasShareSettings(workbookInfo.ShareInfo);
+
+                bool hasPullUpdate = false;
+                string token = null;
+                string currentCommitId = null;
+                bool pullEnabled = IsPullSourceEnabled(input) && HasPullSourceSettings(input);
+
+                if (pullEnabled)
                 {
-                    System.Windows.Forms.MessageBox.Show("同期をキャンセルしました（トークン未入力）");
-                    return;
+                    token = GitLabAuth.GetOrPromptToken(input.BaseUrl, input.ProjectId);
+                    if (string.IsNullOrEmpty(token))
+                    {
+                        System.Windows.Forms.MessageBox.Show("同期をキャンセルしました（トークン未入力）");
+                        return;
+                    }
+
+                    currentCommitId = await GitLabClient.GetCommitIdAsync(
+                        input.BaseUrl,
+                        input.ProjectId,
+                        input.RefName,
+                        token).ConfigureAwait(true);
+
+                    hasPullUpdate =
+                        string.IsNullOrWhiteSpace(workbookInfo.PullCommitId) ||
+                        !string.Equals(workbookInfo.PullCommitId, currentCommitId, StringComparison.OrdinalIgnoreCase);
                 }
-
-                string currentCommitId = await GitLabClient.GetCommitIdAsync(
-                    input.BaseUrl,
-                    input.ProjectId,
-                    input.RefName,
-                    token).ConfigureAwait(true);
-
-                bool hasPullUpdate =
-                    string.IsNullOrWhiteSpace(workbookInfo.PullCommitId) ||
-                    !string.Equals(workbookInfo.PullCommitId, currentCommitId, StringComparison.OrdinalIgnoreCase);
 
                 if (!hasPullUpdate)
                 {
                     if (shareInfo == null)
                     {
+                        if (shouldPersistPullSettings)
+                        {
+                            SavePullSourceSettings(input, activeWorkbook);
+                        }
                         MessageBox.Show("最新版です。更新はありません。", "最新版取得");
                         return;
                     }
@@ -7788,6 +7819,16 @@ public class RibbonController : ExcelRibbon
                     bool hasSharedUpdates = await HasSharedUpdatesAsync(activeWorkbook, shareInfo, shareToken).ConfigureAwait(true);
                     if (!hasSharedUpdates)
                     {
+                        if (shouldPersistPullSettings)
+                        {
+                            SavePullSourceSettings(input, activeWorkbook);
+                        }
+
+                        if (shouldPersistShareSettings)
+                        {
+                            SaveShareSettings(shareInfo, activeWorkbook);
+                        }
+
                         MessageBox.Show("最新版です。更新はありません。", "最新版取得");
                         return;
                     }
@@ -7797,10 +7838,6 @@ public class RibbonController : ExcelRibbon
                 {
                     return;
                 }
-
-                bool shouldPersistPullSettings = !HasPullSourceSettings(workbookInfo.PullInfo);
-                bool shouldPersistShareSettings =
-                    shareInfo != null && !HasShareSettings(workbookInfo.ShareInfo);
 
                 if (shouldPersistPullSettings)
                 {
@@ -7816,7 +7853,14 @@ public class RibbonController : ExcelRibbon
                 {
                     InitializeLoggerForSharedReceive(activeWorkbook);
                     progressForm.Show();
-                    progressForm.AppendLine("Pull 元は最新版です");
+                    if (pullEnabled)
+                    {
+                        progressForm.AppendLine("Pull 元は最新版です");
+                    }
+                    else
+                    {
+                        progressForm.AppendLine("取得元更新は無効です");
+                    }
                     progressForm.AppendLine("共有値を確認します");
                     SharedReceiveResult sharedReceiveResult = await ReceiveSharedSheetsAsync(activeWorkbook, shareInfo, progressForm.AppendLine);
                     progressForm.ShowContinueButton("閉じる", "共有値確認が完了しました");
@@ -8238,35 +8282,39 @@ public class RibbonController : ExcelRibbon
                 return;
             }
 
-            if (!HasPullSourceSettings(workbookInfo.PullInfo) || !HasShareSettings(workbookInfo.ShareInfo))
+            if (!HasShareSettings(workbookInfo.ShareInfo))
             {
-                MessageBox.Show("このブックには同期設定が保存されていません。先に最新版取得を実行してください。", dialogTitle);
+                MessageBox.Show("このブックには共有先の情報が保存されていません。先に最新版取得を実行してください。", dialogTitle);
                 return;
             }
 
             GitLabLastInput pullInfo = workbookInfo.PullInfo;
             GitLabShareInfo shareInfo = workbookInfo.ShareInfo;
+            bool pullEnabled = IsPullSourceEnabled(pullInfo) && HasPullSourceSettings(pullInfo);
 
-            string pullToken = GitLabAuth.GetOrPromptToken(
-                pullInfo.BaseUrl,
-                pullInfo.ProjectId);
-            if (string.IsNullOrWhiteSpace(pullToken))
+            if (pullEnabled)
             {
-                MessageBox.Show("共有をキャンセルしました（トークン未入力）", dialogTitle);
-                return;
-            }
+                string pullToken = GitLabAuth.GetOrPromptToken(
+                    pullInfo.BaseUrl,
+                    pullInfo.ProjectId);
+                if (string.IsNullOrWhiteSpace(pullToken))
+                {
+                    MessageBox.Show("共有をキャンセルしました（トークン未入力）", dialogTitle);
+                    return;
+                }
 
-            string currentCommitId = await GitLabClient.GetCommitIdAsync(
-                pullInfo.BaseUrl,
-                pullInfo.ProjectId,
-                pullInfo.RefName,
-                pullToken).ConfigureAwait(true);
+                string currentCommitId = await GitLabClient.GetCommitIdAsync(
+                    pullInfo.BaseUrl,
+                    pullInfo.ProjectId,
+                    pullInfo.RefName,
+                    pullToken).ConfigureAwait(true);
 
-            if (!string.IsNullOrWhiteSpace(currentCommitId) &&
-                !string.Equals(workbookInfo.PullCommitId, currentCommitId, StringComparison.OrdinalIgnoreCase))
-            {
-                MessageBox.Show("Pull 元が最新ではありません。先に最新版取得を実行してください。", dialogTitle);
-                return;
+                if (!string.IsNullOrWhiteSpace(currentCommitId) &&
+                    !string.Equals(workbookInfo.PullCommitId, currentCommitId, StringComparison.OrdinalIgnoreCase))
+                {
+                    MessageBox.Show("Pull 元が最新ではありません。先に最新版取得を実行してください。", dialogTitle);
+                    return;
+                }
             }
 
             string shareToken = GitLabAuth.GetOrPromptToken(

@@ -14,4 +14,7 @@ internal sealed class GitLabLastInput
 
     [DataMember(Name = "filePath")]
     public string FilePath { get; set; }
+
+    [DataMember(Name = "pullEnabled", EmitDefaultValue = false)]
+    public bool? PullEnabled { get; set; }
 }
