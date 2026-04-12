@@ -7524,7 +7524,14 @@ public class RibbonController : ExcelRibbon
 
         if (workbookInput == null)
         {
-            return storedInput;
+            return new GitLabLastInput
+            {
+                BaseUrl = storedInput.BaseUrl,
+                ProjectId = storedInput.ProjectId,
+                RefName = storedInput.RefName,
+                FilePath = storedInput.FilePath,
+                PullEnabled = workbookInfo == null ? true : false
+            };
         }
 
         return new GitLabLastInput
@@ -7541,7 +7548,21 @@ public class RibbonController : ExcelRibbon
             FilePath = !string.IsNullOrWhiteSpace(workbookInput.FilePath)
                 ? workbookInput.FilePath
                 : storedInput.FilePath,
-            PullEnabled = workbookInput.PullEnabled ?? true
+            PullEnabled = workbookInput.PullEnabled ?? HasPullSourceSettings(workbookInput)
+        };
+    }
+
+    private static GitLabLastInput CreateStoredPullDefaults(GitLabLastInput input, bool clearFilePath)
+    {
+        input = input ?? new GitLabLastInput();
+
+        return new GitLabLastInput
+        {
+            BaseUrl = input.BaseUrl,
+            ProjectId = input.ProjectId,
+            RefName = input.RefName,
+            FilePath = clearFilePath ? "" : input.FilePath,
+            PullEnabled = null
         };
     }
 
@@ -7564,7 +7585,7 @@ public class RibbonController : ExcelRibbon
             return;
         }
 
-        GitLabLastInputStore.Save(input, false);
+        GitLabLastInputStore.Save(CreateStoredPullDefaults(input, false), false);
 
         WorkbookInfo workbookInfo = workbook == null ? null : WorkbookInfo.CreateFromWorkbook(workbook);
         if (workbookInfo == null)
@@ -7707,7 +7728,7 @@ public class RibbonController : ExcelRibbon
         }
 
         input.FilePath = filePath;
-        GitLabLastInputStore.Save(input, false);
+        GitLabLastInputStore.Save(CreateStoredPullDefaults(input, false), false);
         GitLabShareInfoStore.Save(shareInfo);
         return true;
     }
