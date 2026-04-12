@@ -4922,7 +4922,11 @@ public class RibbonController : ExcelRibbon
         return variablesNode.ComputeSha256();
     }
 
-    async Task UpdateAllSheets(Excel.Workbook workbook, string txtFilePathOverride = null, string jsonFilePathOverride = null)
+    async Task UpdateAllSheets(
+        Excel.Workbook workbook,
+        string txtFilePathOverride = null,
+        string jsonFilePathOverride = null,
+        bool skipSaveConfirmation = false)
     {
         Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
 
@@ -5005,7 +5009,7 @@ public class RibbonController : ExcelRibbon
         }
 
         // ファイルが変更されて保存されてない場合
-        if (workbook.Saved == false)
+        if (!skipSaveConfirmation && workbook.Saved == false)
         {
             // 保存確認ダイアログを表示
             DialogResult yesNoCancel = MessageBox.Show($"シートを更新する前にファイルの変更内容を保存しますか？", "確認", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Exclamation);
@@ -7930,7 +7934,11 @@ public class RibbonController : ExcelRibbon
             {
                 progressForm.ShowContinueButton("Excel 更新開始", "ダウンロード完了");
                 await progressForm.WaitForContinueAsync();
-                await UpdateAllSheets(activeWorkbook, pullResult.EntryLocalPath, pullResult.JsonFilePath);
+                await UpdateAllSheets(
+                    activeWorkbook,
+                    pullResult.EntryLocalPath,
+                    pullResult.JsonFilePath,
+                    skipSaveConfirmation: true);
                 if (shareInfo != null)
                 {
                     progressForm.AppendLine("共有値を反映しています");
