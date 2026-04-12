@@ -7519,13 +7519,30 @@ public class RibbonController : ExcelRibbon
     private static GitLabLastInput GetInitialPullSettingsForDialog(Excel.Workbook workbook)
     {
         WorkbookInfo workbookInfo = workbook == null ? null : WorkbookInfo.CreateFromWorkbook(workbook);
-        GitLabLastInput input = workbookInfo == null ? null : workbookInfo.PullInfo;
-        if (input == null)
+        GitLabLastInput workbookInput = workbookInfo == null ? null : workbookInfo.PullInfo;
+        GitLabLastInput storedInput = GitLabLastInputStore.Load() ?? new GitLabLastInput();
+
+        if (workbookInput == null)
         {
-            input = GitLabLastInputStore.Load();
+            return storedInput;
         }
 
-        return input ?? new GitLabLastInput();
+        return new GitLabLastInput
+        {
+            BaseUrl = !string.IsNullOrWhiteSpace(workbookInput.BaseUrl)
+                ? workbookInput.BaseUrl
+                : storedInput.BaseUrl,
+            ProjectId = !string.IsNullOrWhiteSpace(workbookInput.ProjectId)
+                ? workbookInput.ProjectId
+                : storedInput.ProjectId,
+            RefName = !string.IsNullOrWhiteSpace(workbookInput.RefName)
+                ? workbookInput.RefName
+                : storedInput.RefName,
+            FilePath = !string.IsNullOrWhiteSpace(workbookInput.FilePath)
+                ? workbookInput.FilePath
+                : storedInput.FilePath,
+            PullEnabled = workbookInput.PullEnabled ?? true
+        };
     }
 
     private static GitLabShareInfo GetInitialShareSettingsForDialog(Excel.Workbook workbook, GitLabLastInput pullInfo)
