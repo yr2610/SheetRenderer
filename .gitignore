@@ -30,3 +30,4 @@
 packages/
 SheetRenderer/template.xlsm
 SheetRenderer/sr_policy.dat
+allowed-users.txt
