@@ -1,0 +1,3 @@
+# user[,expireDate]
+DOMAIN\UserA
+DOMAIN\UserB,2026-12-31

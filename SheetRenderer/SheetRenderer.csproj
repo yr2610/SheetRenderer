@@ -181,6 +181,9 @@
     <None Include="Properties\ExcelDna.Build.props" />
     <None Include="SheetRenderer-AddIn.dna" />
     <None Include="packages.config" />
+    <Content Include="sr_policy.dat">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
   <ItemGroup>
     <Content Include="scripts\**\*.*" CopyToOutputDirectory="PreserveNewest" />
