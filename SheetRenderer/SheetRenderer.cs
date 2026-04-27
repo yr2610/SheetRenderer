@@ -532,7 +532,7 @@ public class RibbonController : ExcelRibbon
         public string BuildSummaryText(int maxItems)
         {
             var lines = new List<string>();
-            lines.Add("Pull completed.");
+            lines.Add("最新版取得が完了しました。");
             lines.Add(string.Empty);
             lines.Add("WorkRoot:");
             lines.Add(WorkRoot ?? string.Empty);
@@ -624,7 +624,7 @@ public class RibbonController : ExcelRibbon
                             <menu id='menuPull'>
                                 <button id='buttonPullCreate'
                                         label='新規作成'
-                                        screentip='Pull 情報を入力して新しくブックを作成します'
+                                        screentip='取得元情報を入力して新しくブックを作成します'
                                         onAction='OnPullCreateButtonPressed'/>
                             </menu>
                         </splitButton>
@@ -653,7 +653,7 @@ public class RibbonController : ExcelRibbon
                         <group id='groupSettings' label='設定'>
                         <button id='buttonPullSourceSettings'
                                 label='取得元設定'
-                                screentip='Pull 新規作成で使う取得元 GitLab 情報を設定します'
+                                screentip='新規作成で使う取得元 GitLab 情報を設定します'
                                 size='large'
                                 imageMso='CurrentViewSettings'
                                 onAction='OnPullSourceSettingsButtonPressed'/>
@@ -753,7 +753,7 @@ public class RibbonController : ExcelRibbon
             string message = !isSameUser
                 ? "最後に更新された環境と異なります。"
                 : isPullWorkSourceFile
-                    ? "Pull で取得した一時ファイルはローカル更新に使用できません。"
+                    ? "最新版取得で取得した一時ファイルはローカル更新に使用できません。"
                     : "ソースファイルが見つかりません。";
 
             DialogResult fileSelectionResult = MessageBox.Show(
@@ -4483,7 +4483,7 @@ public class RibbonController : ExcelRibbon
                 }
                 else if (isPullWorkSourceFile)
                 {
-                    message = "Pull で取得した一時ファイルはローカル更新に使用できません。";
+                    message = "最新版取得で取得した一時ファイルはローカル更新に使用できません。";
                 }
                 else if (!sourceFileExists)
                 {
@@ -4955,7 +4955,7 @@ public class RibbonController : ExcelRibbon
                 string message = !isSameUser
                     ? "最後に更新された環境と異なります。"
                     : isPullWorkSourceFile
-                        ? "Pull で取得した一時ファイルはローカル更新に使用できません。"
+                        ? "最新版取得で取得した一時ファイルはローカル更新に使用できません。"
                         : "ソースファイルが見つかりません。";
 
                 DialogResult fileSelectionResult = MessageBox.Show(
@@ -5680,7 +5680,7 @@ public class RibbonController : ExcelRibbon
 
         DialogResult overwriteResult = MessageBox.Show(
             "同名のファイルが既に存在します。上書きしますか？\n\n" + fullPath,
-            "Pull 新規作成",
+            "最新版取得で新規作成",
             MessageBoxButtons.YesNo,
             MessageBoxIcon.Warning);
         return overwriteResult == DialogResult.Yes;
@@ -5849,9 +5849,9 @@ public class RibbonController : ExcelRibbon
             {
                 MessageBox.Show(
                     "同名のファイルが既に存在するため新規作成できません。\n" +
-                    "更新したい場合はそのファイルを開いてから Pull を実行してください。\n\n" +
+                    "更新したい場合はそのファイルを開いてから最新版取得を実行してください。\n\n" +
                     newFilePath,
-                    "Pull 新規作成");
+                    "最新版取得で新規作成");
                 return false;
             }
 
@@ -5859,7 +5859,7 @@ public class RibbonController : ExcelRibbon
             {
                 DialogResult overwriteResult = MessageBox.Show(
                     "同名のファイルが既に存在します。上書きしますか？\n\n" + newFilePath,
-                    "Pull 新規作成",
+                    "最新版取得で新規作成",
                     MessageBoxButtons.YesNo,
                     MessageBoxIcon.Warning);
                 if (overwriteResult != DialogResult.Yes)
@@ -7368,7 +7368,7 @@ public class RibbonController : ExcelRibbon
             string.IsNullOrEmpty(debugSession.WorkRoot) ||
             string.IsNullOrEmpty(debugSession.EntryGitLabRelativePath))
         {
-            MessageBox.Show("先に Pull を実行してください。", "NestedRead");
+            MessageBox.Show("先に最新版取得を実行してください。", "NestedRead");
             return;
         }
 
@@ -7793,7 +7793,7 @@ public class RibbonController : ExcelRibbon
                 WorkbookInfo workbookInfo = WorkbookInfo.CreateFromWorkbook(activeWorkbook);
                 if (workbookInfo == null)
                 {
-                    MessageBox.Show("このブックには Pull 用の情報が保存されていません。", "最新版取得");
+                    MessageBox.Show("このブックには取得元の情報が保存されていません。", "最新版取得");
                     return;
                 }
 
@@ -7897,7 +7897,7 @@ public class RibbonController : ExcelRibbon
                     progressForm.Show();
                     if (pullEnabled)
                     {
-                        progressForm.AppendLine("Pull 元は最新版です");
+                        progressForm.AppendLine("取得元は最新版です");
                     }
                     else
                     {
@@ -7989,7 +7989,7 @@ public class RibbonController : ExcelRibbon
         }
         catch (Exception ex)
         {
-            System.Windows.Forms.MessageBox.Show(ex.ToString(), "Pull failed");
+            System.Windows.Forms.MessageBox.Show(ex.ToString(), "最新版取得に失敗しました");
         }
         finally
         {
@@ -8069,7 +8069,7 @@ public class RibbonController : ExcelRibbon
         }
         catch (Exception ex)
         {
-            System.Windows.Forms.MessageBox.Show(ex.ToString(), "Pull failed");
+            System.Windows.Forms.MessageBox.Show(ex.ToString(), "最新版取得に失敗しました");
         }
         finally
         {
@@ -8358,7 +8358,7 @@ public class RibbonController : ExcelRibbon
                 if (!string.IsNullOrWhiteSpace(currentCommitId) &&
                     !string.Equals(workbookInfo.PullCommitId, currentCommitId, StringComparison.OrdinalIgnoreCase))
                 {
-                    MessageBox.Show("Pull 元が最新ではありません。先に最新版取得を実行してください。", dialogTitle);
+                    MessageBox.Show("取得元が最新ではありません。先に最新版取得を実行してください。", dialogTitle);
                     return;
                 }
             }
@@ -8488,7 +8488,7 @@ public class RibbonController : ExcelRibbon
         string workRoot = CreatePullWorkRoot();
 
         FileLogger.InitializeForSession(workRoot, "pull", timestamped: false);
-        progressReporter?.Invoke("PullWork を作成しました");
+        progressReporter?.Invoke("作業用一時フォルダを作成しました");
 
         string refCommitId = await GitLabClient.GetCommitIdAsync(
             baseUrl,
