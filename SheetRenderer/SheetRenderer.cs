@@ -913,73 +913,88 @@ public class RibbonController : ExcelRibbon
 
     static List<CellInfo> GetTemplateCells(Excel.Worksheet sheet)
     {
-        Excel.Range usedRange = sheet.UsedRange;
+        Excel.Range usedRange = null;
+        Excel.Range valueRange = null;
 
-        int rowCount = usedRange.Rows.Count;
-        int colCount = usedRange.Columns.Count;
-
-        if (rowCount == 1 && colCount == 1)
+        try
         {
-            // 配列として処理するため適当に2セルにする
-            // colCount は 1 のままで良い
-            usedRange = usedRange.Resize[1, 2];
-        }
+            usedRange = sheet.UsedRange;
+            valueRange = usedRange;
 
-        int startRow = usedRange.Row;
-        int startCol = usedRange.Column;
+            int rowCount = usedRange.Rows.Count;
+            int colCount = usedRange.Columns.Count;
 
-        // セルのアドレスを計算するヘルパーメソッド
-        string GetCellAddress(int row, int col)
-        {
-            int actualRow = startRow + row - 1;
-            int actualCol = startCol + col - 1;
-            return $"{GetColumnLetter(actualCol)}{actualRow}";
-        }
-
-        // 列番号を列文字に変換するヘルパーメソッド
-        string GetColumnLetter(int col)
-        {
-            string columnLetter = "";
-            while (col > 0)
+            if (rowCount == 1 && colCount == 1)
             {
-                int mod = (col - 1) % 26;
-                columnLetter = (char)(mod + 65) + columnLetter;
-                col = (col - mod) / 26;
+                // 配列として処理するため適当に2セルにする
+                // colCount は 1 のままで良い
+                valueRange = usedRange.Resize[1, 2];
             }
-            return columnLetter;
-        }
 
-        object[,] values = usedRange.Value2;
-        Regex regex = new Regex(@"\{\{[_A-Za-z]\w*\}\}");
-        List<CellInfo> matchingCells = new List<CellInfo>();
+            int startRow = valueRange.Row;
+            int startCol = valueRange.Column;
 
-        for (int row = 1; row <= rowCount; row++)
-        {
-            for (int col = 1; col <= colCount; col++)
+            // セルのアドレスを計算するヘルパーメソッド
+            string GetCellAddress(int row, int col)
             {
-                if (!(values[row, col] is string))
+                int actualRow = startRow + row - 1;
+                int actualCol = startCol + col - 1;
+                return $"{GetColumnLetter(actualCol)}{actualRow}";
+            }
+
+            // 列番号を列文字に変換するヘルパーメソッド
+            string GetColumnLetter(int col)
+            {
+                string columnLetter = "";
+                while (col > 0)
                 {
-                    continue;
+                    int mod = (col - 1) % 26;
+                    columnLetter = (char)(mod + 65) + columnLetter;
+                    col = (col - mod) / 26;
                 }
+                return columnLetter;
+            }
 
-                string cellValue = (string)values[row, col];
+            object[,] values = valueRange.Value2;
+            Regex regex = new Regex(@"\{\{[_A-Za-z]\w*\}\}");
+            List<CellInfo> matchingCells = new List<CellInfo>();
 
-                // パターンにマッチするかどうかだけを判定
-                if (regex.IsMatch(cellValue))
+            for (int row = 1; row <= rowCount; row++)
+            {
+                for (int col = 1; col <= colCount; col++)
                 {
-                    string cellAddress = GetCellAddress(row, col);
-                    var info = new CellInfo
+                    if (!(values[row, col] is string))
                     {
-                        Address = cellAddress,
-                        Value = cellValue
-                    };
+                        continue;
+                    }
 
-                    matchingCells.Add(info);
+                    string cellValue = (string)values[row, col];
+
+                    // パターンにマッチするかどうかだけを判定
+                    if (regex.IsMatch(cellValue))
+                    {
+                        string cellAddress = GetCellAddress(row, col);
+                        var info = new CellInfo
+                        {
+                            Address = cellAddress,
+                            Value = cellValue
+                        };
+
+                        matchingCells.Add(info);
+                    }
                 }
             }
-        }
 
-        return matchingCells;
+            return matchingCells;
+        }
+        finally
+        {
+            if (!object.ReferenceEquals(valueRange, usedRange))
+            {
+                ReleaseExcelComObject(valueRange);
+            }
+            ReleaseExcelComObject(usedRange);
+        }
     }
 
     static string ReplacePlaceholders(string s, Dictionary<string, string> parameters)
@@ -1006,23 +1021,36 @@ public class RibbonController : ExcelRibbon
 
         foreach (var cellInfo in cellInfos)
         {
-            var range = worksheet.Range[cellInfo.Address];
-
-            // セルに数式が含まれる場合はスキップ
-            if (range.HasFormula)
+            Excel.Range range = null;
+            Excel.Hyperlinks hyperlinks = null;
+            Excel.Hyperlink hyperlink = null;
+            try
             {
-                continue;
+                range = worksheet.Range[cellInfo.Address];
+
+                // セルに数式が含まれる場合はスキップ
+                if (range.HasFormula)
+                {
+                    continue;
+                }
+
+                string value = cellInfo.Value as string;
+
+                // URLの場合、ハイパーリンクを追加
+                if (urlRegex.IsMatch(value ?? ""))
+                {
+                    hyperlinks = worksheet.Hyperlinks;
+                    hyperlink = hyperlinks.Add(range, value);
+                }
+
+                range.Value2 = value;
             }
-
-            string value = cellInfo.Value as string;
-
-            // URLの場合、ハイパーリンクを追加
-            if (urlRegex.IsMatch(value ?? ""))
+            finally
             {
-                worksheet.Hyperlinks.Add(range, value);
+                ReleaseExcelComObject(hyperlink);
+                ReleaseExcelComObject(hyperlinks);
+                ReleaseExcelComObject(range);
             }
-
-            range.Value2 = value;
         }
     }
 
@@ -1079,31 +1107,43 @@ public class RibbonController : ExcelRibbon
 
     static SheetAddressInfo GetSheetAddressInfo(Excel.Worksheet sheet)
     {
-        Excel.Name namedRange = sheet.GetNamedRange(ssSheetRangeName);
-
-        if (namedRange == null)
+        Excel.Name namedRange = null;
+        Excel.Range range = null;
+        try
         {
-            return null;
+            namedRange = sheet.GetNamedRange(ssSheetRangeName);
+
+            if (namedRange == null)
+            {
+                return null;
+            }
+
+            // 名前付き範囲が存在する場合、その範囲を使用
+            range = namedRange.RefersToRange;
+            string address = range.Address;
+            RangeInfo rangeInfo = null;
+            string comment = namedRange.Comment;
+
+            // コメントが存在する場合、それを YAML として解析
+            if (comment != null)
+            {
+                var deserializer = new DeserializerBuilder()
+                    .WithNamingConvention(CamelCaseNamingConvention.Instance)
+                    .Build();
+                rangeInfo = deserializer.Deserialize<RangeInfo>(comment);
+            }
+
+            return new SheetAddressInfo
+            {
+                Address = address,
+                RangeInfo = rangeInfo
+            };
         }
-
-        // 名前付き範囲が存在する場合、その範囲を使用
-        string address = namedRange.RefersToRange.Address;
-        RangeInfo rangeInfo = null;
-
-        // コメントが存在する場合、それを YAML として解析
-        if (namedRange.Comment != null)
+        finally
         {
-            var deserializer = new DeserializerBuilder()
-                .WithNamingConvention(CamelCaseNamingConvention.Instance)
-                .Build();
-            rangeInfo = deserializer.Deserialize<RangeInfo>(namedRange.Comment);
+            ReleaseExcelComObject(range);
+            ReleaseExcelComObject(namedRange);
         }
-
-        return new SheetAddressInfo
-        {
-            Address = address,
-            RangeInfo = rangeInfo
-        };
     }
 
     bool UpdateCurrentSheetButtonEnabled { get; set; } = true;
@@ -4695,137 +4735,179 @@ public class RibbonController : ExcelRibbon
             return;
         }
 
-        string activeSheetId = sheet.GetCustomProperty(sheetIdCustomPropertyName);
-
-        // 今開いているシートの id を index sheet から取得
-        var indexSheet = workbook.Sheets[workbookInfo.IndexSheetName] as Excel.Worksheet;
-        var sheetIds = GetSheetIdsFromIndexSheet(indexSheet);
-        var sheetNameRange = GetSheetNamesRangeFromIndexSheet(indexSheet);
-        var sheetNames = sheetNameRange.GetColumnValues(0);
-        int sheetIndex = sheetNames.ToList().IndexOf(sheet.Name);
-
-        if (sheetIndex == -1)
-        {
-            MessageBox.Show($"有効なシートが選択されていません。");
-            return;
-        }
-
-        // シート名とIDをペアにして辞書に変換
-        //var sheetIdMap = sheetNames.Zip(sheetIds, (sheetName, id) => new { sheetName, id })
-        //                           .ToDictionary(x => x.sheetName, x => x.id);
-        //string activeSheetId = sheetIdMap[sheet.Name].ToString();
-        if (activeSheetId == null)  // XXX: 古いバージョンの対応。ある程度稼働したら削除
-        {
-            activeSheetId = sheetIds.ElementAt(sheetIndex).ToString();
-        }
-
         JsonArray sheetNodes = jsonObject["children"].AsArray();
-
-        // jsonObject から同じ id の node を取得
         JsonNode targetSheetNode = null;
-        foreach (JsonNode sheetNode in sheetNodes)
-        {
-            string id = sheetNode["id"].ToString();
-            if (id == activeSheetId)
-            {
-                targetSheetNode = sheetNode;
-                break;
-            }
-        }
-        // 現在のシートと同じIDのノードがなければ終了
-        if (targetSheetNode == null)
-        {
-            MessageBox.Show($"現在のシートと同じIDのノードが存在しません。");
-            return;
-        }
-
         string sheetName = sheet.Name;
-        string newSheetName = targetSheetNode["text"].ToString();
+        string newSheetName = null;
 
-        if (newSheetName != sheetName)
+        Excel.Worksheet indexSheet = null;
+        Excel.Range sheetNameRange = null;
+        Excel.Range sheetNameCell = null;
+        Excel.Worksheet existingSheet = null;
+
+        try
         {
-            // 新しい名前のシートがすでにあったら中止
-            if (workbook.GetSheetIfExists(newSheetName) != null)
+            string activeSheetId = sheet.GetCustomProperty(sheetIdCustomPropertyName);
+
+            // 今開いているシートの id を index sheet から取得
+            indexSheet = workbook.Sheets[workbookInfo.IndexSheetName] as Excel.Worksheet;
+            var sheetIds = GetSheetIdsFromIndexSheet(indexSheet).ToList();
+            sheetNameRange = GetSheetNamesRangeFromIndexSheet(indexSheet);
+            var sheetNames = sheetNameRange.GetColumnValues(0).ToList();
+            int sheetIndex = sheetNames.IndexOf(sheet.Name);
+
+            if (sheetIndex == -1)
             {
-                MessageBox.Show($"変更後のシート名と同名のシートがすでに存在します。");
+                MessageBox.Show($"有効なシートが選択されていません。");
                 return;
             }
+
+            // シート名とIDをペアにして辞書に変換
+            //var sheetIdMap = sheetNames.Zip(sheetIds, (sheetName, id) => new { sheetName, id })
+            //                           .ToDictionary(x => x.sheetName, x => x.id);
+            //string activeSheetId = sheetIdMap[sheet.Name].ToString();
+            if (activeSheetId == null)  // XXX: 古いバージョンの対応。ある程度稼働したら削除
+            {
+                activeSheetId = sheetIds.ElementAt(sheetIndex).ToString();
+            }
+
+            // jsonObject から同じ id の node を取得
+            foreach (JsonNode sheetNode in sheetNodes)
+            {
+                string id = sheetNode["id"].ToString();
+                if (id == activeSheetId)
+                {
+                    targetSheetNode = sheetNode;
+                    break;
+                }
+            }
+            // 現在のシートと同じIDのノードがなければ終了
+            if (targetSheetNode == null)
+            {
+                MessageBox.Show($"現在のシートと同じIDのノードが存在しません。");
+                return;
+            }
+
+            newSheetName = targetSheetNode["text"].ToString();
+
+            if (newSheetName != sheetName)
+            {
+                // 新しい名前のシートがすでにあったら中止
+                existingSheet = workbook.GetSheetIfExists(newSheetName);
+                if (existingSheet != null)
+                {
+                    MessageBox.Show($"変更後のシート名と同名のシートがすでに存在します。");
+                    return;
+                }
+            }
+
+            if (newSheetName != sheetName)
+            {
+                // シート名が変わっていたら index sheet にも反映
+                sheetNameCell = sheetNameRange.Cells[1 + sheetIndex] as Excel.Range;
+                sheetNameCell.Value2 = newSheetName;
+            }
+        }
+        finally
+        {
+            ReleaseExcelComObject(existingSheet);
+            ReleaseExcelComObject(sheetNameCell);
+            ReleaseExcelComObject(sheetNameRange);
+            ReleaseExcelComObject(indexSheet);
         }
 
-        if (newSheetName != sheetName)
+        Excel.Worksheet templateSheet = null;
+        Excel.Worksheet newSheet = null;
+        SheetValuesInfo sheetValuesInfo = null;
+        Excel.XlSheetVisibility templateSheetVisible = Excel.XlSheetVisibility.xlSheetVisible;
+        bool templateSheetVisibilityChanged = false;
+
+        try
         {
-            // シート名が変わっていたら index sheet にも反映
-            sheetNameRange.Cells[1 + sheetIndex].Value2 = newSheetName;
+            // シートが非表示の場合、コピーしてもシートがアクティブにならないので、一時的に表示状態にする
+            templateSheet = workbook.Sheets[workbookInfo.TemplateSheetName];
+            templateSheetVisible = templateSheet.Visible;
+            templateSheet.Visible = Excel.XlSheetVisibility.xlSheetVisible;
+            templateSheetVisibilityChanged = true;
+            templateSheet.Copy(After: sheet);
+
+            // コピーされたシートはアクティブシートになるので、それを取得
+            newSheet = excelApp.ActiveSheet as Excel.Worksheet;
+
+            // 元のシートから今の入力内容を取り込む
+            sheetValuesInfo = SheetValuesInfo.CreateFromSheet(sheet);
+
+            // 元のシートを削除
+            excelApp.DisplayAlerts = false;
+            try
+            {
+                sheet.Delete();
+            }
+            finally
+            {
+                excelApp.DisplayAlerts = true;
+            }
+
+            // 元のシートと同じ名前でも良いように元シート削除後に名前変更
+            newSheet.Name = newSheetName;
+
+            // シート作成
+            // node, 画像ファイルの比較はしない
+            var missingImagePathsInSheet = RenderSheet(targetSheetNode, confData, jsonFilePath, newSheet, sheetValuesInfo);
+
+            // シートの JsonNode の hash をカスタムプロパティに保存
+            // XXX: hash には text を含めたくないので、hashを求める前に一時的に削除
+            targetSheetNode.AsObject().Remove("text");
+            string newSheetHash = targetSheetNode.ComputeSha256();
+            //targetSheetNode["text"] = newSheetName;
+            newSheet.SetCustomProperty(sheetHashCustomPropertyName, newSheetHash);
+
+            // await の前にWindowsFormsSynchronizationContextを設定
+            if (SynchronizationContext.Current == null)
+            {
+                SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());
+            }
+
+            var newSheetImageHash = await ComputeImagesHash(jsonFilePath, targetSheetNode);
+            newSheet.SetCustomProperty(sheetImageHashCustomPropertyName, newSheetImageHash);
+
+            // シートを元の状態と同じにする
+            newSheet.Activate();
+            excelApp.SetActiveCellPosition(activeCellPosition);
+
+            var originalZoom = excelApp.ActiveWindow.Zoom;
+            if (originalZoom == activeSheetZoom)
+            {
+                excelApp.ActiveWindow.Zoom = originalZoom + 1; // ズームレベルを一時的に変更
+            }
+            excelApp.ScreenUpdating = true;
+            excelApp.SetActiveSheetZoom(activeSheetZoom);   // scroll より後に zoom をセットすると微妙にずれるっぽい
+            excelApp.SetScrollPosition(scrollPosition);
+
+            if (missingImagePathsInSheet.Any())
+            {
+                SynchronizationContext.Current.Post(_ => {
+                    ShowMissingImageFilesDialog(missingImagePathsInSheet);
+                }, null);
+            }
+
+            // TODO: RenderLog 書き出す処理を共通化
+            RenderLog renderLog = new RenderLog
+            {
+                SourceFilePath = txtFilePath,
+                User = Environment.UserName
+            };
+            workbook.SetCustomProperty("RenderLog", renderLog);
         }
-
-        // シートが非表示の場合、コピーしてもシートがアクティブにならないので、一時的に表示状態にする
-        Excel.Worksheet templateSheet = workbook.Sheets[workbookInfo.TemplateSheetName];
-        var visible = templateSheet.Visible;
-        templateSheet.Visible = Excel.XlSheetVisibility.xlSheetVisible;
-        templateSheet.Copy(After: sheet);
-        templateSheet.Visible = visible;
-
-        // コピーされたシートはアクティブシートになるので、それを取得
-        Excel.Worksheet newSheet = (Excel.Worksheet)templateSheet.Application.ActiveSheet;
-
-        // 元のシートから今の入力内容を取り込む
-        SheetValuesInfo sheetValuesInfo = SheetValuesInfo.CreateFromSheet(sheet);
-
-        // 元のシートを削除
-        excelApp.DisplayAlerts = false;
-        sheet.Delete();
-        excelApp.DisplayAlerts = true;
-
-        // 元のシートと同じ名前でも良いように元シート削除後に名前変更
-        newSheet.Name = newSheetName;
-
-        // シート作成
-        // node, 画像ファイルの比較はしない
-        var missingImagePathsInSheet = RenderSheet(targetSheetNode, confData, jsonFilePath, newSheet, sheetValuesInfo);
-
-        // シートの JsonNode の hash をカスタムプロパティに保存
-        // XXX: hash には text を含めたくないので、hashを求める前に一時的に削除
-        targetSheetNode.AsObject().Remove("text");
-        string newSheetHash = targetSheetNode.ComputeSha256();
-        //targetSheetNode["text"] = newSheetName;
-        newSheet.SetCustomProperty(sheetHashCustomPropertyName, newSheetHash);
-
-        // await の前にWindowsFormsSynchronizationContextを設定
-        if (SynchronizationContext.Current == null)
+        finally
         {
-            SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());
+            RestoreTemplateSheetVisibility(templateSheet, templateSheetVisible, templateSheetVisibilityChanged);
+            try { excelApp.DisplayAlerts = true; } catch { }
+
+            ReleaseExcelComObject(sheetValuesInfo?.Range);
+            ReleaseExcelComObject(newSheet);
+            ReleaseExcelComObject(templateSheet);
         }
-
-        var newSheetImageHash = await ComputeImagesHash(jsonFilePath, targetSheetNode);
-        newSheet.SetCustomProperty(sheetImageHashCustomPropertyName, newSheetImageHash);
-
-        // シートを元の状態と同じにする
-        newSheet.Activate();
-        excelApp.SetActiveCellPosition(activeCellPosition);
-
-        var originalZoom = excelApp.ActiveWindow.Zoom;
-        if (originalZoom == activeSheetZoom)
-        {
-            excelApp.ActiveWindow.Zoom = originalZoom + 1; // ズームレベルを一時的に変更
-        }
-        excelApp.ScreenUpdating = true;
-        excelApp.SetActiveSheetZoom(activeSheetZoom);   // scroll より後に zoom をセットすると微妙にずれるっぽい
-        excelApp.SetScrollPosition(scrollPosition);
-
-        if (missingImagePathsInSheet.Any())
-        {
-            SynchronizationContext.Current.Post(_ => {
-                ShowMissingImageFilesDialog(missingImagePathsInSheet);
-            }, null);
-        }
-
-        // TODO: RenderLog 書き出す処理を共通化
-        RenderLog renderLog = new RenderLog
-        {
-            SourceFilePath = txtFilePath,
-            User = Environment.UserName
-        };
-        workbook.SetCustomProperty("RenderLog", renderLog);
     }
 
     private static bool IsExcelBusyComException(COMException ex)

@@ -476,14 +476,36 @@ public static class ExcelExtensions
 
     public static Excel.Worksheet GetSheetIfExists(this Excel.Workbook workbook, string sheetName)
     {
-        foreach (Excel.Worksheet sheet in workbook.Sheets)
+        Excel.Sheets sheets = null;
+        try
         {
-            if (sheet.Name == sheetName)
+            sheets = workbook.Sheets;
+            foreach (Excel.Worksheet sheet in sheets)
             {
-                return sheet;
+                bool found = false;
+                try
+                {
+                    found = sheet.Name == sheetName;
+                    if (found)
+                    {
+                        return sheet;
+                    }
+                }
+                finally
+                {
+                    if (!found)
+                    {
+                        ReleaseComObject(sheet);
+                    }
+                }
             }
+
+            return null;
         }
-        return null;
+        finally
+        {
+            ReleaseComObject(sheets);
+        }
     }
 
     public static string GenerateTempSheetName(this Excel.Workbook workbook)
@@ -492,8 +514,22 @@ public static class ExcelExtensions
         int counter = 1;
 
         // 一時的な名前が既存のシート名と重複しないようにチェック
-        while (workbook.GetSheetIfExists(tempName) != null)
+        while (true)
         {
+            Excel.Worksheet existingSheet = null;
+            try
+            {
+                existingSheet = workbook.GetSheetIfExists(tempName);
+                if (existingSheet == null)
+                {
+                    break;
+                }
+            }
+            finally
+            {
+                ReleaseComObject(existingSheet);
+            }
+
             tempName = "TempSheetName" + counter;
             counter++;
         }
@@ -503,29 +539,50 @@ public static class ExcelExtensions
 
     public static Excel.Name GetNamedRange(this Excel.Worksheet sheet, string name)
     {
+        Excel.Names names = null;
         try
         {
-            Excel.Name namedRange = sheet.Names.Item(name);
+            names = sheet.Names;
+            Excel.Name namedRange = names.Item(name);
             return namedRange;
         }
         catch (Exception)
         {
             return null; // エラーが発生した場合は null を返します
         }
+        finally
+        {
+            ReleaseComObject(names);
+        }
     }
 
     public static void DeleteCustomProperty(this Excel.Worksheet sheet, string propertyName)
     {
-        var customProperties = sheet.CustomProperties;
-        foreach (Excel.CustomProperty property in customProperties)
+        Excel.CustomProperties customProperties = null;
+        try
         {
-            if (property.Name == propertyName)
+            customProperties = sheet.CustomProperties;
+            foreach (Excel.CustomProperty property in customProperties)
             {
-                property.Delete();  // 既存のプロパティを削除
-                return;
+                try
+                {
+                    if (property.Name == propertyName)
+                    {
+                        property.Delete();  // 既存のプロパティを削除
+                        return;
+                    }
+                }
+                finally
+                {
+                    ReleaseComObject(property);
+                }
             }
+            // 既存のプロパティが見つからない場合は何もしない
         }
-        // 既存のプロパティが見つからない場合は何もしない
+        finally
+        {
+            ReleaseComObject(customProperties);
+        }
     }
 
     public static void SetCustomProperty(this Excel.Worksheet sheet, string propertyName, string propertyValue)
@@ -537,54 +594,123 @@ public static class ExcelExtensions
         }
 
         // プロパティ値がnullまたは空でない場合、新規追加または更新
-        var customProperties = sheet.CustomProperties;
-        foreach (Excel.CustomProperty property in customProperties)
+        Excel.CustomProperties customProperties = null;
+        Excel.CustomProperty addedProperty = null;
+        try
         {
-            if (property.Name == propertyName)
+            customProperties = sheet.CustomProperties;
+            foreach (Excel.CustomProperty property in customProperties)
             {
-                property.Value = propertyValue;
-                return;
+                try
+                {
+                    if (property.Name == propertyName)
+                    {
+                        property.Value = propertyValue;
+                        return;
+                    }
+                }
+                finally
+                {
+                    ReleaseComObject(property);
+                }
             }
+
+            addedProperty = customProperties.Add(propertyName, propertyValue);
         }
-        customProperties.Add(propertyName, propertyValue);
+        finally
+        {
+            ReleaseComObject(addedProperty);
+            ReleaseComObject(customProperties);
+        }
     }
 
     public static string GetCustomProperty(this Excel.Worksheet sheet, string propertyName)
     {
-        var customProperties = sheet.CustomProperties;
-        foreach (Excel.CustomProperty property in customProperties)
+        Excel.CustomProperties customProperties = null;
+        try
         {
-            if (property.Name == propertyName)
+            customProperties = sheet.CustomProperties;
+            foreach (Excel.CustomProperty property in customProperties)
             {
-                return property.Value.ToString();
+                try
+                {
+                    if (property.Name == propertyName)
+                    {
+                        object value = property.Value;
+                        return value == null ? null : value.ToString();
+                    }
+                }
+                finally
+                {
+                    ReleaseComObject(property);
+                }
             }
+
+            return null;
         }
-        return null;
+        finally
+        {
+            ReleaseComObject(customProperties);
+        }
     }
 
     public static dynamic GetCustomPropertyObject(this Excel.Workbook workbook, string propertyName)
     {
-        dynamic properties = workbook.CustomDocumentProperties;
-        foreach (dynamic prop in properties)
+        dynamic properties = null;
+        try
         {
-            if (prop.Name == propertyName)
+            properties = workbook.CustomDocumentProperties;
+            foreach (dynamic prop in properties)
             {
-                return prop;
+                bool found = false;
+                try
+                {
+                    found = prop.Name == propertyName;
+                    if (found)
+                    {
+                        return prop;
+                    }
+                }
+                finally
+                {
+                    if (!found)
+                    {
+                        ReleaseComObject((object)prop);
+                    }
+                }
             }
+
+            return null;
         }
-        return null;
+        finally
+        {
+            ReleaseComObject((object)properties);
+        }
     }
 
     public static void SetCustomProperty(this Excel.Workbook workbook, string propertyName, string propertyValue)
     {
-        dynamic prop = GetCustomPropertyObject(workbook, propertyName);
-        if (prop != null)
+        dynamic prop = null;
+        dynamic properties = null;
+        dynamic addedProperty = null;
+        try
         {
-            prop.Value = propertyValue;
+            prop = GetCustomPropertyObject(workbook, propertyName);
+            if (prop != null)
+            {
+                prop.Value = propertyValue;
+            }
+            else
+            {
+                properties = workbook.CustomDocumentProperties;
+                addedProperty = properties.Add(propertyName, false, Office.MsoDocProperties.msoPropertyTypeString, propertyValue);
+            }
         }
-        else
+        finally
         {
-            workbook.CustomDocumentProperties.Add(propertyName, false, Office.MsoDocProperties.msoPropertyTypeString, propertyValue);
+            ReleaseComObject((object)addedProperty);
+            ReleaseComObject((object)properties);
+            ReleaseComObject((object)prop);
         }
     }
 
@@ -600,8 +726,16 @@ public static class ExcelExtensions
 
     public static string GetCustomProperty(this Excel.Workbook workbook, string propertyName)
     {
-        dynamic prop = GetCustomPropertyObject(workbook, propertyName);
-        return prop != null ? prop.Value : null;
+        dynamic prop = null;
+        try
+        {
+            prop = GetCustomPropertyObject(workbook, propertyName);
+            return prop != null ? prop.Value : null;
+        }
+        finally
+        {
+            ReleaseComObject((object)prop);
+        }
     }
 
     public static T GetCustomProperty<T>(this Excel.Workbook workbook, string propertyName)
