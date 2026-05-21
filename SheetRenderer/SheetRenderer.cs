@@ -1914,6 +1914,39 @@ public class RibbonController : ExcelRibbon
         try { excelApp.AutomationSecurity = Office.MsoAutomationSecurity.msoAutomationSecurityByUI; } catch { }
     }
 
+    private static void ReleaseExcelComObject(object comObject)
+    {
+        if (comObject == null)
+        {
+            return;
+        }
+
+        try
+        {
+            if (Marshal.IsComObject(comObject))
+            {
+                Marshal.ReleaseComObject(comObject);
+            }
+        }
+        catch
+        {
+        }
+    }
+
+    private static void SetCellValue(Excel.Worksheet sheet, int row, int column, object value)
+    {
+        Excel.Range cell = null;
+        try
+        {
+            cell = sheet.Cells[row, column] as Excel.Range;
+            cell.Value = value;
+        }
+        finally
+        {
+            ReleaseExcelComObject(cell);
+        }
+    }
+
     private static void EnsureSharedSheetBaseStorePrepared(Excel.Workbook workbook, Action<string> progressReporter = null)
     {
         if (workbook == null)
@@ -6921,29 +6954,62 @@ public class RibbonController : ExcelRibbon
 
                 void ApplyCommentCell(int cellColorIndex, int fontColorIndex)
                 {
-                    // ここより右のセルの色を変える
-                    var cells = dstSheet.Cells[startRow + i, startColumn + col];
-                    cells = cells.Resize(1, maxDepth - col);
+                    Excel.Range startCell = null;
+                    Excel.Range cells = null;
+                    Excel.Interior interior = null;
+                    Excel.Font font = null;
 
-                    cells.Interior.ColorIndex = cellColorIndex;
-                    cells.Font.ColorIndex = fontColorIndex;
+                    try
+                    {
+                        // ここより右のセルの色を変える
+                        startCell = dstSheet.Cells[startRow + i, startColumn + col] as Excel.Range;
+                        cells = startCell.Resize[1, maxDepth - col];
+                        interior = cells.Interior;
+                        font = cells.Font;
 
-                    // チェック予定日欄を空欄にする
-                    var dateCell = dstSheet.Cells[startRow + i, dateColumn];
-                    dateCell.Value = null;
+                        interior.ColorIndex = cellColorIndex;
+                        font.ColorIndex = fontColorIndex;
+
+                        // チェック予定日欄を空欄にする
+                        SetCellValue(dstSheet, startRow + i, dateColumn, null);
+                    }
+                    finally
+                    {
+                        ReleaseExcelComObject(font);
+                        ReleaseExcelComObject(interior);
+                        ReleaseExcelComObject(cells);
+                        ReleaseExcelComObject(startCell);
+                    }
                 }
 
                 void ApplyCommentCellColor(Color cellColor, Color fontColor)
                 {
-                    // ここより右のセルの色を変える
-                    var cells = dstSheet.Cells[startRow + i, startColumn + col];
-                    cells = cells.Resize(1, maxDepth - col);
-                    cells.Interior.Color = ColorTranslator.ToOle(cellColor);
-                    cells.Font.Color = ColorTranslator.ToOle(fontColor);
+                    Excel.Range startCell = null;
+                    Excel.Range cells = null;
+                    Excel.Interior interior = null;
+                    Excel.Font font = null;
 
-                    // チェック予定日欄を空欄にする
-                    var dateCell = dstSheet.Cells[startRow + i, dateColumn];
-                    dateCell.Value = null;
+                    try
+                    {
+                        // ここより右のセルの色を変える
+                        startCell = dstSheet.Cells[startRow + i, startColumn + col] as Excel.Range;
+                        cells = startCell.Resize[1, maxDepth - col];
+                        interior = cells.Interior;
+                        font = cells.Font;
+
+                        interior.Color = ColorTranslator.ToOle(cellColor);
+                        font.Color = ColorTranslator.ToOle(fontColor);
+
+                        // チェック予定日欄を空欄にする
+                        SetCellValue(dstSheet, startRow + i, dateColumn, null);
+                    }
+                    finally
+                    {
+                        ReleaseExcelComObject(font);
+                        ReleaseExcelComObject(interior);
+                        ReleaseExcelComObject(cells);
+                        ReleaseExcelComObject(startCell);
+                    }
                 }
 
                 bool InitializeCommentCell(string text_, string pattern, int cellColorIndex, int fontColorIndex)
@@ -6992,8 +7058,8 @@ public class RibbonController : ExcelRibbon
                         }
 
                         ApplyCommentCellColor(style.cellColor, style.fontColor);
-                        dstSheet.Cells[startRow + i, startColumn + col].Value = body;
-                        dstSheet.Cells[startRow + i, resultColumn].Value = "-";
+                        SetCellValue(dstSheet, startRow + i, startColumn + col, body);
+                        SetCellValue(dstSheet, startRow + i, resultColumn, "-");
                         applied = true;
                     }
                 }
@@ -7054,16 +7120,25 @@ public class RibbonController : ExcelRibbon
                 if (node.imageFilePath != null)
                 {
                     string path = GetAbsolutePathFromBasePath(jsonFilePath, node.imageFilePath);
-                    var cell = dstSheet.Cells[startRow + i, startColumn + col2];
+                    Excel.Range cell = null;
 
-                    if (!File.Exists(path))
+                    try
                     {
-                        // XXX: 毎回パス構築はムダ
-                        path = GetAbsolutePathFromExecutingDirectory(noImageFilePath);
-                        missingImagePaths.Add((filePath: node.imageFilePath, sheetName: dstSheet.Name, address: cell.Address));
-                    }
+                        cell = dstSheet.Cells[startRow + i, startColumn + col2] as Excel.Range;
 
-                    AddPictureAsComment(cell, path);
+                        if (!File.Exists(path))
+                        {
+                            // XXX: 毎回パス構築はムダ
+                            path = GetAbsolutePathFromExecutingDirectory(noImageFilePath);
+                            missingImagePaths.Add((filePath: node.imageFilePath, sheetName: dstSheet.Name, address: cell.Address));
+                        }
+
+                        AddPictureAsComment(cell, path);
+                    }
+                    finally
+                    {
+                        ReleaseExcelComObject(cell);
+                    }
                 }
             }
         }
@@ -7095,6 +7170,10 @@ public class RibbonController : ExcelRibbon
     {
         using (System.Drawing.Image image = System.Drawing.Image.FromFile(imageFilePath))
         {
+            Excel.Comment comment = null;
+            Excel.Shape shape = null;
+            Excel.FillFormat fill = null;
+
             float dpiX = image.HorizontalResolution;
             float dpiY = image.VerticalResolution;
 
@@ -7103,11 +7182,22 @@ public class RibbonController : ExcelRibbon
             float heightInPoints = image.Height * 72f / dpiY;
 
             // コメントを追加し、画像を背景に設定
-            var comment = cell.AddComment(" ");
-            comment.Visible = false;
-            comment.Shape.Fill.UserPicture(imageFilePath);
-            comment.Shape.Width = widthInPoints;
-            comment.Shape.Height = heightInPoints;
+            try
+            {
+                comment = cell.AddComment(" ");
+                comment.Visible = false;
+                shape = comment.Shape;
+                fill = shape.Fill;
+                fill.UserPicture(imageFilePath);
+                shape.Width = widthInPoints;
+                shape.Height = heightInPoints;
+            }
+            finally
+            {
+                ReleaseExcelComObject(fill);
+                ReleaseExcelComObject(shape);
+                ReleaseExcelComObject(comment);
+            }
         }
     }
 
