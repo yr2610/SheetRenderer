@@ -6315,86 +6315,122 @@ public class RibbonController : ExcelRibbon
 
     static void RenderIndexSheet(IEnumerable<JsonNode> sheetNodes, Dictionary<string, string> confData, Excel.Worksheet dstSheet, SheetValuesInfo sheetValuesInfo = null)
     {
-        var sheetNameListRange = dstSheet.GetNamedRange("SS_SHEETNAMELIST").RefersToRange;
+        Excel.Name sheetNameListName = null;
+        Excel.Range sheetNameListRange = null;
+        Excel.Range autoFitStartCell = null;
+        Excel.Range autoFitRange = null;
+        Excel.Range autoFitColumns = null;
+        Excel.Range idColumnRangeForCheck = null;
+        Excel.Range idEntireColumnForCheck = null;
+        Excel.Range idColumnRangeForHide = null;
+        Excel.Range idEntireColumnForHide = null;
+        Excel.Range rangeforNamedRange = null;
+        Excel.Name namedRange = null;
 
-        int indexStartRow = sheetNameListRange.Row;
-        int indexRowCount = sheetNameListRange.Rows.Count;
-        int indexEndRow = sheetNameListRange.Rows[indexRowCount].Row;
-        int indexStartColumn = sheetNameListRange.Column;
-        string idColumnAddress = "T";
-        int idColumn = dstSheet.ColumnAddressToIndex(idColumnAddress);
-
-        string syncStartColumnAddress = "Q";
-        int syncStartColumn = dstSheet.ColumnAddressToIndex(syncStartColumnAddress);
-        int syncStartColumnCount = 1;
-        int[] syncIgnoreColumnOffsets = { };
-
-        var sheetNames = ExtractPropertyValues(sheetNodes, "text");
-        var sheetNamesCount = sheetNames.Count();
-
-        // 行が足りなければ挿入
-        if (sheetNamesCount > indexRowCount)
+        try
         {
-            int numberOfRows = sheetNamesCount - indexRowCount;
+            sheetNameListName = dstSheet.GetNamedRange("SS_SHEETNAMELIST");
+            sheetNameListRange = sheetNameListName.RefersToRange;
 
-            dstSheet.InsertRowsAndCopyFormulas(indexStartRow + 1, numberOfRows);
+            int indexStartRow = sheetNameListRange.Row;
+            int indexRowCount = sheetNameListRange.Rows.Count;
+            int indexStartColumn = sheetNameListRange.Column;
+            string idColumnAddress = "T";
+            int idColumn = dstSheet.ColumnAddressToIndex(idColumnAddress);
+
+            string syncStartColumnAddress = "Q";
+            int syncStartColumn = dstSheet.ColumnAddressToIndex(syncStartColumnAddress);
+            int syncStartColumnCount = 1;
+            int[] syncIgnoreColumnOffsets = { };
+
+            var sheetNames = ExtractPropertyValues(sheetNodes, "text").ToList();
+            var sheetNamesCount = sheetNames.Count;
+
+            // 行が足りなければ挿入
+            if (sheetNamesCount > indexRowCount)
+            {
+                int numberOfRows = sheetNamesCount - indexRowCount;
+
+                dstSheet.InsertRowsAndCopyFormulas(indexStartRow + 1, numberOfRows);
+            }
+            // 多ければ削除
+            else if (sheetNamesCount < indexRowCount)
+            {
+                int numberOfRowsToDelete = indexRowCount - sheetNamesCount;
+
+                dstSheet.DeleteRows(indexStartRow, numberOfRowsToDelete);
+            }
+
+            dstSheet.SetValueInSheetAsColumn(indexStartRow, indexStartColumn, sheetNames);
+
+            // テンプレ処理
+            ReplaceValues(dstSheet, confData);
+
+            // 幅をautofit
+            autoFitStartCell = dstSheet.Cells[indexStartRow, indexStartColumn] as Excel.Range;
+            autoFitRange = autoFitStartCell.Resize[sheetNamesCount];
+            autoFitColumns = autoFitRange.Columns;
+            autoFitColumns.AutoFit();
+
+            // 適当な位置に列挿入して ID を入れて非表示にする
+            var ids = ExtractPropertyValues(sheetNodes, "id").ToList();
+            idColumnRangeForCheck = dstSheet.Columns[idColumn];
+            idEntireColumnForCheck = idColumnRangeForCheck.EntireColumn;
+            // XXX: id列が非表示ならすでにid列が存在するとみなして上書きする。どうせこの仕様は廃止したいので一旦これで
+            if (!idEntireColumnForCheck.Hidden)
+            {
+                idColumnRangeForCheck.Insert(Excel.XlInsertShiftDirection.xlShiftToRight);
+            }
+
+            dstSheet.SetValueInSheet(indexStartRow, idColumn, ids, false);
+
+            idColumnRangeForHide = dstSheet.Columns[idColumn];
+            idEntireColumnForHide = idColumnRangeForHide.EntireColumn;
+            idEntireColumnForHide.Hidden = true;
+
+            // 名前付き範囲として追加
+            rangeforNamedRange = dstSheet.GetRange(indexStartRow, syncStartColumn, sheetNamesCount, syncStartColumnCount);
+            namedRange = dstSheet.Names.Add(Name: ssSheetRangeName, RefersTo: rangeforNamedRange);
+            RangeInfo rangeInfo = new RangeInfo
+            {
+                IdColumnOffset = idColumn - syncStartColumn,
+                IgnoreColumnOffsets = new HashSet<int>(syncIgnoreColumnOffsets),
+            };
+            var serializer = new SerializerBuilder()
+                .WithNamingConvention(CamelCaseNamingConvention.Instance)
+                .Build();
+
+            namedRange.Comment = serializer.Serialize(rangeInfo);
+
+            if (sheetValuesInfo != null)
+            {
+                SheetValuesInfo dstSheetValuesInfo = SheetValuesInfo.CreateFromSheet(dstSheet);
+                var ignoreColumnOffsets = dstSheetValuesInfo.IgnoreColumnOffsets;
+                Debug.Assert(AreHashSetsEqual(ignoreColumnOffsets, sheetValuesInfo.IgnoreColumnOffsets), "AreHashSetsEqual(ignoreColumnOffsets, sheetAddressInfo.RangeInfo.IgnoreColumnOffsets)");
+
+                // idValues を key にした行（List<object>）の dictionary を作る
+                var valuesDictionary = sheetValuesInfo.RowDictionaryWithIDKeys;
+
+                // dstSheet の Values のコピーを作って、元のシートの Values から id を基に上書きコピーする
+                // idが見つからない行、ignoreColumn は何もしないので、dstSheet のものが採用される
+                var values = CopyValuesById(dstSheetValuesInfo.Values, dstSheetValuesInfo.Ids, valuesDictionary, ignoreColumnOffsets);
+
+                dstSheetValuesInfo.Range.Value2 = values;
+            }
         }
-        // 多ければ削除
-        else if (sheetNamesCount < indexRowCount)
+        finally
         {
-            int numberOfRowsToDelete = indexRowCount - sheetNamesCount;
-
-            dstSheet.DeleteRows(indexStartRow, numberOfRowsToDelete);
-        }
-
-        dstSheet.SetValueInSheetAsColumn(indexStartRow, indexStartColumn, sheetNames);
-
-        // テンプレ処理
-        ReplaceValues(dstSheet, confData);
-
-        // 幅をautofit
-        dstSheet.Cells[indexStartRow, indexStartColumn].Resize(sheetNamesCount).Columns.AutoFit();
-
-        // 適当な位置に列挿入して ID を入れて非表示にする
-        var ids = ExtractPropertyValues(sheetNodes, "id");
-        Excel.Range column = dstSheet.Columns[idColumn];
-        // XXX: id列が非表示ならすでにid列が存在するとみなして上書きする。どうせこの仕様は廃止したいので一旦これで
-        if (!column.EntireColumn.Hidden)
-        {
-            column.Insert(Excel.XlInsertShiftDirection.xlShiftToRight);
-        }
-        dstSheet.SetValueInSheet(indexStartRow, idColumn, ids, false);
-        Excel.Range idColumnRange = dstSheet.Columns[idColumn];
-        idColumnRange.EntireColumn.Hidden = true;
-
-        // 名前付き範囲として追加
-        var rangeforNamedRange = dstSheet.GetRange(indexStartRow, syncStartColumn, sheetNamesCount, syncStartColumnCount);
-        var namedRange = dstSheet.Names.Add(Name: ssSheetRangeName, RefersTo: rangeforNamedRange);
-        RangeInfo rangeInfo = new RangeInfo
-        {
-            IdColumnOffset = idColumn - syncStartColumn,
-            IgnoreColumnOffsets = new HashSet<int>(syncIgnoreColumnOffsets),
-        };
-        var serializer = new SerializerBuilder()
-            .WithNamingConvention(CamelCaseNamingConvention.Instance)
-            .Build();
-
-        namedRange.Comment = serializer.Serialize(rangeInfo);
-
-        if (sheetValuesInfo != null)
-        {
-            SheetValuesInfo dstSheetValuesInfo = SheetValuesInfo.CreateFromSheet(dstSheet);
-            var ignoreColumnOffsets = dstSheetValuesInfo.IgnoreColumnOffsets;
-            Debug.Assert(AreHashSetsEqual(ignoreColumnOffsets, sheetValuesInfo.IgnoreColumnOffsets), "AreHashSetsEqual(ignoreColumnOffsets, sheetAddressInfo.RangeInfo.IgnoreColumnOffsets)");
-
-            // idValues を key にした行（List<object>）の dictionary を作る
-            var valuesDictionary = sheetValuesInfo.RowDictionaryWithIDKeys;
-
-            // dstSheet の Values のコピーを作って、元のシートの Values から id を基に上書きコピーする
-            // idが見つからない行、ignoreColumn は何もしないので、dstSheet のものが採用される
-            var values = CopyValuesById(dstSheetValuesInfo.Values, dstSheetValuesInfo.Ids, valuesDictionary, ignoreColumnOffsets);
-
-            dstSheetValuesInfo.Range.Value2 = values;
+            ReleaseExcelComObject(namedRange);
+            ReleaseExcelComObject(rangeforNamedRange);
+            ReleaseExcelComObject(idEntireColumnForHide);
+            ReleaseExcelComObject(idColumnRangeForHide);
+            ReleaseExcelComObject(idEntireColumnForCheck);
+            ReleaseExcelComObject(idColumnRangeForCheck);
+            ReleaseExcelComObject(autoFitColumns);
+            ReleaseExcelComObject(autoFitRange);
+            ReleaseExcelComObject(autoFitStartCell);
+            ReleaseExcelComObject(sheetNameListRange);
+            ReleaseExcelComObject(sheetNameListName);
         }
     }
 
