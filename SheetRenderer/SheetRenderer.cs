@@ -5174,146 +5174,143 @@ public class RibbonController : ExcelRibbon
             newSheetHashTasks.Add(id, task);
         }
 
-        await Task.Run(async () =>
+        foreach (JsonNode sheetNode in sheetNodes)
         {
-            foreach (JsonNode sheetNode in sheetNodes)
-            {
-                string newSheetName = sheetNode["text"].ToString();
-                string id = sheetNode["id"].ToString();
-
-                // プログレスバーを更新
-                progressBarForm.Invoke(new Action<string>(progressBarForm.UpdateSheetName), newSheetName);
-
-                // 既存のシート
-                if (originalSheetsById.ContainsKey(id))
-                {
-                    // 画像の hash 計算を開始しておく
-                    var newSheetImageHashTask = ComputeImagesHash(jsonFilePath, sheetNode);
-                    var sheet = originalSheetsById[id];
-                    var sheetHash = sheet.GetCustomProperty(sheetHashCustomPropertyName);
-                    string newSheetImageHash;
-
-                    // confData が変わっていなければ、元データと画像の差分を見て生成要否を判断する
-                    string newSheetHash = await newSheetHashTasks[id];
-                    if (!forceRenderAllSheets && newSheetHash == sheetHash)
-                    {
-                        var sheetImageHash = sheet.GetCustomProperty(sheetImageHashCustomPropertyName);
-                        newSheetImageHash = await newSheetImageHashTask;
-
-                        if (newSheetImageHash == sheetImageHash)
-                        {
-                            continue;
-                        }
-                    }
-
-                    // シートをコピー
-                    templateSheet.Copy(After: sheet);
-                    Excel.Worksheet newSheet = workbook.Sheets[sheet.Index + 1];
-
-                    // 元のシートから今の入力内容を取り込む
-                    SheetValuesInfo sheetValuesInfo = SheetValuesInfo.CreateFromSheet(sheet);
-
-                    // 元のシートを削除
-                    sheet.Delete();
-                    newSheet.Name = newSheetName;
-
-                    var missingImagePathsInSheet = RenderSheet(sheetNode, confData, jsonFilePath, newSheet, sheetValuesInfo);
-
-                    missingImagePaths.AddRange(missingImagePathsInSheet);
-                    string sheetName = newSheet.Name;
-                    var viewState = FindViewState(sheetViewStates, id, sheetName);
-                    ApplyViewState(excelApp, newSheet, viewState);
-                    newSheet.SetCustomProperty(sheetHashCustomPropertyName, newSheetHash);
-                    newSheetImageHash = await newSheetImageHashTask;
-                    newSheet.SetCustomProperty(sheetImageHashCustomPropertyName, newSheetImageHash);
-                }
-                else
-                {
-                    // 新規シート作成
-
-                    // 画像の hash 計算を開始しておく
-                    var newSheetImageHashTask = ComputeImagesHash(jsonFilePath, sheetNode);
-
-                    // シートをコピー
-                    // 一旦は最後に追加。最後にまとめて並び替える
-                    var beforeSheet = workbook.Sheets[workbook.Sheets.Count];
-                    templateSheet.Copy(After: beforeSheet);
-                    Excel.Worksheet newSheet = workbook.Sheets[beforeSheet.Index + 1];
-                    newSheet.Name = newSheetName;
-
-                    var missingImagePathsInSheet = RenderSheet(sheetNode, confData, jsonFilePath, newSheet, null);
-
-                    missingImagePaths.AddRange(missingImagePathsInSheet);
-
-                    string newSheetHash = await newSheetHashTasks[id];
-                    newSheet.SetCustomProperty(sheetHashCustomPropertyName, newSheetHash);
-
-                    var newSheetImageHash = await newSheetImageHashTask;
-                    newSheet.SetCustomProperty(sheetImageHashCustomPropertyName, newSheetImageHash);
-                }
-            }
-
-            templateSheet.Visible = templateSheetVisible;
-
-            // シートの並び順修正
-            // リストに従ってシートを後ろに詰める
-            List<string> sheetNamesInOrder = sheetNodes.Select(item => item["text"].ToString()).ToList();
-            for (int i = 0; i < sheetNamesInOrder.Count; i++)
-            {
-                Excel.Worksheet sheetToMove = workbook.Sheets[sheetNamesInOrder[i]];
-                int targetIndex = workbook.Sheets.Count - (sheetNamesInOrder.Count - 1 - i);
-
-                // シートが既に正しい位置にない場合のみ移動
-                if (sheetToMove.Index != targetIndex)
-                {
-                    sheetToMove.Move(Type.Missing, workbook.Sheets[targetIndex]);
-                }
-            }
+            string newSheetName = sheetNode["text"].ToString();
+            string id = sheetNode["id"].ToString();
 
             // プログレスバーを更新
-            progressBarForm.Invoke(new Action<string>(progressBarForm.UpdateSheetName), indexSheetName);
+            progressBarForm.Invoke(new Action<string>(progressBarForm.UpdateSheetName), newSheetName);
 
-            // 元のシートから今の入力内容を取り込む
-            SheetValuesInfo indexSheetValuesInfo = SheetValuesInfo.CreateFromSheet(indexSheet);
-
-            RenderIndexSheet(sheetNodes, confData, indexSheet, indexSheetValuesInfo);
-
-            if (activeSheetId != null)
+            // 既存のシート
+            if (originalSheetsById.ContainsKey(id))
             {
-                if (newSheetNamesById.ContainsKey(activeSheetId))
-                {
-                    // シートを元の状態と同じにする
-                    var originalActiveSheet = workbook.Sheets[newSheetNamesById[activeSheetId]];
+                // 画像の hash 計算を開始しておく
+                var newSheetImageHashTask = ComputeImagesHash(jsonFilePath, sheetNode);
+                var sheet = originalSheetsById[id];
+                var sheetHash = sheet.GetCustomProperty(sheetHashCustomPropertyName);
+                string newSheetImageHash;
 
-                    originalActiveSheet.Activate();
-                    excelApp.SetActiveCellPosition(activeCellPosition);
-                    excelApp.SetActiveSheetZoom(activeSheetZoom);   // scroll より後に zoom をセットすると微妙にずれるっぽい
-                    excelApp.SetScrollPosition(scrollPosition);
-                }
-                else
+                // confData が変わっていなければ、元データと画像の差分を見て生成要否を判断する
+                string newSheetHash = await newSheetHashTasks[id];
+                if (!forceRenderAllSheets && newSheetHash == sheetHash)
                 {
-                    // とりあえず index sheet を選択しておく
-                    indexSheet.Activate();
+                    var sheetImageHash = sheet.GetCustomProperty(sheetImageHashCustomPropertyName);
+                    newSheetImageHash = await newSheetImageHashTask;
+
+                    if (newSheetImageHash == sheetImageHash)
+                    {
+                        continue;
+                    }
                 }
+
+                // シートをコピー
+                templateSheet.Copy(After: sheet);
+                Excel.Worksheet newSheet = workbook.Sheets[sheet.Index + 1];
+
+                // 元のシートから今の入力内容を取り込む
+                SheetValuesInfo sheetValuesInfo = SheetValuesInfo.CreateFromSheet(sheet);
+
+                // 元のシートを削除
+                sheet.Delete();
+                newSheet.Name = newSheetName;
+
+                var missingImagePathsInSheet = RenderSheet(sheetNode, confData, jsonFilePath, newSheet, sheetValuesInfo);
+
+                missingImagePaths.AddRange(missingImagePathsInSheet);
+                string sheetName = newSheet.Name;
+                var viewState = FindViewState(sheetViewStates, id, sheetName);
+                ApplyViewState(excelApp, newSheet, viewState);
+                newSheet.SetCustomProperty(sheetHashCustomPropertyName, newSheetHash);
+                newSheetImageHash = await newSheetImageHashTask;
+                newSheet.SetCustomProperty(sheetImageHashCustomPropertyName, newSheetImageHash);
             }
             else
             {
-                var originalActiveSheet = workbook.Sheets[originalActiveSheetName];
+                // 新規シート作成
+
+                // 画像の hash 計算を開始しておく
+                var newSheetImageHashTask = ComputeImagesHash(jsonFilePath, sheetNode);
+
+                // シートをコピー
+                // 一旦は最後に追加。最後にまとめて並び替える
+                var beforeSheet = workbook.Sheets[workbook.Sheets.Count];
+                templateSheet.Copy(After: beforeSheet);
+                Excel.Worksheet newSheet = workbook.Sheets[beforeSheet.Index + 1];
+                newSheet.Name = newSheetName;
+
+                var missingImagePathsInSheet = RenderSheet(sheetNode, confData, jsonFilePath, newSheet, null);
+
+                missingImagePaths.AddRange(missingImagePathsInSheet);
+
+                string newSheetHash = await newSheetHashTasks[id];
+                newSheet.SetCustomProperty(sheetHashCustomPropertyName, newSheetHash);
+
+                var newSheetImageHash = await newSheetImageHashTask;
+                newSheet.SetCustomProperty(sheetImageHashCustomPropertyName, newSheetImageHash);
+            }
+        }
+
+        templateSheet.Visible = templateSheetVisible;
+
+        // シートの並び順修正
+        // リストに従ってシートを後ろに詰める
+        List<string> sheetNamesInOrder = sheetNodes.Select(item => item["text"].ToString()).ToList();
+        for (int i = 0; i < sheetNamesInOrder.Count; i++)
+        {
+            Excel.Worksheet sheetToMove = workbook.Sheets[sheetNamesInOrder[i]];
+            int targetIndex = workbook.Sheets.Count - (sheetNamesInOrder.Count - 1 - i);
+
+            // シートが既に正しい位置にない場合のみ移動
+            if (sheetToMove.Index != targetIndex)
+            {
+                sheetToMove.Move(Type.Missing, workbook.Sheets[targetIndex]);
+            }
+        }
+
+        // プログレスバーを更新
+        progressBarForm.Invoke(new Action<string>(progressBarForm.UpdateSheetName), indexSheetName);
+
+        // 元のシートから今の入力内容を取り込む
+        SheetValuesInfo indexSheetValuesInfo = SheetValuesInfo.CreateFromSheet(indexSheet);
+
+        RenderIndexSheet(sheetNodes, confData, indexSheet, indexSheetValuesInfo);
+
+        if (activeSheetId != null)
+        {
+            if (newSheetNamesById.ContainsKey(activeSheetId))
+            {
+                // シートを元の状態と同じにする
+                var originalActiveSheet = workbook.Sheets[newSheetNamesById[activeSheetId]];
 
                 originalActiveSheet.Activate();
-
-                if (originalActiveSheetName == indexSheetName)
-                {
-                    // index シートならシートを元の状態と同じにする
-                    excelApp.SetActiveCellPosition(activeCellPosition);
-                    excelApp.SetActiveSheetZoom(activeSheetZoom);   // scroll より後に zoom をセットすると微妙にずれるっぽい
-                    excelApp.SetScrollPosition(scrollPosition);
-                }
+                excelApp.SetActiveCellPosition(activeCellPosition);
+                excelApp.SetActiveSheetZoom(activeSheetZoom);   // scroll より後に zoom をセットすると微妙にずれるっぽい
+                excelApp.SetScrollPosition(scrollPosition);
             }
+            else
+            {
+                // とりあえず index sheet を選択しておく
+                indexSheet.Activate();
+            }
+        }
+        else
+        {
+            var originalActiveSheet = workbook.Sheets[originalActiveSheetName];
 
-            // 処理が完了したらフォームを閉じる
-            progressBarForm.Invoke(new Action(progressBarForm.CloseForm));
-        });
+            originalActiveSheet.Activate();
+
+            if (originalActiveSheetName == indexSheetName)
+            {
+                // index シートならシートを元の状態と同じにする
+                excelApp.SetActiveCellPosition(activeCellPosition);
+                excelApp.SetActiveSheetZoom(activeSheetZoom);   // scroll より後に zoom をセットすると微妙にずれるっぽい
+                excelApp.SetScrollPosition(scrollPosition);
+            }
+        }
+
+        // 処理が完了したらフォームを閉じる
+        progressBarForm.Invoke(new Action(progressBarForm.CloseForm));
 
         progressBarForm.Close();
 
@@ -5401,70 +5398,67 @@ public class RibbonController : ExcelRibbon
         progressBarForm = new ProgressBarForm(sheetNodes.Count + 1);
         progressBarForm.Show();
 
-        await Task.Run(async () =>
+        foreach (JsonNode sheetNode in sheetNodes)
         {
-            foreach (JsonNode sheetNode in sheetNodes)
-            {
-                // 画像の hash 計算を開始しておく
-                var newSheetImageHashTask = ComputeImagesHash(jsonFilePath, sheetNode);
+            // 画像の hash 計算を開始しておく
+            var newSheetImageHashTask = ComputeImagesHash(jsonFilePath, sheetNode);
 
-                // シートの JsonNode の hash 計算を開始しておく
-                var sheetHashTask = Task.Run(() => ComputeSheetHash(sheetNode));
+            // シートの JsonNode の hash 計算を開始しておく
+            var sheetHashTask = Task.Run(() => ComputeSheetHash(sheetNode));
 
-                string newSheetName = sheetNode["text"].ToString();
-                string sheetId = sheetNode["id"].ToString();
-
-                // プログレスバーを更新
-                progressBarForm.Invoke(new Action<string>(progressBarForm.UpdateSheetName), newSheetName);
-
-                // シートをコピーしてリネーム
-                templateSheet.Copy(After: workbook.Sheets[workbook.Sheets.Count]);
-                Excel.Worksheet newSheet = workbook.Sheets[workbook.Sheets.Count];
-                newSheet.Name = newSheetName;
-
-                SheetValuesInfo sheetValuesInfo = null;
-                sheetValuesById?.TryGetValue(sheetId, out sheetValuesInfo);
-
-                var missingImagePathsInSheet = RenderSheet(sheetNode, confData, jsonFilePath, newSheet, sheetValuesInfo);
-
-                // シートの JsonNode の hash をカスタムプロパティに保存
-                string sheetHash = await sheetHashTask;
-                newSheet.SetCustomProperty(sheetHashCustomPropertyName, sheetHash);
-
-                var newSheetImageHash = await newSheetImageHashTask;
-                newSheet.SetCustomProperty(sheetImageHashCustomPropertyName, newSheetImageHash);
-
-                missingImagePaths.AddRange(missingImagePathsInSheet);
-
-            }
+            string newSheetName = sheetNode["text"].ToString();
+            string sheetId = sheetNode["id"].ToString();
 
             // プログレスバーを更新
-            progressBarForm.Invoke(new Action<string>(progressBarForm.UpdateSheetName), indexSheetName);
+            progressBarForm.Invoke(new Action<string>(progressBarForm.UpdateSheetName), newSheetName);
 
-            Excel.Worksheet indexSheet = workbook.Sheets[indexSheetName];
+            // シートをコピーしてリネーム
+            templateSheet.Copy(After: workbook.Sheets[workbook.Sheets.Count]);
+            Excel.Worksheet newSheet = workbook.Sheets[workbook.Sheets.Count];
+            newSheet.Name = newSheetName;
 
-            // 新規作成時は index sheet のテンプレセルの情報を保存しておく
-            var indexSheetTemplateCells = GetTemplateCells(indexSheet);
-            var serializer = new SerializerBuilder()
-                .WithNamingConvention(NullNamingConvention.Instance)
-                .Build();
-            var indexSheetTemplateCellsYaml = serializer.Serialize(indexSheetTemplateCells);
+            SheetValuesInfo sheetValuesInfo = null;
+            sheetValuesById?.TryGetValue(sheetId, out sheetValuesInfo);
 
-            indexSheet.SetCustomProperty(indexSheetTemplateCellsCustomPropertyName, indexSheetTemplateCellsYaml);
+            var missingImagePathsInSheet = RenderSheet(sheetNode, confData, jsonFilePath, newSheet, sheetValuesInfo);
 
-            RenderIndexSheet(sheetNodes, confData, indexSheet, null);
+            // シートの JsonNode の hash をカスタムプロパティに保存
+            string sheetHash = await sheetHashTask;
+            newSheet.SetCustomProperty(sheetHashCustomPropertyName, sheetHash);
 
-            string confHash = ComputeConfHash(jsonObject);
-            workbook.SetCustomProperty(confHashCustomPropertyName, confHash);
+            var newSheetImageHash = await newSheetImageHashTask;
+            newSheet.SetCustomProperty(sheetImageHashCustomPropertyName, newSheetImageHash);
 
-            // 最後にindexシートを選択状態にしておく
-            indexSheet.Activate();
+            missingImagePaths.AddRange(missingImagePathsInSheet);
 
-            templateSheet.Visible = templateSheetVisible;
+        }
 
-            // 処理が完了したらフォームを閉じる
-            progressBarForm.Invoke(new Action(progressBarForm.CloseForm));
-        });
+        // プログレスバーを更新
+        progressBarForm.Invoke(new Action<string>(progressBarForm.UpdateSheetName), indexSheetName);
+
+        Excel.Worksheet indexSheet = workbook.Sheets[indexSheetName];
+
+        // 新規作成時は index sheet のテンプレセルの情報を保存しておく
+        var indexSheetTemplateCells = GetTemplateCells(indexSheet);
+        var serializer = new SerializerBuilder()
+            .WithNamingConvention(NullNamingConvention.Instance)
+            .Build();
+        var indexSheetTemplateCellsYaml = serializer.Serialize(indexSheetTemplateCells);
+
+        indexSheet.SetCustomProperty(indexSheetTemplateCellsCustomPropertyName, indexSheetTemplateCellsYaml);
+
+        RenderIndexSheet(sheetNodes, confData, indexSheet, null);
+
+        string confHash = ComputeConfHash(jsonObject);
+        workbook.SetCustomProperty(confHashCustomPropertyName, confHash);
+
+        // 最後にindexシートを選択状態にしておく
+        indexSheet.Activate();
+
+        templateSheet.Visible = templateSheetVisible;
+
+        // 処理が完了したらフォームを閉じる
+        progressBarForm.Invoke(new Action(progressBarForm.CloseForm));
 
         progressBarForm.Close();
 
