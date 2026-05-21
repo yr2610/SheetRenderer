@@ -1438,6 +1438,9 @@ public class RibbonController : ExcelRibbon
         public Excel.Range Range { get; set; }
         public object[,] Values { get; set; }
         public IEnumerable<object> Ids { get; set; }
+        public int RangeStartRow { get; set; }
+        public int RangeStartColumn { get; set; }
+        public int RangeWidth { get; set; }
 
         public HashSet<int> IgnoreColumnOffsets
         {
@@ -1452,12 +1455,29 @@ public class RibbonController : ExcelRibbon
             }
         }
 
-        public int RangeWidth
+        public string GetCellAddress(int rowOffset, int columnOffset)
         {
-            get
+            int row = RangeStartRow + rowOffset - 1;
+            int column = RangeStartColumn + columnOffset - 1;
+            return $"{GetColumnLetter(column)}{row}";
+        }
+
+        public void ReleaseExcelObjects()
+        {
+            ReleaseExcelComObject(Range);
+            Range = null;
+        }
+
+        private static string GetColumnLetter(int column)
+        {
+            string columnLetter = "";
+            while (column > 0)
             {
-                return Range.Columns.Count;
+                int mod = (column - 1) % 26;
+                columnLetter = (char)(mod + 65) + columnLetter;
+                column = (column - mod) / 26;
             }
+            return columnLetter;
         }
 
         // idValues を key にした行（List<object>）の dictionary を作る
@@ -1472,17 +1492,39 @@ public class RibbonController : ExcelRibbon
         public static SheetValuesInfo CreateFromSheet(Excel.Worksheet sheet)
         {
             var sheetAddressInfo = GetSheetAddressInfo(sheet);
-            var sheetRange = GetRange(sheet, sheetAddressInfo);
-            var sheetValues = GetValues(sheet, sheetAddressInfo);
-            var sheetValueIds = GetIds(sheet, sheetAddressInfo);
+            Excel.Range sheetRange = null;
+            Excel.Range columns = null;
+            bool rangeTransferred = false;
 
-            return new SheetValuesInfo()
+            try
             {
-                sheetAddressInfo = sheetAddressInfo,
-                Range = sheetRange,
-                Values = sheetValues,
-                Ids = sheetValueIds,
-            };
+                sheetRange = GetRange(sheet, sheetAddressInfo);
+                var sheetValues = GetValues(sheet, sheetAddressInfo);
+                var sheetValueIds = GetIds(sheet, sheetAddressInfo);
+                columns = sheetRange.Columns;
+
+                var sheetValuesInfo = new SheetValuesInfo()
+                {
+                    sheetAddressInfo = sheetAddressInfo,
+                    Range = sheetRange,
+                    Values = sheetValues,
+                    Ids = sheetValueIds,
+                    RangeStartRow = sheetRange.Row,
+                    RangeStartColumn = sheetRange.Column,
+                    RangeWidth = columns.Count,
+                };
+                rangeTransferred = true;
+
+                return sheetValuesInfo;
+            }
+            finally
+            {
+                ReleaseExcelComObject(columns);
+                if (!rangeTransferred)
+                {
+                    ReleaseExcelComObject(sheetRange);
+                }
+            }
         }
 
     }
@@ -1667,25 +1709,33 @@ public class RibbonController : ExcelRibbon
             return null;
         }
 
-        SheetValuesInfo sheetValuesInfo = SheetValuesInfo.CreateFromSheet(sheet);
-        Excel.Workbook workbook = sheet.Parent as Excel.Workbook;
-        string projectId = workbook == null ? null : workbook.GetCustomProperty(ssProjectIdCustomPropertyName);
-
-        var document = new SharedSheetDocument
+        SheetValuesInfo sheetValuesInfo = null;
+        try
         {
-            Project = projectId,
-            SheetId = sheetId,
-            SheetName = sheet.Name,
-            RangeAddress = sheetAddressInfo.Address,
-            RangeInfo = CloneRangeInfo(sheetAddressInfo.RangeInfo),
-            RowIds = sheetValuesInfo.Ids == null
-                ? new object[0]
-                : sheetValuesInfo.Ids.Select(NormalizeSharedCellValue).ToArray(),
-            Values = ConvertSheetValuesToJaggedArray(sheetValuesInfo.Values)
-        };
-        document.Hash = ComputeSharedSheetHash(document);
+            sheetValuesInfo = SheetValuesInfo.CreateFromSheet(sheet);
+            Excel.Workbook workbook = sheet.Parent as Excel.Workbook;
+            string projectId = workbook == null ? null : workbook.GetCustomProperty(ssProjectIdCustomPropertyName);
 
-        return document;
+            var document = new SharedSheetDocument
+            {
+                Project = projectId,
+                SheetId = sheetId,
+                SheetName = sheet.Name,
+                RangeAddress = sheetAddressInfo.Address,
+                RangeInfo = CloneRangeInfo(sheetAddressInfo.RangeInfo),
+                RowIds = sheetValuesInfo.Ids == null
+                    ? new object[0]
+                    : sheetValuesInfo.Ids.Select(NormalizeSharedCellValue).ToArray(),
+                Values = ConvertSheetValuesToJaggedArray(sheetValuesInfo.Values)
+            };
+            document.Hash = ComputeSharedSheetHash(document);
+
+            return document;
+        }
+        finally
+        {
+            sheetValuesInfo?.ReleaseExcelObjects();
+        }
     }
 
     private static List<SharedSheetDocument> CollectSharedSheetDocuments(Excel.Workbook workbook)
@@ -3140,7 +3190,7 @@ public class RibbonController : ExcelRibbon
         var ids = currentSheetValuesInfo.Ids == null
             ? null
             : currentSheetValuesInfo.Ids.Select(x => x == null ? null : x.ToString()).ToArray();
-        int rangeStartRow = currentSheetValuesInfo.Range?.Row ?? 1;
+        int rangeStartRow = currentSheetValuesInfo.RangeStartRow;
 
         int rowCount = currentSheetValuesInfo.Values.GetLength(0);
         int columnCount = currentSheetValuesInfo.Values.GetLength(1);
@@ -3164,14 +3214,14 @@ public class RibbonController : ExcelRibbon
                     continue;
                 }
 
-                Excel.Range cell = currentSheetValuesInfo.Range.Cells[row, col];
+                string cellAddress = currentSheetValuesInfo.GetCellAddress(row, col);
                 FileLogger.Info(
                     "[SharedReceiveOverwrite] " +
                     "sheetId=" + sheet.GetCustomProperty(sheetIdCustomPropertyName) +
                     " sheetName=" + sheet.Name +
                     " rowId=" + (rowId ?? "") +
                     " row=" + displayRow +
-                    " cell=" + cell.Address[false, false] +
+                    " cell=" + cellAddress +
                     " local=" + (currentValue ?? "") +
                     " remote=" + (mergedValue ?? ""));
             }
@@ -3229,7 +3279,7 @@ public class RibbonController : ExcelRibbon
         var ids = currentSheetValuesInfo.Ids == null
             ? null
             : currentSheetValuesInfo.Ids.Select(x => x == null ? null : x.ToString()).ToArray();
-        int rangeStartRow = currentSheetValuesInfo.Range?.Row ?? 1;
+        int rangeStartRow = currentSheetValuesInfo.RangeStartRow;
         int rowCount = currentSheetValuesInfo.Values.GetLength(0);
         int columnCount = currentSheetValuesInfo.Values.GetLength(1);
         int diffCount = 0;
@@ -3253,14 +3303,14 @@ public class RibbonController : ExcelRibbon
                     continue;
                 }
 
-                Excel.Range cell = currentSheetValuesInfo.Range.Cells[row, col];
+                string cellAddress = currentSheetValuesInfo.GetCellAddress(row, col);
                 FileLogger.Info(
                     "[SharedRevert] " +
                     "sheetId=" + sheet.GetCustomProperty(sheetIdCustomPropertyName) +
                     " sheetName=" + sheet.Name +
                     " rowId=" + (rowId ?? "") +
                     " row=" + displayRow +
-                    " cell=" + cell.Address[false, false] +
+                    " cell=" + cellAddress +
                     " local=" + (currentValue ?? "") +
                     " base=" + (revertedValue ?? ""));
                 diffCount++;
@@ -3282,38 +3332,46 @@ public class RibbonController : ExcelRibbon
             throw new ArgumentNullException(nameof(sharedSheetDocument));
         }
 
-        SheetValuesInfo currentSheetValuesInfo = SheetValuesInfo.CreateFromSheet(sheet);
-        if (currentSheetValuesInfo == null)
+        SheetValuesInfo currentSheetValuesInfo = null;
+        try
         {
-            throw new InvalidOperationException("SS_SHEET is not defined. sheet='" + sheet.Name + "'.");
+            currentSheetValuesInfo = SheetValuesInfo.CreateFromSheet(sheet);
+            if (currentSheetValuesInfo == null)
+            {
+                throw new InvalidOperationException("SS_SHEET is not defined. sheet='" + sheet.Name + "'.");
+            }
+
+            object[,] mergedValues;
+            object[,] remoteValues = ConvertJaggedArrayTo2DArray(sharedSheetDocument.Values);
+            object[] remoteIds = GetIdsFromSharedSheetDocument(sharedSheetDocument).ToArray();
+            bool canMergeById =
+                remoteIds.Length == remoteValues.GetLength(0) &&
+                currentSheetValuesInfo.Ids != null &&
+                HasAnyNonEmptySharedIds(currentSheetValuesInfo.Ids) &&
+                HasAnyNonEmptySharedIds(remoteIds);
+
+            if (!canMergeById)
+            {
+                throw new InvalidOperationException(
+                    "Shared sheet rowIds are required. " +
+                    "sheetId='" + sharedSheetDocument.SheetId + "', " +
+                    "sheetName='" + sheet.Name + "'.");
+            }
+
+            Dictionary<string, List<object>> remoteDictionary = CreateRowDictionaryWithIDKeys(remoteValues, remoteIds);
+            mergedValues = CopyValuesById(
+                currentSheetValuesInfo.Values,
+                currentSheetValuesInfo.Ids,
+                remoteDictionary,
+                currentSheetValuesInfo.IgnoreColumnOffsets);
+
+            LogSharedOverwriteDifferences(sheet, currentSheetValuesInfo, mergedValues);
+            currentSheetValuesInfo.Range.Value2 = mergedValues;
         }
-
-        object[,] mergedValues;
-        object[,] remoteValues = ConvertJaggedArrayTo2DArray(sharedSheetDocument.Values);
-        object[] remoteIds = GetIdsFromSharedSheetDocument(sharedSheetDocument).ToArray();
-        bool canMergeById =
-            remoteIds.Length == remoteValues.GetLength(0) &&
-            currentSheetValuesInfo.Ids != null &&
-            HasAnyNonEmptySharedIds(currentSheetValuesInfo.Ids) &&
-            HasAnyNonEmptySharedIds(remoteIds);
-
-        if (!canMergeById)
+        finally
         {
-            throw new InvalidOperationException(
-                "Shared sheet rowIds are required. " +
-                "sheetId='" + sharedSheetDocument.SheetId + "', " +
-                "sheetName='" + sheet.Name + "'.");
+            currentSheetValuesInfo?.ReleaseExcelObjects();
         }
-
-        Dictionary<string, List<object>> remoteDictionary = CreateRowDictionaryWithIDKeys(remoteValues, remoteIds);
-        mergedValues = CopyValuesById(
-            currentSheetValuesInfo.Values,
-            currentSheetValuesInfo.Ids,
-            remoteDictionary,
-            currentSheetValuesInfo.IgnoreColumnOffsets);
-
-        LogSharedOverwriteDifferences(sheet, currentSheetValuesInfo, mergedValues);
-        currentSheetValuesInfo.Range.Value2 = mergedValues;
     }
 
     private async Task<byte[]> TryDownloadSharedProjectManifestBytesAsync(
@@ -4904,7 +4962,7 @@ public class RibbonController : ExcelRibbon
             RestoreTemplateSheetVisibility(templateSheet, templateSheetVisible, templateSheetVisibilityChanged);
             try { excelApp.DisplayAlerts = true; } catch { }
 
-            ReleaseExcelComObject(sheetValuesInfo?.Range);
+            sheetValuesInfo?.ReleaseExcelObjects();
             ReleaseExcelComObject(newSheet);
             ReleaseExcelComObject(templateSheet);
         }
@@ -5482,22 +5540,30 @@ public class RibbonController : ExcelRibbon
                 templateSheet.Copy(After: sheet);
                 Excel.Worksheet newSheet = workbook.Sheets[sheet.Index + 1];
 
-                // 元のシートから今の入力内容を取り込む
-                SheetValuesInfo sheetValuesInfo = SheetValuesInfo.CreateFromSheet(sheet);
+                SheetValuesInfo sheetValuesInfo = null;
+                try
+                {
+                    // 元のシートから今の入力内容を取り込む
+                    sheetValuesInfo = SheetValuesInfo.CreateFromSheet(sheet);
 
-                // 元のシートを削除
-                sheet.Delete();
-                newSheet.Name = newSheetName;
+                    // 元のシートを削除
+                    sheet.Delete();
+                    newSheet.Name = newSheetName;
 
-                var missingImagePathsInSheet = RenderSheet(sheetNode, confData, jsonFilePath, newSheet, sheetValuesInfo);
+                    var missingImagePathsInSheet = RenderSheet(sheetNode, confData, jsonFilePath, newSheet, sheetValuesInfo);
 
-                missingImagePaths.AddRange(missingImagePathsInSheet);
-                string sheetName = newSheet.Name;
-                var viewState = FindViewState(sheetViewStates, id, sheetName);
-                ApplyViewState(excelApp, newSheet, viewState);
-                newSheet.SetCustomProperty(sheetHashCustomPropertyName, newSheetHash);
-                newSheetImageHash = await newSheetImageHashTask;
-                newSheet.SetCustomProperty(sheetImageHashCustomPropertyName, newSheetImageHash);
+                    missingImagePaths.AddRange(missingImagePathsInSheet);
+                    string sheetName = newSheet.Name;
+                    var viewState = FindViewState(sheetViewStates, id, sheetName);
+                    ApplyViewState(excelApp, newSheet, viewState);
+                    newSheet.SetCustomProperty(sheetHashCustomPropertyName, newSheetHash);
+                    newSheetImageHash = await newSheetImageHashTask;
+                    newSheet.SetCustomProperty(sheetImageHashCustomPropertyName, newSheetImageHash);
+                }
+                finally
+                {
+                    sheetValuesInfo?.ReleaseExcelObjects();
+                }
             }
             else
             {
@@ -5544,9 +5610,16 @@ public class RibbonController : ExcelRibbon
         progressBarForm.Invoke(new Action<string>(progressBarForm.UpdateSheetName), indexSheetName);
 
         // 元のシートから今の入力内容を取り込む
-        SheetValuesInfo indexSheetValuesInfo = SheetValuesInfo.CreateFromSheet(indexSheet);
-
-        RenderIndexSheet(sheetNodes, confData, indexSheet, indexSheetValuesInfo);
+        SheetValuesInfo indexSheetValuesInfo = null;
+        try
+        {
+            indexSheetValuesInfo = SheetValuesInfo.CreateFromSheet(indexSheet);
+            RenderIndexSheet(sheetNodes, confData, indexSheet, indexSheetValuesInfo);
+        }
+        finally
+        {
+            indexSheetValuesInfo?.ReleaseExcelObjects();
+        }
 
         if (activeSheetId != null)
         {
@@ -5805,6 +5878,7 @@ public class RibbonController : ExcelRibbon
             }
 
             var sheetValuesInfo = SheetValuesInfo.CreateFromSheet(sheet);
+            sheetValuesInfo.ReleaseExcelObjects();
             result[sheetId] = sheetValuesInfo;
         }
 
@@ -6506,18 +6580,26 @@ public class RibbonController : ExcelRibbon
 
             if (sheetValuesInfo != null)
             {
-                SheetValuesInfo dstSheetValuesInfo = SheetValuesInfo.CreateFromSheet(dstSheet);
-                var ignoreColumnOffsets = dstSheetValuesInfo.IgnoreColumnOffsets;
-                Debug.Assert(AreHashSetsEqual(ignoreColumnOffsets, sheetValuesInfo.IgnoreColumnOffsets), "AreHashSetsEqual(ignoreColumnOffsets, sheetAddressInfo.RangeInfo.IgnoreColumnOffsets)");
+                SheetValuesInfo dstSheetValuesInfo = null;
+                try
+                {
+                    dstSheetValuesInfo = SheetValuesInfo.CreateFromSheet(dstSheet);
+                    var ignoreColumnOffsets = dstSheetValuesInfo.IgnoreColumnOffsets;
+                    Debug.Assert(AreHashSetsEqual(ignoreColumnOffsets, sheetValuesInfo.IgnoreColumnOffsets), "AreHashSetsEqual(ignoreColumnOffsets, sheetAddressInfo.RangeInfo.IgnoreColumnOffsets)");
 
-                // idValues を key にした行（List<object>）の dictionary を作る
-                var valuesDictionary = sheetValuesInfo.RowDictionaryWithIDKeys;
+                    // idValues を key にした行（List<object>）の dictionary を作る
+                    var valuesDictionary = sheetValuesInfo.RowDictionaryWithIDKeys;
 
-                // dstSheet の Values のコピーを作って、元のシートの Values から id を基に上書きコピーする
-                // idが見つからない行、ignoreColumn は何もしないので、dstSheet のものが採用される
-                var values = CopyValuesById(dstSheetValuesInfo.Values, dstSheetValuesInfo.Ids, valuesDictionary, ignoreColumnOffsets);
+                    // dstSheet の Values のコピーを作って、元のシートの Values から id を基に上書きコピーする
+                    // idが見つからない行、ignoreColumn は何もしないので、dstSheet のものが採用される
+                    var values = CopyValuesById(dstSheetValuesInfo.Values, dstSheetValuesInfo.Ids, valuesDictionary, ignoreColumnOffsets);
 
-                dstSheetValuesInfo.Range.Value2 = values;
+                    dstSheetValuesInfo.Range.Value2 = values;
+                }
+                finally
+                {
+                    dstSheetValuesInfo?.ReleaseExcelObjects();
+                }
             }
         }
         finally
@@ -7283,18 +7365,26 @@ public class RibbonController : ExcelRibbon
 
         if (sheetValuesInfo != null)
         {
-            SheetValuesInfo dstSheetValuesInfo = SheetValuesInfo.CreateFromSheet(dstSheet);
-            var ignoreColumnOffsets = dstSheetValuesInfo.IgnoreColumnOffsets;
-            Debug.Assert(AreHashSetsEqual(ignoreColumnOffsets, sheetValuesInfo.IgnoreColumnOffsets), "AreHashSetsEqual(ignoreColumnOffsets, sheetAddressInfo.RangeInfo.IgnoreColumnOffsets)");
+            SheetValuesInfo dstSheetValuesInfo = null;
+            try
+            {
+                dstSheetValuesInfo = SheetValuesInfo.CreateFromSheet(dstSheet);
+                var ignoreColumnOffsets = dstSheetValuesInfo.IgnoreColumnOffsets;
+                Debug.Assert(AreHashSetsEqual(ignoreColumnOffsets, sheetValuesInfo.IgnoreColumnOffsets), "AreHashSetsEqual(ignoreColumnOffsets, sheetAddressInfo.RangeInfo.IgnoreColumnOffsets)");
 
-            // idValues を key にした行（List<object>）の dictionary を作る
-            var valuesDictionary = sheetValuesInfo.RowDictionaryWithIDKeys;
+                // idValues を key にした行（List<object>）の dictionary を作る
+                var valuesDictionary = sheetValuesInfo.RowDictionaryWithIDKeys;
 
-            // dstSheet の Values のコピーを作って、元のシートの Values から id を基に上書きコピーする
-            // idが見つからない行、ignoreColumn は何もしないので、dstSheet のものが採用される
-            var values = CopyValuesById(dstSheetValuesInfo.Values, dstSheetValuesInfo.Ids, valuesDictionary, ignoreColumnOffsets);
+                // dstSheet の Values のコピーを作って、元のシートの Values から id を基に上書きコピーする
+                // idが見つからない行、ignoreColumn は何もしないので、dstSheet のものが採用される
+                var values = CopyValuesById(dstSheetValuesInfo.Values, dstSheetValuesInfo.Ids, valuesDictionary, ignoreColumnOffsets);
 
-            dstSheetValuesInfo.Range.Value2 = values;
+                dstSheetValuesInfo.Range.Value2 = values;
+            }
+            finally
+            {
+                dstSheetValuesInfo?.ReleaseExcelObjects();
+            }
         }
 
         // シートID をカスタムプロパティに保存
@@ -8666,31 +8756,39 @@ public class RibbonController : ExcelRibbon
 
             InitializeLoggerForWorkbookSession(workbook, "shared-revert");
 
-            SheetValuesInfo currentSheetValuesInfo = SheetValuesInfo.CreateFromSheet(activeSheet);
-            if (currentSheetValuesInfo == null)
+            SheetValuesInfo currentSheetValuesInfo = null;
+            try
             {
-                MessageBox.Show("このシートは共有対象ではありません。", dialogTitle);
-                return;
+                currentSheetValuesInfo = SheetValuesInfo.CreateFromSheet(activeSheet);
+                if (currentSheetValuesInfo == null)
+                {
+                    MessageBox.Show("このシートは共有対象ではありません。", dialogTitle);
+                    return;
+                }
+
+                object[,] revertedValues = BuildSharedSheetRevertValues(currentSheetValuesInfo, baseDocument);
+                int revertedCellCount = LogSharedRevertDifferences(activeSheet, currentSheetValuesInfo, revertedValues);
+
+                using (ExcelUiSuspendScope uiSuspendScope = TryCreateExcelUiSuspendScope(workbook))
+                {
+                    currentSheetValuesInfo.Range.Value2 = revertedValues;
+                }
+
+                DialogResult openLog = MessageBox.Show(
+                    "シートの変更を取り消しました。" + Environment.NewLine +
+                    "変更セル数: " + revertedCellCount + Environment.NewLine + Environment.NewLine +
+                    "ログファイルを開きますか？",
+                    dialogTitle,
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Information);
+                if (openLog == DialogResult.Yes)
+                {
+                    FileLogger.OpenLog();
+                }
             }
-
-            object[,] revertedValues = BuildSharedSheetRevertValues(currentSheetValuesInfo, baseDocument);
-            int revertedCellCount = LogSharedRevertDifferences(activeSheet, currentSheetValuesInfo, revertedValues);
-
-            using (ExcelUiSuspendScope uiSuspendScope = TryCreateExcelUiSuspendScope(workbook))
+            finally
             {
-                currentSheetValuesInfo.Range.Value2 = revertedValues;
-            }
-
-            DialogResult openLog = MessageBox.Show(
-                "シートの変更を取り消しました。" + Environment.NewLine +
-                "変更セル数: " + revertedCellCount + Environment.NewLine + Environment.NewLine +
-                "ログファイルを開きますか？",
-                dialogTitle,
-                MessageBoxButtons.YesNo,
-                MessageBoxIcon.Information);
-            if (openLog == DialogResult.Yes)
-            {
-                FileLogger.OpenLog();
+                currentSheetValuesInfo?.ReleaseExcelObjects();
             }
         }
         catch (Exception ex)
