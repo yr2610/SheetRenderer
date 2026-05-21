@@ -393,6 +393,7 @@ public class RibbonController : ExcelRibbon
 {
     private IRibbonUI ribbon;
     private ProgressBarForm progressBarForm;
+    private bool renderCommandInProgress;
     private static PullSessionContext currentPullSession;
     private static PullSessionContext lastSuccessfulPullSession;
     [ThreadStatic]
@@ -606,10 +607,10 @@ public class RibbonController : ExcelRibbon
                     <tab id='tab1' label='{projectName}'>
                         <group id='group1' label='生成'>
                         <splitButton id='splitButton1' size='large'>
-                            <button id='button2' label='更新' screentip='ファイル内の全シートを更新します' imageMso='TableDrawTable' onAction='OnRenderButtonPressed'/>
+                            <button id='button2' label='更新' screentip='ファイル内の全シートを更新します' imageMso='TableDrawTable' onAction='OnRenderButtonPressed' getEnabled='GetRenderCommandEnabled'/>
                             <menu id='menu1'>
-                            <button id='button2a' label='新規作成' onAction='OnCreateNewButtonPressed'/>
-                            <button id='button2b' label='再生成' onAction='OnRegenerateWorkbookPressed'/>
+                            <button id='button2a' label='新規作成' onAction='OnCreateNewButtonPressed' getEnabled='GetRenderCommandEnabled'/>
+                            <button id='button2b' label='再生成' onAction='OnRegenerateWorkbookPressed' getEnabled='GetRenderCommandEnabled'/>
                             </menu>
                         </splitButton>
                         <button id='button3' label='シート更新' screentip='表示中のシートのみ更新します' size='large' imageMso='TableSharePointListsRefreshList' onAction='OnUpdateCurrentSheetButtonPressed' getEnabled='GetUpdateCurrentSheetButtonEnabled'/>
@@ -1107,9 +1108,71 @@ public class RibbonController : ExcelRibbon
 
     bool UpdateCurrentSheetButtonEnabled { get; set; } = true;
 
+    public bool GetRenderCommandEnabled(IRibbonControl control)
+    {
+        return !renderCommandInProgress;
+    }
+
     public bool GetUpdateCurrentSheetButtonEnabled(IRibbonControl control)
     {
-        return UpdateCurrentSheetButtonEnabled;
+        return UpdateCurrentSheetButtonEnabled && !renderCommandInProgress;
+    }
+
+    private bool TryBeginRenderCommand(string statusText)
+    {
+        if (renderCommandInProgress)
+        {
+            try
+            {
+                Notifier.Warn("処理中", "更新処理が完了してから再実行してください。");
+            }
+            catch
+            {
+            }
+
+            return false;
+        }
+
+        renderCommandInProgress = true;
+        InvalidateRenderCommandControls();
+
+        try
+        {
+            Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
+            excelApp.StatusBar = string.IsNullOrWhiteSpace(statusText)
+                ? "SheetRenderer: 処理中..."
+                : statusText;
+        }
+        catch
+        {
+        }
+
+        return true;
+    }
+
+    private void EndRenderCommand()
+    {
+        renderCommandInProgress = false;
+        InvalidateRenderCommandControls();
+    }
+
+    private void InvalidateRenderCommandControls()
+    {
+        try
+        {
+            if (ribbon == null)
+            {
+                return;
+            }
+
+            ribbon.InvalidateControl("button2");
+            ribbon.InvalidateControl("button2a");
+            ribbon.InvalidateControl("button2b");
+            ribbon.InvalidateControl("button3");
+        }
+        catch
+        {
+        }
     }
 
     static Excel.Range GetSheetNamesRangeFromIndexSheet(Excel.Worksheet indexSheet)
@@ -4740,39 +4803,49 @@ public class RibbonController : ExcelRibbon
     public async void OnUpdateCurrentSheetButtonPressed(IRibbonControl control)
     {
         Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
-        var sheet = excelApp.ActiveSheet as Excel.Worksheet;
 
-        if (sheet == null)
-        {
-            MessageBox.Show($"アクティブなシートがありません。");
-            return;
-        }
-
-        string txtFilePath = SelectSourceFileForParse(false);
-        if (txtFilePath == null)
+        if (!TryBeginRenderCommand("SheetRenderer: シート更新を開始しています..."))
         {
             return;
         }
 
-        FileLogger.InitializeForInput(txtFilePath, timestamped: false);
-        bool parseSucceeded = RunParsePipeline(txtFilePath, true);
-        if (!parseSucceeded)
+        try
         {
-            return;
+            var sheet = excelApp.ActiveSheet as Excel.Worksheet;
+
+            if (sheet == null)
+            {
+                MessageBox.Show($"アクティブなシートがありません。");
+                return;
+            }
+
+            string txtFilePath = SelectSourceFileForParse(false);
+            if (txtFilePath == null)
+            {
+                return;
+            }
+
+            FileLogger.InitializeForInput(txtFilePath, timestamped: false);
+            bool parseSucceeded = RunParsePipeline(txtFilePath, true);
+            if (!parseSucceeded)
+            {
+                return;
+            }
+
+            excelApp.ScreenUpdating = false;
+            excelApp.Calculation = Excel.XlCalculation.xlCalculationManual;
+            excelApp.EnableEvents = false;
+            MacroControl.DisableMacros(excelApp);
+
+            await ForceUpdateSheet(sheet, txtFilePath);
         }
-
-        excelApp.ScreenUpdating = false;
-        excelApp.Calculation = Excel.XlCalculation.xlCalculationManual;
-        excelApp.EnableEvents = false;
-        MacroControl.DisableMacros(excelApp);
-
-        await ForceUpdateSheet(sheet, txtFilePath);
-
-        excelApp.StatusBar = false;
-        excelApp.ScreenUpdating = true;
-        excelApp.Calculation = Excel.XlCalculation.xlCalculationAutomatic;
-        excelApp.EnableEvents = true;
-        MacroControl.EnableMacros(excelApp);
+        finally
+        {
+            excelApp.StatusBar = false;
+            RestoreExcelAppAfterRender(excelApp);
+            MacroControl.EnableMacros(excelApp);
+            EndRenderCommand();
+        }
 
     }
 
@@ -6000,104 +6073,130 @@ public class RibbonController : ExcelRibbon
     public async void OnCreateNewButtonPressed(IRibbonControl control)
     {
         Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
-        string txtFilePath = OpenSourceFile();
-        if (txtFilePath == null)
+
+        if (!TryBeginRenderCommand("SheetRenderer: 新規作成を開始しています..."))
         {
             return;
         }
 
-        FileLogger.InitializeForInput(txtFilePath, timestamped: false);
-
-        bool parseSucceeded = RunParsePipeline(txtFilePath, true);
-        if (!parseSucceeded)
+        try
         {
-            return;
+            string txtFilePath = OpenSourceFile();
+            if (txtFilePath == null)
+            {
+                return;
+            }
+
+            FileLogger.InitializeForInput(txtFilePath, timestamped: false);
+
+            bool parseSucceeded = RunParsePipeline(txtFilePath, true);
+            if (!parseSucceeded)
+            {
+                return;
+            }
+
+            string jsonFilePath = TxtToJsonPath(txtFilePath);
+
+            await CreateNewWorkbook(txtFilePath, jsonFilePath);
         }
-
-        string jsonFilePath = TxtToJsonPath(txtFilePath);
-
-        await CreateNewWorkbook(txtFilePath, jsonFilePath);
-
-        excelApp.EnableEvents = true;
-        if (excelApp.ActiveWorkbook != null)
+        finally
         {
-            excelApp.Calculation = Excel.XlCalculation.xlCalculationAutomatic;
+            RestoreExcelAppAfterRender(excelApp);
+            EndRenderCommand();
         }
-        excelApp.ScreenUpdating = true;
-        excelApp.DisplayAlerts = true;
-        excelApp.AutomationSecurity = Office.MsoAutomationSecurity.msoAutomationSecurityByUI;
     }
 
     public async void OnRegenerateWorkbookPressed(IRibbonControl control)
     {
         Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
-        Excel.Workbook workbook = excelApp.ActiveWorkbook as Excel.Workbook;
 
-        if (workbook == null)
-        {
-            MessageBox.Show("アクティブなブックが見つかりません。");
-            return;
-        }
-
-        WorkbookInfo workbookInfo = WorkbookInfo.CreateFromWorkbook(workbook);
-
-        if (workbookInfo == null)
-        {
-            string projectName = Assembly.GetExecutingAssembly().GetName().Name;
-            MessageBox.Show($"{projectName} で生成されたブックではありません。");
-            return;
-        }
-
-        string txtFilePath = SelectSourceFileForRender(workbookInfo);
-        if (txtFilePath == null)
+        if (!TryBeginRenderCommand("SheetRenderer: 再生成を開始しています..."))
         {
             return;
         }
 
-        FileLogger.InitializeForInput(txtFilePath, timestamped: false);
-
-        string jsonFilePath = TxtToJsonPath(txtFilePath);
-
-        if (File.Exists(jsonFilePath))
+        try
         {
-            try
+            Excel.Workbook workbook = excelApp.ActiveWorkbook as Excel.Workbook;
+
+            if (workbook == null)
             {
-                File.Delete(jsonFilePath);
-            }
-            catch (Exception ex)
-            {
-                FileLogger.Error($"json の削除に失敗しました: {ex}");
-                MessageBox.Show($"json の削除に失敗しました。\n{ex.Message}");
+                MessageBox.Show("アクティブなブックが見つかりません。");
                 return;
             }
-        }
 
-        bool parseSucceeded = RunParsePipeline(txtFilePath, true);
-        if (!parseSucceeded)
+            WorkbookInfo workbookInfo = WorkbookInfo.CreateFromWorkbook(workbook);
+
+            if (workbookInfo == null)
+            {
+                string projectName = Assembly.GetExecutingAssembly().GetName().Name;
+                MessageBox.Show($"{projectName} で生成されたブックではありません。");
+                return;
+            }
+
+            string txtFilePath = SelectSourceFileForRender(workbookInfo);
+            if (txtFilePath == null)
+            {
+                return;
+            }
+
+            FileLogger.InitializeForInput(txtFilePath, timestamped: false);
+
+            string jsonFilePath = TxtToJsonPath(txtFilePath);
+
+            if (File.Exists(jsonFilePath))
+            {
+                try
+                {
+                    File.Delete(jsonFilePath);
+                }
+                catch (Exception ex)
+                {
+                    FileLogger.Error($"json の削除に失敗しました: {ex}");
+                    MessageBox.Show($"json の削除に失敗しました。\n{ex.Message}");
+                    return;
+                }
+            }
+
+            bool parseSucceeded = RunParsePipeline(txtFilePath, true);
+            if (!parseSucceeded)
+            {
+                return;
+            }
+
+            if (!File.Exists(jsonFilePath))
+            {
+                FileLogger.Warn($"jsonファイルが見つかりません: {jsonFilePath}");
+                return;
+            }
+
+            await RegenerateWorkbook(workbook, workbookInfo, txtFilePath, jsonFilePath);
+        }
+        finally
         {
-            return;
+            RestoreExcelAppAfterRender(excelApp);
+            EndRenderCommand();
         }
-
-        if (!File.Exists(jsonFilePath))
-        {
-            FileLogger.Warn($"jsonファイルが見つかりません: {jsonFilePath}");
-            return;
-        }
-
-        await RegenerateWorkbook(workbook, workbookInfo, txtFilePath, jsonFilePath);
     }
 
     public async void OnRenderButtonPressed(IRibbonControl control)
     {
         Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
-        var sheet = excelApp.ActiveSheet as Excel.Worksheet;
-        Excel.Workbook workbook = sheet == null ? null : sheet.Parent as Excel.Workbook;
+
+        if (!TryBeginRenderCommand("SheetRenderer: 更新を開始しています..."))
+        {
+            return;
+        }
+
         string txtFilePath = null;
         string jsonFilePath = null;
-        bool isNewWorkbook = sheet == null;
 
         try
         {
+            var sheet = excelApp.ActiveSheet as Excel.Worksheet;
+            Excel.Workbook workbook = sheet == null ? null : sheet.Parent as Excel.Workbook;
+            bool isNewWorkbook = sheet == null;
+
             excelApp.StatusBar = "Parsing...";
 
             if (isNewWorkbook)
@@ -6177,6 +6276,7 @@ public class RibbonController : ExcelRibbon
             excelApp.ScreenUpdating = true;
             excelApp.DisplayAlerts = true;
             excelApp.AutomationSecurity = Office.MsoAutomationSecurity.msoAutomationSecurityByUI;
+            EndRenderCommand();
         }
     }
 
