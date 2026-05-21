@@ -9758,6 +9758,14 @@ public class AddIn : IExcelAddIn
     public void AutoClose()
     {
         //Notifier.Info("アドイン終了", "シャットダウンします。");
+        try
+        {
+            JsHost.Shutdown();
+        }
+        catch
+        {
+        }
+
         Notifier.Dispose();
     }
 }

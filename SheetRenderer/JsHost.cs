@@ -148,6 +148,23 @@ public static class JsHost
         _fileReadTraceHook = null;
     }
 
+    internal static void Shutdown()
+    {
+        _filePathResolveHook = null;
+        _fileReadTraceHook = null;
+        _wscript = null;
+        _baseDir = null;
+
+        if (_engine == null)
+        {
+            return;
+        }
+
+        V8ScriptEngine engine = _engine;
+        _engine = null;
+        engine.Dispose();
+    }
+
     public sealed class FileBridge
     {
         public string Read(string path)
