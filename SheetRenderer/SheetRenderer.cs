@@ -1792,6 +1792,65 @@ public class RibbonController : ExcelRibbon
         }
     }
 
+    private static void RestoreTemplateSheetVisibility(
+        Excel.Worksheet templateSheet,
+        Excel.XlSheetVisibility originalVisibility,
+        bool shouldRestore)
+    {
+        if (!shouldRestore || templateSheet == null)
+        {
+            return;
+        }
+
+        try
+        {
+            templateSheet.Visible = originalVisibility;
+        }
+        catch
+        {
+        }
+    }
+
+    private static void CloseProgressBarFormSafe(ProgressBarForm form)
+    {
+        if (form == null || form.IsDisposed)
+        {
+            return;
+        }
+
+        try
+        {
+            form.CloseForm();
+        }
+        catch
+        {
+            try
+            {
+                if (!form.IsDisposed)
+                {
+                    form.Close();
+                }
+            }
+            catch
+            {
+            }
+        }
+    }
+
+    private static void RestoreExcelAppAfterRender(Excel.Application excelApp)
+    {
+        if (excelApp == null)
+        {
+            return;
+        }
+
+        try { excelApp.EnableEvents = true; } catch { }
+        try { excelApp.Calculation = Excel.XlCalculation.xlCalculationAutomatic; } catch { }
+        try { excelApp.ScreenUpdating = true; } catch { }
+        try { excelApp.DisplayAlerts = true; } catch { }
+        try { excelApp.AutomationSecurity = Office.MsoAutomationSecurity.msoAutomationSecurityByUI; } catch { }
+    }
+
     private static void EnsureSharedSheetBaseStorePrepared(Excel.Workbook workbook, Action<string> progressReporter = null)
     {
         if (workbook == null)
@@ -5059,6 +5118,12 @@ public class RibbonController : ExcelRibbon
         excelApp.EnableEvents = false;
         excelApp.AutomationSecurity = Office.MsoAutomationSecurity.msoAutomationSecurityForceDisable;
 
+        Excel.Worksheet templateSheet = null;
+        Excel.XlSheetVisibility templateSheetVisible = Excel.XlSheetVisibility.xlSheetVisible;
+        bool templateSheetVisibilityChanged = false;
+
+        try
+        {
         // 作ったシートも元のシートと同じ状態にする
         var activeCellPosition = excelApp.GetActiveCellPosition();
         var scrollPosition = excelApp.GetScrollPosition();
@@ -5156,9 +5221,10 @@ public class RibbonController : ExcelRibbon
         var missingImagePaths = new List<(string filePath, string sheetName, string address)>();
 
         // シートが非表示の場合、コピーしてもシートがアクティブにならないので、一時的に表示状態にする
-        Excel.Worksheet templateSheet = workbook.Sheets[workbookInfo.TemplateSheetName];
-        var templateSheetVisible = templateSheet.Visible;
+        templateSheet = workbook.Sheets[workbookInfo.TemplateSheetName];
+        templateSheetVisible = templateSheet.Visible;
         templateSheet.Visible = Excel.XlSheetVisibility.xlSheetVisible;
+        templateSheetVisibilityChanged = true;
 
         // +1 は index シート
         progressBarForm = new ProgressBarForm(sheetNodes.Count + 1);
@@ -5251,8 +5317,6 @@ public class RibbonController : ExcelRibbon
             }
         }
 
-        templateSheet.Visible = templateSheetVisible;
-
         // シートの並び順修正
         // リストに従ってシートを後ろに詰める
         List<string> sheetNamesInOrder = sheetNodes.Select(item => item["text"].ToString()).ToList();
@@ -5310,9 +5374,8 @@ public class RibbonController : ExcelRibbon
         }
 
         // 処理が完了したらフォームを閉じる
-        progressBarForm.Invoke(new Action(progressBarForm.CloseForm));
-
-        progressBarForm.Close();
+        CloseProgressBarFormSafe(progressBarForm);
+        progressBarForm = null;
 
         excelApp.DisplayAlerts = true;
 
@@ -5336,6 +5399,14 @@ public class RibbonController : ExcelRibbon
             User = Environment.UserName
         };
         workbook.SetCustomProperty("RenderLog", renderLog);
+        }
+        finally
+        {
+            RestoreTemplateSheetVisibility(templateSheet, templateSheetVisible, templateSheetVisibilityChanged);
+            CloseProgressBarFormSafe(progressBarForm);
+            progressBarForm = null;
+            RestoreExcelAppAfterRender(excelApp);
+        }
     }
 
     static bool IsSameNameWorkbookOpen(string fileName)
@@ -5388,11 +5459,17 @@ public class RibbonController : ExcelRibbon
 
         JsonArray sheetNodes = jsonObject["children"].AsArray();
 
-        Excel.Worksheet templateSheet = workbook.Sheets[templateSheetName];
-        var templateSheetVisible = templateSheet.Visible;
-        templateSheet.Visible = Excel.XlSheetVisibility.xlSheetVisible;
-
+        Excel.Worksheet templateSheet = null;
+        Excel.XlSheetVisibility templateSheetVisible = Excel.XlSheetVisibility.xlSheetVisible;
+        bool templateSheetVisibilityChanged = false;
         List<(string filePath, string sheetName, string address)> missingImagePaths = new List<(string filePath, string sheetName, string address)>();
+
+        try
+        {
+        templateSheet = workbook.Sheets[templateSheetName];
+        templateSheetVisible = templateSheet.Visible;
+        templateSheet.Visible = Excel.XlSheetVisibility.xlSheetVisible;
+        templateSheetVisibilityChanged = true;
 
         // +1 は index シート
         progressBarForm = new ProgressBarForm(sheetNodes.Count + 1);
@@ -5455,12 +5532,9 @@ public class RibbonController : ExcelRibbon
         // 最後にindexシートを選択状態にしておく
         indexSheet.Activate();
 
-        templateSheet.Visible = templateSheetVisible;
-
         // 処理が完了したらフォームを閉じる
-        progressBarForm.Invoke(new Action(progressBarForm.CloseForm));
-
-        progressBarForm.Close();
+        CloseProgressBarFormSafe(progressBarForm);
+        progressBarForm = null;
 
         var originalZoom = excelApp.ActiveWindow.Zoom;
 
@@ -5471,6 +5545,14 @@ public class RibbonController : ExcelRibbon
         excelApp.ActiveWindow.Zoom = originalZoom;
         excelApp.DisplayAlerts = true;
         excelApp.AutomationSecurity = Office.MsoAutomationSecurity.msoAutomationSecurityByUI;
+        }
+        finally
+        {
+            RestoreTemplateSheetVisibility(templateSheet, templateSheetVisible, templateSheetVisibilityChanged);
+            CloseProgressBarFormSafe(progressBarForm);
+            progressBarForm = null;
+            RestoreExcelAppAfterRender(excelApp);
+        }
 
         return missingImagePaths;
     }
