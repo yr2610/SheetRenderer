@@ -90,10 +90,21 @@ public static class ExcelExtensions
 
     public static Excel.Range GetRange(this Excel.Worksheet sheet, int startRow, int startColumn, int rowCount, int columnCount)
     {
-        Excel.Range startCell = (Excel.Range)sheet.Cells[startRow, startColumn];
-        Excel.Range endCell = (Excel.Range)sheet.Cells[startRow + rowCount - 1, startColumn + columnCount - 1];
-        Excel.Range range = sheet.Range[startCell, endCell];
-        return range;
+        Excel.Range startCell = null;
+        Excel.Range endCell = null;
+
+        try
+        {
+            startCell = (Excel.Range)sheet.Cells[startRow, startColumn];
+            endCell = (Excel.Range)sheet.Cells[startRow + rowCount - 1, startColumn + columnCount - 1];
+            Excel.Range range = sheet.Range[startCell, endCell];
+            return range;
+        }
+        finally
+        {
+            ReleaseComObject(endCell);
+            ReleaseComObject(startCell);
+        }
     }
 
     public static object[,] GetValuesAs2DArray(object range)
@@ -120,76 +131,134 @@ public static class ExcelExtensions
 
     public static IEnumerable<object> GetColumnWithOffset(this Excel.Worksheet worksheet, string address, int columnOffset)
     {
-        // 指定されたアドレスの範囲を取得
-        var range = worksheet.Range[address];
+        Excel.Range range = null;
+        Excel.Range rows = null;
+        Excel.Range startCell = null;
+        Excel.Range endCell = null;
+        Excel.Range offsetColumn = null;
 
-        // 範囲の開始列を取得
-        int startColumn = range.Column;
-
-        // オフセット後の列番号を計算
-        int targetColumn = startColumn + columnOffset;
-
-        // 指定された範囲の行を基準にして、対象列を取得
-        var offsetColumn = worksheet.Range[worksheet.Cells[range.Row, targetColumn], worksheet.Cells[range.Row + range.Rows.Count - 1, targetColumn]];
-
-        // 2次元配列として範囲を取得
-        var values = GetValuesAs2DArray(offsetColumn.Value2);
-
-        // 2次元配列をList<object>に変換
-        var result = new List<object>();
-        for (int i = 1; i <= values.GetLength(0); i++)
+        try
         {
-            result.Add(values[i, 1]);
-        }
+            // 指定されたアドレスの範囲を取得
+            range = worksheet.Range[address];
 
-        return result;
+            // 範囲の開始列を取得
+            int startColumn = range.Column;
+
+            // オフセット後の列番号を計算
+            int targetColumn = startColumn + columnOffset;
+            rows = range.Rows;
+
+            // 指定された範囲の行を基準にして、対象列を取得
+            startCell = worksheet.Cells[range.Row, targetColumn] as Excel.Range;
+            endCell = worksheet.Cells[range.Row + rows.Count - 1, targetColumn] as Excel.Range;
+            offsetColumn = worksheet.Range[startCell, endCell];
+
+            // 2次元配列として範囲を取得
+            var values = GetValuesAs2DArray(offsetColumn.Value2);
+
+            // 2次元配列をList<object>に変換
+            var result = new List<object>();
+            for (int i = 1; i <= values.GetLength(0); i++)
+            {
+                result.Add(values[i, 1]);
+            }
+
+            return result;
+        }
+        finally
+        {
+            ReleaseComObject(offsetColumn);
+            ReleaseComObject(endCell);
+            ReleaseComObject(startCell);
+            ReleaseComObject(rows);
+            ReleaseComObject(range);
+        }
     }
 
     // columnIndex は 0-origin
     public static IEnumerable<object> GetColumnValues(this Excel.Range range, int columnIndex)
     {
-        // 指定された列インデックスが範囲外の場合に対応
-        int totalColumns = range.Columns.Count;
-        Excel.Range columnRange;
+        Excel.Range columns = null;
+        Excel.Range rows = null;
+        Excel.Range offsetRange = null;
+        Excel.Range columnRange = null;
 
-        if (columnIndex >= totalColumns)
+        try
         {
-            // 範囲外の列インデックスの場合、指定された列を元の範囲の行に合わせて取得
-            int offsetColumns = columnIndex - totalColumns + 1;
-            columnRange = range.Offset[0, offsetColumns].Resize[range.Rows.Count, 1];
-        }
-        else
-        {
-            // 指定された列の範囲を取得
-            columnRange = range.Columns[columnIndex + 1];
-        }
+            // 指定された列インデックスが範囲外の場合に対応
+            columns = range.Columns;
+            int totalColumns = columns.Count;
 
-        object value = columnRange.Value2;
-        if (value is object[,])
-        {
-            object[,] values = (object[,])value;
-            for (int i = 1; i <= values.GetLength(0); i++)
+            if (columnIndex >= totalColumns)
             {
-                yield return values[i, 1];
+                // 範囲外の列インデックスの場合、指定された列を元の範囲の行に合わせて取得
+                int offsetColumns = columnIndex - totalColumns + 1;
+                rows = range.Rows;
+                offsetRange = range.Offset[0, offsetColumns];
+                columnRange = offsetRange.Resize[rows.Count, 1];
             }
+            else
+            {
+                // 指定された列の範囲を取得
+                columnRange = columns[columnIndex + 1];
+            }
+
+            object value = columnRange.Value2;
+            var result = new List<object>();
+            if (value is object[,] values)
+            {
+                for (int i = 1; i <= values.GetLength(0); i++)
+                {
+                    result.Add(values[i, 1]);
+                }
+            }
+            else if (value != null)
+            {
+                result.Add(value);
+            }
+
+            return result;
         }
-        else if (value != null)
+        finally
         {
-            yield return value;
+            ReleaseComObject(columnRange);
+            ReleaseComObject(offsetRange);
+            ReleaseComObject(rows);
+            ReleaseComObject(columns);
         }
     }
 
     // 指定されたワークシートオブジェクトと列アドレスから列インデックスを取得する
     public static int ColumnAddressToIndex(this Excel.Worksheet worksheet, string columnAddress)
     {
-        Excel.Range range = worksheet.Range[columnAddress + "1"];
-        return range.Column;
+        Excel.Range range = null;
+        try
+        {
+            range = worksheet.Range[columnAddress + "1"];
+            return range.Column;
+        }
+        finally
+        {
+            ReleaseComObject(range);
+        }
     }
 
     public static void DeleteRows(this Excel.Worksheet worksheet, int startRow, int rowCount)
     {
-        Excel.Range rows = worksheet.Rows[startRow].Resize[rowCount];
-        rows.Delete();
+        Excel.Range startRowRange = null;
+        Excel.Range rows = null;
+        try
+        {
+            startRowRange = worksheet.Rows[startRow];
+            rows = startRowRange.Resize[rowCount];
+            rows.Delete();
+        }
+        finally
+        {
+            ReleaseComObject(rows);
+            ReleaseComObject(startRowRange);
+        }
     }
 
     public static void InsertRowsAndCopyFormulas(this Excel.Worksheet worksheet, int startRow, int rowCount)
@@ -337,17 +406,38 @@ public static class ExcelExtensions
     // 指定した範囲のセルに同じ値を代入します
     public static void SetRangeValue<T>(this Excel.Worksheet sheet, int startRow, int startColumn, int rowCount, int columnCount, T value)
     {
-        Excel.Range startCell = (Excel.Range)sheet.Cells[startRow, startColumn];
-        Excel.Range range = startCell.Resize[rowCount, columnCount];
+        Excel.Range startCell = null;
+        Excel.Range range = null;
 
-        range.Value = value;
+        try
+        {
+            startCell = (Excel.Range)sheet.Cells[startRow, startColumn];
+            range = startCell.Resize[rowCount, columnCount];
+            range.Value = value;
+        }
+        finally
+        {
+            ReleaseComObject(range);
+            ReleaseComObject(startCell);
+        }
     }
 
     public static void SetValueInSheet<T>(this Excel.Worksheet sheet, int startRow, int startColumn, T[,] array)
     {
-        Excel.Range range = sheet.Cells[startRow, startColumn] as Excel.Range;
-        range = range.Resize[array.GetLength(0), array.GetLength(1)];
-        range.Value = array;
+        Excel.Range startCell = null;
+        Excel.Range range = null;
+
+        try
+        {
+            startCell = sheet.Cells[startRow, startColumn] as Excel.Range;
+            range = startCell.Resize[array.GetLength(0), array.GetLength(1)];
+            range.Value = array;
+        }
+        finally
+        {
+            ReleaseComObject(range);
+            ReleaseComObject(startCell);
+        }
     }
 
     public static void SetValueInSheet<T>(this Excel.Worksheet sheet, int startRow, int startColumn, IEnumerable<T> source, bool isRow = true)

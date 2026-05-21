@@ -1182,18 +1182,30 @@ public class RibbonController : ExcelRibbon
 
     static IEnumerable<object> GetSheetIdsFromIndexSheet(Excel.Worksheet indexSheet)
     {
-        Excel.Name namedRange = indexSheet.Names.Item(ssSheetRangeName);
-        var ssRange = namedRange.RefersToRange;
+        Excel.Names names = null;
+        Excel.Name namedRange = null;
+        Excel.Range ssRange = null;
 
-        var deserializer = new DeserializerBuilder()
-            .WithNamingConvention(CamelCaseNamingConvention.Instance)
-            .Build();
-        Debug.Assert(namedRange.Comment != null, "namedRange.Comment != null");
-        RangeInfo rangeInfo = deserializer.Deserialize<RangeInfo>(namedRange.Comment);
+        try
+        {
+            names = indexSheet.Names;
+            namedRange = names.Item(ssSheetRangeName);
+            ssRange = namedRange.RefersToRange;
 
-        var sheetIds = ssRange.GetColumnValues(rangeInfo.IdColumnOffset.Value);
+            var deserializer = new DeserializerBuilder()
+                .WithNamingConvention(CamelCaseNamingConvention.Instance)
+                .Build();
+            Debug.Assert(namedRange.Comment != null, "namedRange.Comment != null");
+            RangeInfo rangeInfo = deserializer.Deserialize<RangeInfo>(namedRange.Comment);
 
-        return sheetIds;
+            return ssRange.GetColumnValues(rangeInfo.IdColumnOffset.Value).ToList();
+        }
+        finally
+        {
+            ReleaseExcelComObject(ssRange);
+            ReleaseExcelComObject(namedRange);
+            ReleaseExcelComObject(names);
+        }
     }
 
     // idValues を key にした行（List<object>）の dictionary を作る
@@ -1282,10 +1294,18 @@ public class RibbonController : ExcelRibbon
 
     static object[,] GetValues(Excel.Worksheet sheet, SheetAddressInfo sheetAddressInfo)
     {
-        var range = GetRange(sheet, sheetAddressInfo);
-        var values = ExcelExtensions.GetValuesAs2DArray(range.Value2);
+        Excel.Range range = null;
+        try
+        {
+            range = GetRange(sheet, sheetAddressInfo);
+            var values = ExcelExtensions.GetValuesAs2DArray(range.Value2);
 
-        return values;
+            return values;
+        }
+        finally
+        {
+            ReleaseExcelComObject(range);
+        }
     }
 
     static IEnumerable<object> GetIds(Excel.Worksheet sheet, SheetAddressInfo sheetAddressInfo)
