@@ -411,6 +411,7 @@ public class RibbonController : ExcelRibbon
     private IRibbonUI ribbon;
     private ProgressBarForm progressBarForm;
     private bool renderCommandInProgress;
+    private static readonly List<Form> openMissingImageFileDialogs = new List<Form>();
     private static PullSessionContext currentPullSession;
     private static PullSessionContext lastSuccessfulPullSession;
     [ThreadStatic]
@@ -6637,60 +6638,164 @@ public class RibbonController : ExcelRibbon
 
     static void ShowMissingImageFilesDialog(IEnumerable<(string filePath, string sheetName, string address)> missingFiles)
     {
+        var missingFileItems = (missingFiles ?? Enumerable.Empty<(string filePath, string sheetName, string address)>())
+            .Where(item => !string.IsNullOrWhiteSpace(item.filePath))
+            .Distinct()
+            .ToList();
+
+        if (!missingFileItems.Any())
+        {
+            return;
+        }
+
         Form form = new Form
         {
-            Text = "Missing Files",
-            Width = 400,
-            Height = 300,
-            TopMost = true // topmostに設定
+            Text = "Missing Image Files",
+            Width = 720,
+            Height = 420,
+            StartPosition = FormStartPosition.CenterScreen,
+            TopMost = true
         };
 
         Label label = new Label
         {
-            Text = "以下の画像ファイルが見つかりませんでした。",
+            Text = $"以下の画像ファイルが見つかりませんでした。({missingFileItems.Count} 件)",
             Dock = DockStyle.Top,
-            AutoSize = true,
+            Height = 36,
+            Padding = new Padding(10, 10, 10, 0),
+            TextAlign = ContentAlignment.MiddleLeft
         };
-        label.Font = new Font(label.Font.FontFamily, label.Font.Size * 2); // フォントサイズを2倍に設定
 
-        // ラベルのテキスト幅に基づいてフォームの幅を設定
-        using (Graphics g = label.CreateGraphics())
-        {
-            SizeF size = g.MeasureString(label.Text, label.Font);
-            form.Width = (int)size.Width + 40; // 余白を追加
-        }
-
-        ListBox listBox = new ListBox
+        ListView listView = new ListView
         {
             Dock = DockStyle.Fill,
+            FullRowSelect = true,
+            GridLines = true,
+            HideSelection = false,
+            MultiSelect = false,
+            VirtualMode = true,
+            VirtualListSize = missingFileItems.Count,
+            View = View.Details
         };
-        listBox.Font = new Font(listBox.Font.FontFamily, listBox.Font.Size * 2); // フォントサイズを2倍に設定
+        listView.Columns.Add("ファイル", 430);
+        listView.Columns.Add("シート", 150);
+        listView.Columns.Add("セル", 80);
 
-        //missingFiles = missingFiles.Distinct();
-        foreach (var file in missingFiles)
+        listView.RetrieveVirtualItem += (sender, e) =>
         {
-            listBox.Items.Add(file.filePath);
+            var file = missingFileItems[e.ItemIndex];
+            var item = new ListViewItem(file.filePath);
+            item.SubItems.Add(file.sheetName ?? string.Empty);
+            item.SubItems.Add(file.address ?? string.Empty);
+            item.Tag = e.ItemIndex;
+            e.Item = item;
+        };
+
+        void SelectMissingImageCell()
+        {
+            if (listView.SelectedIndices.Count == 0)
+            {
+                return;
+            }
+
+            var selectedCell = missingFileItems[listView.SelectedIndices[0]];
+            string targetSheetName = selectedCell.sheetName;
+            string targetAddress = selectedCell.address;
+            if (string.IsNullOrWhiteSpace(targetSheetName) || string.IsNullOrWhiteSpace(targetAddress))
+            {
+                return;
+            }
+
+            ExcelAsyncUtil.QueueAsMacro(() =>
+            {
+                Excel.Worksheet sheet = null;
+                Excel.Range range = null;
+                try
+                {
+                    var excelApp = (Excel.Application)ExcelDnaUtil.Application;
+                    sheet = excelApp.Sheets[targetSheetName] as Excel.Worksheet;
+                    range = sheet.Range[targetAddress];
+                    sheet.Activate();
+                    range.Select();
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show(
+                        $"セルの選択に失敗しました。\n\nシート: {targetSheetName}\nセル: {targetAddress}\n\n{ex.Message}",
+                        "Missing Image Files",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Warning);
+                }
+                finally
+                {
+                    ReleaseExcelComObject(range);
+                    ReleaseExcelComObject(sheet);
+                }
+            });
         }
 
-        listBox.Click += (sender, e) =>
+        listView.DoubleClick += (sender, e) =>
         {
-            if (listBox.SelectedItem != null)
+            SelectMissingImageCell();
+        };
+
+        Panel buttonPanel = new Panel
+        {
+            Dock = DockStyle.Bottom,
+            Height = 48
+        };
+
+        Button copyButton = new Button
+        {
+            Text = "コピー",
+            Width = 90,
+            Height = 28,
+            Left = 510,
+            Top = 10,
+            Anchor = AnchorStyles.Right | AnchorStyles.Top
+        };
+        copyButton.Click += (sender, e) =>
+        {
+            string text = string.Join(
+                Environment.NewLine,
+                missingFileItems.Select(item => $"{item.filePath}\t{item.sheetName}\t{item.address}"));
+            Clipboard.SetText(text);
+        };
+
+        Button closeButton = new Button
+        {
+            Text = "閉じる",
+            Width = 90,
+            Height = 28,
+            Left = 610,
+            Top = 10,
+            Anchor = AnchorStyles.Right | AnchorStyles.Top
+        };
+        closeButton.Click += (sender, e) => form.Close();
+
+        buttonPanel.Controls.Add(copyButton);
+        buttonPanel.Controls.Add(closeButton);
+
+        form.FormClosed += (sender, e) =>
+        {
+            openMissingImageFileDialogs.Remove(form);
+            form.Dispose();
+        };
+        form.Shown += (sender, e) =>
+        {
+            listView.Focus();
+            if (listView.VirtualListSize > 0)
             {
-                var selectedCell = missingFiles.ElementAtOrDefault(listBox.SelectedIndex);
-                var sheetName = selectedCell.sheetName;
-                var cellAddress = selectedCell.address;
-                var excelApp = (Excel.Application)ExcelDnaUtil.Application;
-                var sheet = (Excel.Worksheet)excelApp.Sheets[sheetName];
-                var range = sheet.Range[cellAddress];
-                sheet.Activate();
-                range.Select();
+                listView.EnsureVisible(0);
             }
         };
 
-        form.Controls.Add(listBox);
+        form.Controls.Add(listView);
+        form.Controls.Add(buttonPanel);
         form.Controls.Add(label);
 
-        form.Show(); // モードレスウィンドウとして表示
+        openMissingImageFileDialogs.Add(form);
+        form.ShowDialog();
     }
 
     // マクロを一時的に黙らせたい
