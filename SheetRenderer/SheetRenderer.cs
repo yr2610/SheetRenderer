@@ -6716,7 +6716,7 @@ public class RibbonController : ExcelRibbon
                     sheet = excelApp.Sheets[targetSheetName] as Excel.Worksheet;
                     range = sheet.Range[targetAddress];
                     sheet.Activate();
-                    range.Select();
+                    excelApp.Goto(range, true);
                 }
                 catch (Exception ex)
                 {
