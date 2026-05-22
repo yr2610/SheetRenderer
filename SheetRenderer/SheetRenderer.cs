@@ -43,8 +43,9 @@ using Microsoft.ClearScript.V8;
 public class ProgressBarForm : Form
 {
     private ProgressBar progressBar;
-    private Label progressLabel;
+    private Panel progressInfoPanel;
     private Label sheetNameLabel;
+    private Label progressCountLabel;
     private int totalSheets;
     private int completedSheets;
 
@@ -54,37 +55,46 @@ public class ProgressBarForm : Form
         this.completedSheets = 0;
 
         // フォームのサイズを設定
-        this.Width = 500;
-        this.Height = 180;
+        this.Width = 430;
+        this.Height = 130;
 
         // フォームのスタイルを設定
         this.FormBorderStyle = FormBorderStyle.FixedSingle;
         this.ControlBox = false;
         this.Text = string.Empty;
 
-        // プログレスバーを作成
-        progressBar = new ProgressBar();
-        progressBar.Width = 450;
-        progressBar.Height = 20;
-        progressBar.Top = 30;
-        progressBar.Left = 25;
-        Controls.Add(progressBar);
-
-        // 進行状況を表示するラベルを作成
-        progressLabel = new Label();
-        progressLabel.Width = 450;
-        progressLabel.Top = 60;
-        progressLabel.Left = 25;
-        progressLabel.TextAlign = System.Drawing.ContentAlignment.MiddleCenter;
-        Controls.Add(progressLabel);
+        progressInfoPanel = new Panel();
+        progressInfoPanel.Width = 380;
+        progressInfoPanel.Height = 60;
+        progressInfoPanel.Top = 20;
+        progressInfoPanel.Left = 25;
+        Controls.Add(progressInfoPanel);
 
         // シート名を表示するラベルを作成
         sheetNameLabel = new Label();
-        sheetNameLabel.Width = 450;
-        sheetNameLabel.Top = 90;
-        sheetNameLabel.Left = 25;
-        sheetNameLabel.TextAlign = System.Drawing.ContentAlignment.MiddleCenter;
-        Controls.Add(sheetNameLabel);
+        sheetNameLabel.Width = 275;
+        sheetNameLabel.Height = 22;
+        sheetNameLabel.Top = 0;
+        sheetNameLabel.Left = 0;
+        sheetNameLabel.TextAlign = System.Drawing.ContentAlignment.MiddleLeft;
+        sheetNameLabel.AutoEllipsis = true;
+        progressInfoPanel.Controls.Add(sheetNameLabel);
+
+        progressCountLabel = new Label();
+        progressCountLabel.Width = 90;
+        progressCountLabel.Height = 22;
+        progressCountLabel.Top = 0;
+        progressCountLabel.Left = 290;
+        progressCountLabel.TextAlign = System.Drawing.ContentAlignment.MiddleRight;
+        progressInfoPanel.Controls.Add(progressCountLabel);
+
+        // プログレスバーを作成
+        progressBar = new ProgressBar();
+        progressBar.Width = 380;
+        progressBar.Height = 18;
+        progressBar.Top = 34;
+        progressBar.Left = 0;
+        progressInfoPanel.Controls.Add(progressBar);
 
         // フォームの閉じる操作を無効にする
         this.FormClosing += new FormClosingEventHandler(ProgressBarForm_FormClosing);
@@ -104,12 +114,15 @@ public class ProgressBarForm : Form
         }
         else
         {
-            sheetNameLabel.Text = $"作成中のシート: {sheetName}";
+            sheetNameLabel.Text = string.IsNullOrEmpty(sheetName)
+                ? string.Empty
+                : $"作成中: {sheetName}";
             completedSheets++;
             progressBar.Value = (int)((double)completedSheets / totalSheets * 100);
-            progressLabel.Text = $"進行状況: {completedSheets} / {totalSheets}";
+            progressCountLabel.Text = $"{completedSheets} / {totalSheets}";
             sheetNameLabel.Refresh();
-            progressLabel.Refresh();
+            progressCountLabel.Refresh();
+            progressInfoPanel.Refresh();
             progressBar.Refresh();
             Refresh();
         }
