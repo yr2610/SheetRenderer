@@ -173,6 +173,7 @@ let rootFilePath;
 let $abspath;
 
 function parse(filePath_) {
+    CL.resetFileReadChain();
     filePath = filePath_;
 
     absolutePathToSourceLocalPath = absolutePathToSourceLocalPath_;

@@ -42,6 +42,12 @@ CL.readTextFile = function (requestedPath, baseFilePath) {
 CL._activeFileReadChain = [];
 CL._activeFileReadSet = {};
 
+CL.resetFileReadChain = function () {
+  CL._activeFileReadChain = [];
+  CL._activeFileReadSet = {};
+  CL.lastResolvedReadLocalPath = null;
+};
+
 CL.normalizeFileReadChainPath = function (filePath) {
   if (File.NormalizeLazyReadPathIdentity) {
     return String(File.NormalizeLazyReadPathIdentity(filePath));
