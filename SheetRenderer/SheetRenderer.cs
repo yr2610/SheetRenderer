@@ -108,6 +108,10 @@ public class ProgressBarForm : Form
             completedSheets++;
             progressBar.Value = (int)((double)completedSheets / totalSheets * 100);
             progressLabel.Text = $"進行状況: {completedSheets} / {totalSheets}";
+            sheetNameLabel.Refresh();
+            progressLabel.Refresh();
+            progressBar.Refresh();
+            Refresh();
         }
     }
 
