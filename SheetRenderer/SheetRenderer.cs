@@ -6654,7 +6654,7 @@ public class RibbonController : ExcelRibbon
             Width = 720,
             Height = 420,
             StartPosition = FormStartPosition.CenterScreen,
-            TopMost = true
+            ShowInTaskbar = false
         };
 
         Label label = new Label
@@ -6844,7 +6844,47 @@ public class RibbonController : ExcelRibbon
         form.Controls.Add(label);
 
         openMissingImageFileDialogs.Add(form);
-        form.ShowDialog();
+        var owner = GetExcelOwnerWindow();
+        if (owner == null)
+        {
+            form.ShowDialog();
+        }
+        else
+        {
+            form.ShowDialog(owner);
+        }
+    }
+
+    private static IWin32Window GetExcelOwnerWindow()
+    {
+        try
+        {
+            IntPtr hwnd = ExcelDnaUtil.WindowHandle;
+            if (hwnd != IntPtr.Zero)
+            {
+                return new WindowWrapper(hwnd);
+            }
+        }
+        catch
+        {
+        }
+
+        return null;
+    }
+
+    private sealed class WindowWrapper : IWin32Window
+    {
+        private readonly IntPtr hwnd;
+
+        public WindowWrapper(IntPtr hwnd)
+        {
+            this.hwnd = hwnd;
+        }
+
+        public IntPtr Handle
+        {
+            get { return hwnd; }
+        }
     }
 
     // マクロを一時的に黙らせたい
