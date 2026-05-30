@@ -173,6 +173,7 @@ let rootFilePath;
 let $abspath;
 
 function parse(filePath_) {
+    CL.resetFileReadChain();
     filePath = filePath_;
 
     absolutePathToSourceLocalPath = absolutePathToSourceLocalPath_;
@@ -207,6 +208,31 @@ function buildLoopMeta(k, total){
     $isOdd:   ((k % 2) === 1),
     $isEven:  ((k % 2) === 0)
   };
+}
+
+function matchInlineParamArrayCallText(text) {
+    var trimmed = text && String(text).trim();
+    return trimmed && trimmed.match(/^\*([A-Za-z_]\w*)$/);
+}
+
+function matchNamedTemplateCallText(text) {
+    var trimmed = text && String(text).trim();
+    return trimmed && trimmed.match(/^\*([A-Za-z_]\w*)\((.*)\)$/);
+}
+
+function matchAnonymousTemplateCallText(text) {
+    var trimmed = text && String(text).trim();
+    return trimmed && trimmed.match(/^\*\((.*)\)$/);
+}
+
+function joinNodeIds(prefix, id) {
+    if (_.isUndefined(prefix) || prefix === null || prefix === "") {
+        return id;
+    }
+    if (_.isUndefined(id) || id === null || id === "") {
+        return prefix;
+    }
+    return prefix + "_" + id;
 }
 
 function countLeadingSpaces(s) {
@@ -262,6 +288,7 @@ function absorbContinuations(reader, text, baseline, options) {
             || /^\s*[\*\+\-]\s+/.test(s) // UL
             || /^&[A-Za-z_]\w*\s*\(/.test(t) // &Name( 宣言
             || /^\*[A-Za-z_]\w*\s*\(/.test(t) // *Call(
+            || /^\*\s*\(/.test(t) // *(...) 匿名テンプレ呼び出し
             || /^@[A-Za-z_]\w*:/.test(t)    // ディレクティブ（@xxx:）
             || /^\s*\[.+\]:\s+.+$/.test(s); // 属性宣言（[key]: value）
     }
@@ -1742,11 +1769,12 @@ _.forEach(noIdNodes, function(infos) {
         // 2) ディレクティブ @xxx:         …… 例: @init:, @set: など将来拡張含む
         if (element.node.children.length === 0) {
             var t = element.node.text;
-            return !/^(?:&[A-Za-z_]\w*:|@[A-Za-z_]\w*:)/.test(t);
+            return !/^(?:&[A-Za-z_]\w*:|@[A-Za-z_]\w*:)/.test(t) &&
+                !matchAnonymousTemplateCallText(t);
         }
 
         // テンプレート参照ノード
-        if (/^\*[A-Za-z_]\w*\(.*\)$/.test(element.node.text.trim())) {
+        if (matchNamedTemplateCallText(element.node.text)) {
             return true;
         }
 
@@ -2626,8 +2654,15 @@ function applyPlaceholdersEverywhere() {
 
             scopeStack.push(localScope);
 
+            // *(...) の子は匿名テンプレ本体なので、展開前の置換対象にしない
+            var anonymousCall = matchAnonymousTemplateCallText(node.text);
+            if (anonymousCall) {
+                scopeStack.pop();
+                return true;
+            }
+
             // *template(...) 行は展開側で処理するためスキップ
-            var m = node.text && node.text.trim().match(/^\*([A-Za-z_]\w*)\((.*)\)$/);
+            var m = matchNamedTemplateCallText(node.text);
             var skipChildren = false;
             if (!m) {
                 var ok = replacePlaceholdersInNode(node, localScope, null);
@@ -2686,11 +2721,38 @@ function evaluateInScope(expr, scope) {
     // ===== Parameter Evaluation =====
     var templateParamFnCache = Object.create(null);
 
+    function expandTemplateIntegerRange(paramsStr) {
+        var rangeMatch = paramsStr.match(/^(-?\d+(?:\.\d+)?)\s*\.\.\s*(-?\d+(?:\.\d+)?)$/);
+        if (!rangeMatch) {
+            return paramsStr;
+        }
+
+        var start = Number(rangeMatch[1]);
+        var end = Number(rangeMatch[2]);
+        if (!Number.isInteger(start) || !Number.isInteger(end)) {
+            throw new Error("range 記法では整数のみ使用できます。");
+        }
+        if (start < 0 || end < 0) {
+            throw new Error("range 記法ではマイナス値は使用できません。");
+        }
+
+        var count = Math.abs(end - start) + 1;
+        if (count > MAX_REPEAT) {
+            throw new Error("range 記法の要素数が上限を超えています。上限: " + MAX_REPEAT);
+        }
+
+        var step = start <= end ? 1 : -1;
+        return JSON.stringify(_.times(count, function(index) {
+            return start + step * index;
+        }));
+    }
+
     function evalTemplateParameters(paramsStr, node, currentParameters) {
         paramsStr = paramsStr.trim();
         if (paramsStr == "") {
             return {};
         }
+        paramsStr = expandTemplateIntegerRange(paramsStr);
 
         var referableParams = {};
         if (!_.isUndefined(currentParameters)) {
@@ -2963,6 +3025,18 @@ function evaluateInScope(expr, scope) {
         });
     }
 
+    function normalizeTemplateRootOffsets(templateRoot) {
+        var templateGroup = templateRoot.group;
+        var templateDepthInGroup = templateRoot.depthInGroup;
+        forAllNodes_Recurse(templateRoot, null, -1, function(n, p, i) {
+            if (n.group === templateGroup) {
+                // templateRoot と同じ group の node の depthInGroup は必ず 1 多いので引いておく
+                n.depthInGroup -= templateDepthInGroup + 1;
+            }
+            n.group -= templateGroup;
+        });
+    }
+
     // すべてのテンプレート宣言（&NAME()）を tree から取り外し、所属 node にリストアップ
     // 命名: templates
     function collectTemplateDeclarations() {
@@ -2994,15 +3068,7 @@ function evaluateInScope(expr, scope) {
 
             // node の group 関係を template root からの offset 値に
             // 木の中で宣言した場合でも大丈夫なように対応しておく
-            var templateGroup = node.group;
-            var templateDepthInGroup = node.depthInGroup;
-            forAllNodes_Recurse(node, null, -1, function(n, p, i) {
-                if (n.group === templateGroup) {
-                    // templateRoot と同じ group の node の depthInGroup は必ず 1 多いので引いておく
-                    n.depthInGroup -= templateDepthInGroup + 1;
-                }
-                n.group -= templateGroup;
-            });
+            normalizeTemplateRootOffsets(node);
 
             // 親の children の自分自身を null に
             parent.children[index] = null;
@@ -3503,6 +3569,272 @@ function evaluateInScope(expr, scope) {
         parent.children = insertedChildren;
     }
 
+    function expandTemplateRootIntoTarget(targetNode, targetIndex, templateRoot, parameters, callSiteScope, templateLabel, appendTargetChildren, outputIdPrefix) {
+        // 変数展開（共通 evaluator）
+        if (typeof parameters === "string") {
+            throw new TemplateError(templateLabel + "では文字列引数は使用できません。", targetNode);
+        }
+        if (!parameters || typeof parameters !== "object") parameters = {};
+        var parametersScopeTop = extendScope(callSiteScope, parameters);
+
+        attachArgAliases(parametersScopeTop, parameters);
+
+        // 省略時はこれを使う（引数1個を想定）
+        var defaultParam = "$value";
+        var firstParam = _.find(_.keys(parameters), function(s) { return s.substr(0,1) != "$"; });
+        if (!_.isUndefined(firstParam)) defaultParam = firstParam;
+
+        runAnchorDeclarations(templateRoot, parametersScopeTop);
+        runInitDirectives(templateRoot, parametersScopeTop);
+
+        // ★ テンプレツリー内でも params を積みながら置換
+        var tplStack = [ parametersScopeTop ];
+        forAllNodes_Recurse(
+            templateRoot, null, -1,
+            function(n, p, i) {
+                if (!n) return true;
+                var parentScope = tplStack[tplStack.length - 1];
+                var inheritedLayer = getInheritedScopeLayer(n) || {};
+                var localScope  = extendScope(parentScope, inheritedLayer);
+                tplStack.push(localScope);
+
+                // 入れ子の匿名テンプレ本体は、その匿名テンプレ自身の展開時まで触らない
+                if (p !== null && matchAnonymousTemplateCallText(n.text)) {
+                    tplStack.pop();
+                    return true;
+                }
+
+                var ok = replacePlaceholdersInNode(n, localScope, defaultParam);
+                if (!ok) {
+                    if (n.parent && n.parent.children) {
+                        n.parent.children[i] = null;
+                    }
+                    tplStack.pop();
+                    return true;
+                }
+            },
+            function(){ tplStack.pop(); }
+        );
+        shrinkChildrenArray(templateRoot, null, -1);
+
+        (function expandInlineParamArraysInTemplate() {
+            var scopeStack = [ parametersScopeTop ];
+            forAllNodes_Recurse(
+                templateRoot, null, -1,
+                function(n, p, i) {
+                    if (!n) return true;
+
+                    var parentScope = scopeStack[scopeStack.length - 1];
+                    var inheritedLayer = getInheritedScopeLayer(n) || {};
+                    var localScope = extendScope(parentScope, inheritedLayer);
+                    scopeStack.push(localScope);
+
+                    if (p !== null && matchAnonymousTemplateCallText(n.text)) {
+                        scopeStack.pop();
+                        return true;
+                    }
+
+                    var inlineMatch = matchInlineParamArrayCallText(n.text);
+                    if (inlineMatch) {
+                        try {
+                            expandInlineParamArray(n, i, inlineMatch[1], localScope);
+                        } catch (e) {
+                            if (_.isUndefined(e.node) || _.isUndefined(e.errorMessage)) throw e;
+                            templateError(e.errorMessage, e.node);
+                        }
+                    }
+                },
+                function() { scopeStack.pop(); }
+            );
+        })();
+        shrinkChildrenArray(templateRoot, null, -1);
+
+        // template 内の template 呼び出し（ネスト展開）
+        var tplScopeStack = [ parametersScopeTop ];
+        forAllNodes_Recurse(templateRoot, null, -1, function(n, p, i) {
+            if (!n) return true;
+
+            var parentScope = tplScopeStack[tplScopeStack.length - 1];
+            var inheritedLayer = getInheritedScopeLayer(n) || {};
+            var localScope  = extendScope(parentScope, inheritedLayer);
+            tplScopeStack.push(localScope);
+
+            if (p === null) {
+                return;
+            }
+
+            var anonymousMatch = matchAnonymousTemplateCallText(n.text);
+            if (anonymousMatch) {
+                var anonymousParameters;
+                try {
+                    anonymousParameters = evalTemplateParameters(anonymousMatch[1], n, localScope);
+                } catch(e) {
+                    templateError("パラメータが不正です。\n\n" + e.message, n);
+                }
+
+                if (anonymousParameters === null) {
+                    if (p && p.children) {
+                        p.children[i] = null;
+                    }
+                    n.children = [];
+                    return;
+                }
+
+                try {
+                    addAnonymousTemplateCall(n, i, anonymousParameters, localScope);
+                } catch (e) {
+                    if (_.isUndefined(e.node) || _.isUndefined(e.errorMessage)) throw e;
+                    templateError(e.errorMessage, e.node);
+                }
+                return;
+            }
+
+            var match = matchNamedTemplateCallText(n.text);
+            if (match === null) {
+                return;
+            }
+            var innerTemplateName = match[1];
+            var parsedParameters;
+            try {
+                parsedParameters = evalTemplateParameters(match[2], n, localScope);
+            } catch(e) {
+                var errorMessage = "パラメータが不正です。\n\n" + e.message;
+                templateError(errorMessage, n);
+            }
+
+            addTemplate(n, i, innerTemplateName, parsedParameters, localScope);
+        }, function(){ tplScopeStack.pop(); });
+
+        // template の leaf に target の子ノードを追加する
+        if (appendTargetChildren && targetNode.children.length > 0) {
+            var targetClone = cloneTemplateTree(targetNode);
+
+            // offset にしておく
+            forAllNodes_Recurse(targetClone, null, -1, function(n) {
+                if (n.group === targetNode.group) {
+                    n.depthInGroup -= targetNode.depthInGroup;
+                }
+                n.group -= targetNode.group;
+            });
+
+            forAllNodes_Recurse(templateRoot, null, -1, function(n, p, i) {
+                if (n.children.length > 0) {
+                    return;
+                }
+                // 内容は不問
+                if (_.has(n, 'attributes.sealed')) {
+                    return;
+                }
+                var templateLeaf = n;
+                var target = cloneTemplateTree(targetClone);
+                forAllNodes_Recurse(target, null, -1, function(nn) {
+                    if (nn === null) {
+                        return true;
+                    }
+                    if (nn.group === 0) {
+                        nn.depthInGroup += templateLeaf.depthInGroup;
+                    }
+                    nn.group += templateLeaf.group;
+                    if (nn.children.length === 0) {
+                        // id を _ で連結
+                        nn.id = templateLeaf.id + "_" + nn.id;
+                        return true;
+                    }
+                });
+                templateLeaf.children = target.children;
+                return true;
+            });
+        }
+
+        // template の 全 node の group と leaf の id を書き換える
+        forAllNodes_Recurse(templateRoot, null, -1, function(n) {
+            if (n === null) {
+                return true;
+            }
+            // group 関係は template root からのオフセットとして扱う
+            if (n.group === 0) {
+                n.depthInGroup += targetNode.depthInGroup;
+            }
+            n.group += targetNode.group;
+            if (n.children.length === 0) {
+                // id を _ で連結
+                n.id = joinNodeIds(outputIdPrefix, n.id);
+                return true;
+            }
+        });
+
+        // splice で自分を template の children で置き換える（直後に挿入 + 自分は null 予約）
+        var a = targetNode.parent.children;
+        // template の parent 書き換え
+        for (var j = 0; j < templateRoot.children.length; j++) {
+            if (templateRoot.children[j] === null) {
+                continue;
+            }
+            templateRoot.children[j].parent = targetNode.parent;
+        }
+        var insertedChildren = a.slice(0, targetIndex+1).concat(templateRoot.children).concat(a.slice(targetIndex+1));
+        insertedChildren[targetIndex] = null;
+        targetNode.parent.children = insertedChildren;
+    }
+
+    function addAnonymousTemplateCall(targetNode, targetIndex, parameters, callSiteScope) {
+        if (!targetNode.children || targetNode.children.length === 0) {
+            throw new TemplateError("匿名テンプレートには1個以上の子ノードが必要です。", targetNode);
+        }
+
+        function rollArray(targetNode, targetIndex, list) {
+            var clonedTargetNodes = [];
+            var total = list.length;
+            _.forEach(list, function(element, index) {
+                var node = cloneTemplateTree(targetNode);
+                var entry = element;
+                if (!_.isObject(entry)) {
+                    entry = {
+                        $value: entry
+                    };
+                }
+                var elementId = ("$id" in entry) ? entry.$id : "i" + index;
+                node.__anonymousIdPrefix = joinNodeIds(targetNode.__anonymousIdPrefix, elementId);
+
+                // ループメタを付与
+                entry = _.assign({}, entry, buildLoopMeta(index, total));
+
+                var paramJSON = JSON.stringify(entry);
+                node.text = "*(" + paramJSON + ")";
+                clonedTargetNodes.push(node);
+            });
+
+            targetNode.parent.children[targetIndex] = null;
+            var a = targetNode.parent.children;
+            var insertedChildren = a.slice(0, targetIndex+1).concat(clonedTargetNodes).concat(a.slice(targetIndex+1));
+            insertedChildren[targetIndex] = null;
+            targetNode.parent.children = insertedChildren;
+            targetNode.children = [];
+        }
+
+        // 数値/{$times:...}/配列 を一律リスト化
+        var __list = toRepeatList(parameters) || (_.isArray(parameters) ? parameters : null);
+        if (__list) {
+            rollArray(targetNode, targetIndex, __list);
+            return;
+        }
+
+        var templateRoot = cloneTemplateTree(targetNode);
+        normalizeTemplateRootOffsets(templateRoot);
+
+        expandTemplateRootIntoTarget(
+            targetNode,
+            targetIndex,
+            templateRoot,
+            parameters,
+            callSiteScope,
+            "匿名テンプレート",
+            false,
+            targetNode.__anonymousIdPrefix
+        );
+        targetNode.children = [];
+    }
+
     // ===== Template Expansion =====
     // node に template の clone を追加する（展開前の状態で追加）
     function addTemplate(targetNode, targetIndex, templateName, parameters, callSiteScope) {
@@ -3556,169 +3888,16 @@ function evaluateInScope(expr, scope) {
         // まず clone
         templateRoot = cloneTemplateTree(templateRoot);
 
-        // 変数展開（共通 evaluator）
-        {
-            // 呼び出し地点のスコープに引数を最上段で重ねる
-            if (typeof parameters === "string") {
-                var errorMessage = "テンプレート'" + templateName + "'では文字列引数は使用できません。";
-                throw new TemplateError(errorMessage, targetNode);
-            }
-            if (!parameters || typeof parameters !== "object") parameters = {};
-            var parametersScopeTop = extendScope(callSiteScope, parameters);
-
-            attachArgAliases(parametersScopeTop, parameters);
-
-            // 省略時はこれを使う（引数1個を想定）
-            var defaultParam = "$value";
-            var firstParam = _.find(_.keys(parameters), function(s) { return s.substr(0,1) != "$"; });
-            if (!_.isUndefined(firstParam)) defaultParam = firstParam;
-
-            runAnchorDeclarations(templateRoot, parametersScopeTop);
-            runInitDirectives(templateRoot, parametersScopeTop);
-
-            // ★ テンプレツリー内でも params を積みながら置換
-            var tplStack = [ parametersScopeTop ];
-            forAllNodes_Recurse(
-                templateRoot, null, -1,
-                function(n, p, i) {
-                    if (!n) return true;
-                    var parentScope = tplStack[tplStack.length - 1];
-                    var inheritedLayer = getInheritedScopeLayer(n) || {};
-                    var localScope  = extendScope(parentScope, inheritedLayer);
-                    tplStack.push(localScope);
-                    var ok = replacePlaceholdersInNode(n, localScope, defaultParam);
-                    if (!ok) { n.parent.children[i] = null; return; }
-                },
-                function(){ tplStack.pop(); }
-            );
-            shrinkChildrenArray(templateRoot, null, -1);
-
-            (function expandInlineParamArraysInTemplate() {
-                var scopeStack = [ parametersScopeTop ];
-                forAllNodes_Recurse(
-                    templateRoot, null, -1,
-                    function(n, p, i) {
-                        if (!n) return true;
-
-                        var parentScope = scopeStack[scopeStack.length - 1];
-                        var inheritedLayer = getInheritedScopeLayer(n) || {};
-                        var localScope = extendScope(parentScope, inheritedLayer);
-                        scopeStack.push(localScope);
-
-                        var trimmed = n.text && n.text.trim();
-                        var inlineMatch = trimmed && trimmed.match(/^\*([A-Za-z_]\w*)$/);
-                        if (inlineMatch) {
-                            try {
-                                expandInlineParamArray(n, i, inlineMatch[1], localScope);
-                            } catch (e) {
-                                if (_.isUndefined(e.node) || _.isUndefined(e.errorMessage)) throw e;
-                                templateError(e.errorMessage, e.node);
-                            }
-                        }
-                    },
-                    function() { scopeStack.pop(); }
-                );
-            })();
-            shrinkChildrenArray(templateRoot, null, -1);
-        }
-
-        // template 内の template 呼び出し（ネスト展開）
-        var tplScopeStack = [ parametersScopeTop ];
-        forAllNodes_Recurse(templateRoot, null, -1, function(n, p, i) {
-            var parentScope = tplScopeStack[tplScopeStack.length - 1];
-            var inheritedLayer = getInheritedScopeLayer(n) || {};
-            var localScope  = extendScope(parentScope, inheritedLayer);
-            tplScopeStack.push(localScope);
-
-            if (p === null) {
-                return;
-            }
-            var match = n.text.trim().match(/^\*([A-Za-z_]\w*)\((.*)\)$/);
-            if (match === null) {
-                return;
-            }
-            var innerTemplateName = match[1];
-            var parsedParameters;
-            try {
-                parsedParameters = evalTemplateParameters(match[2], n, localScope);
-            } catch(e) {
-                var errorMessage = "パラメータが不正です。\n\n" + e.message;
-                templateError(errorMessage, n);
-            }
-
-            addTemplate(n, i, innerTemplateName, parsedParameters, localScope);
-        }, function(){ tplScopeStack.pop(); });
-
-        // template の leaf に target の子ノードを追加する
-        if (targetNode.children.length > 0) {
-            var targetClone = cloneTemplateTree(targetNode);
-
-            // offset にしておく
-            forAllNodes_Recurse(targetClone, null, -1, function(n) {
-                if (n.group === targetNode.group) {
-                    n.depthInGroup -= targetNode.depthInGroup;
-                }
-                n.group -= targetNode.group;
-            });
-
-            forAllNodes_Recurse(templateRoot, null, -1, function(n, p, i) {
-                if (n.children.length > 0) {
-                    return;
-                }
-                // 内容は不問
-                if (_.has(n, 'attributes.sealed')) {
-                    return;
-                }
-                var templateLeaf = n;
-                var target = cloneTemplateTree(targetClone);
-                forAllNodes_Recurse(target, null, -1, function(nn) {
-                    if (nn === null) {
-                        return true;
-                    }
-                    if (nn.group === 0) {
-                        nn.depthInGroup += templateLeaf.depthInGroup;
-                    }
-                    nn.group += templateLeaf.group;
-                    if (nn.children.length === 0) {
-                        // id を _ で連結
-                        nn.id = templateLeaf.id + "_" + nn.id;
-                        return true;
-                    }
-                });
-                templateLeaf.children = target.children;
-                return true;
-            });
-        }
-
-        // template の 全 node の group と leaf の id を書き換える
-        forAllNodes_Recurse(templateRoot, null, -1, function(n) {
-            if (n === null) {
-                return true;
-            }
-            // group 関係は template root からのオフセットとして扱う
-            if (n.group === 0) {
-                n.depthInGroup += targetNode.depthInGroup;
-            }
-            n.group += targetNode.group;
-            if (n.children.length === 0) {
-                // id を _ で連結
-                n.id = targetNode.id + "_" + n.id;
-                return true;
-            }
-        });
-
-        // splice で自分を template の children で置き換える（直後に挿入 + 自分は null 予約）
-        var a = targetNode.parent.children;
-        // template の parent 書き換え
-        for (var j = 0; j < templateRoot.children.length; j++) {
-            if (templateRoot.children[j] === null) {
-                continue;
-            }
-            templateRoot.children[j].parent = targetNode.parent;
-        }
-        var insertedChildren = a.slice(0, targetIndex+1).concat(templateRoot.children).concat(a.slice(targetIndex+1));
-        insertedChildren[targetIndex] = null;
-        targetNode.parent.children = insertedChildren;
+        expandTemplateRootIntoTarget(
+            targetNode,
+            targetIndex,
+            templateRoot,
+            parameters,
+            callSiteScope,
+            "テンプレート'" + templateName + "'",
+            true,
+            targetNode.id
+        );
     }
 
     // テンプレートをインライン展開していく
@@ -3735,9 +3914,7 @@ function evaluateInScope(expr, scope) {
                 var localScope  = extendScope(parentScope, inheritedLayer);
                 scopeStack.push(localScope);
 
-                var trimmedText = node.text && node.text.trim();
-
-                var inlineArrayMatch = trimmedText && trimmedText.match(/^\*([A-Za-z_]\w*)$/);
+                var inlineArrayMatch = matchInlineParamArrayCallText(node.text);
                 if (inlineArrayMatch) {
                     var paramName = inlineArrayMatch[1];
                     try {
@@ -3749,7 +3926,33 @@ function evaluateInScope(expr, scope) {
                     return;
                 }
 
-                var match = trimmedText && trimmedText.match(/^\*([A-Za-z_]\w*)\((.*)\)$/);
+                var anonymousMatch = matchAnonymousTemplateCallText(node.text);
+                if (anonymousMatch) {
+                    var anonymousParameters;
+                    try {
+                        anonymousParameters = evalTemplateParameters(anonymousMatch[1], node, localScope);
+                    } catch(e) {
+                        templateError("パラメータが不正です。\n\n" + e.message, node);
+                    }
+
+                    if (anonymousParameters === null) {
+                        if (parent && parent.children) {
+                            parent.children[index] = null;
+                        }
+                        node.children = [];
+                        return;
+                    }
+
+                    try {
+                        addAnonymousTemplateCall(node, index, anonymousParameters, localScope);
+                    } catch (e) {
+                        if (_.isUndefined(e.node) || _.isUndefined(e.errorMessage)) throw e;
+                        templateError(e.errorMessage, e.node);
+                    }
+                    return;
+                }
+
+                var match = matchNamedTemplateCallText(node.text);
                 if (match) {
                     var templateName = match[1];
                     var parameters;

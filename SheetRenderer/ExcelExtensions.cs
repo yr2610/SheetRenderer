@@ -18,40 +18,93 @@ using YamlDotNet.Serialization.NamingConventions;
 
 public static class ExcelExtensions
 {
+    private static void ReleaseComObject(object comObject)
+    {
+        if (comObject == null)
+        {
+            return;
+        }
+
+        try
+        {
+            if (Marshal.IsComObject(comObject))
+            {
+                Marshal.ReleaseComObject(comObject);
+            }
+        }
+        catch
+        {
+        }
+    }
 
     public static void AutoFitColumnsIfNarrower(this Excel.Range range)
     {
-        Excel.Worksheet sheet = range.Worksheet;
-
         // 各列の元の幅を保存
-        double[] originalWidths = new double[range.Columns.Count];
-        int index = 0;
-        foreach (Excel.Range column in range.Columns)
+        Excel.Range columns = null;
+        try
         {
-            originalWidths[index++] = column.ColumnWidth;
-        }
+            columns = range.Columns;
+            int columnCount = columns.Count;
+            double[] originalWidths = new double[columnCount];
 
-        // 一度にAutoFitを適用
-        range.Columns.AutoFit();
-
-        // 各列の幅をチェックして、元の幅よりも広くなった場合は元に戻す
-        index = 0;
-        foreach (Excel.Range column in range.Columns)
-        {
-            if (column.ColumnWidth > originalWidths[index])
+            for (int columnIndex = 1; columnIndex <= columnCount; columnIndex++)
             {
-                column.ColumnWidth = originalWidths[index];
+                Excel.Range column = null;
+                try
+                {
+                    column = columns[columnIndex] as Excel.Range;
+                    originalWidths[columnIndex - 1] = column.ColumnWidth;
+                }
+                finally
+                {
+                    ReleaseComObject(column);
+                }
             }
-            index++;
+
+            // 一度にAutoFitを適用
+            columns.AutoFit();
+
+            // 各列の幅をチェックして、元の幅よりも広くなった場合は元に戻す
+            for (int columnIndex = 1; columnIndex <= columnCount; columnIndex++)
+            {
+                Excel.Range column = null;
+                try
+                {
+                    column = columns[columnIndex] as Excel.Range;
+                    if (column.ColumnWidth > originalWidths[columnIndex - 1])
+                    {
+                        column.ColumnWidth = originalWidths[columnIndex - 1];
+                    }
+                }
+                finally
+                {
+                    ReleaseComObject(column);
+                }
+            }
+        }
+        finally
+        {
+            ReleaseComObject(columns);
         }
     }
 
     public static Excel.Range GetRange(this Excel.Worksheet sheet, int startRow, int startColumn, int rowCount, int columnCount)
     {
-        Excel.Range startCell = (Excel.Range)sheet.Cells[startRow, startColumn];
-        Excel.Range endCell = (Excel.Range)sheet.Cells[startRow + rowCount - 1, startColumn + columnCount - 1];
-        Excel.Range range = sheet.Range[startCell, endCell];
-        return range;
+        Excel.Range startCell = null;
+        Excel.Range endCell = null;
+
+        try
+        {
+            startCell = (Excel.Range)sheet.Cells[startRow, startColumn];
+            endCell = (Excel.Range)sheet.Cells[startRow + rowCount - 1, startColumn + columnCount - 1];
+            Excel.Range range = sheet.Range[startCell, endCell];
+            return range;
+        }
+        finally
+        {
+            ReleaseComObject(endCell);
+            ReleaseComObject(startCell);
+        }
     }
 
     public static object[,] GetValuesAs2DArray(object range)
@@ -78,156 +131,313 @@ public static class ExcelExtensions
 
     public static IEnumerable<object> GetColumnWithOffset(this Excel.Worksheet worksheet, string address, int columnOffset)
     {
-        // 指定されたアドレスの範囲を取得
-        var range = worksheet.Range[address];
+        Excel.Range range = null;
+        Excel.Range rows = null;
+        Excel.Range startCell = null;
+        Excel.Range endCell = null;
+        Excel.Range offsetColumn = null;
 
-        // 範囲の開始列を取得
-        int startColumn = range.Column;
-
-        // オフセット後の列番号を計算
-        int targetColumn = startColumn + columnOffset;
-
-        // 指定された範囲の行を基準にして、対象列を取得
-        var offsetColumn = worksheet.Range[worksheet.Cells[range.Row, targetColumn], worksheet.Cells[range.Row + range.Rows.Count - 1, targetColumn]];
-
-        // 2次元配列として範囲を取得
-        var values = GetValuesAs2DArray(offsetColumn.Value2);
-
-        // 2次元配列をList<object>に変換
-        var result = new List<object>();
-        for (int i = 1; i <= values.GetLength(0); i++)
+        try
         {
-            result.Add(values[i, 1]);
-        }
+            // 指定されたアドレスの範囲を取得
+            range = worksheet.Range[address];
 
-        return result;
+            // 範囲の開始列を取得
+            int startColumn = range.Column;
+
+            // オフセット後の列番号を計算
+            int targetColumn = startColumn + columnOffset;
+            rows = range.Rows;
+
+            // 指定された範囲の行を基準にして、対象列を取得
+            startCell = worksheet.Cells[range.Row, targetColumn] as Excel.Range;
+            endCell = worksheet.Cells[range.Row + rows.Count - 1, targetColumn] as Excel.Range;
+            offsetColumn = worksheet.Range[startCell, endCell];
+
+            // 2次元配列として範囲を取得
+            var values = GetValuesAs2DArray(offsetColumn.Value2);
+
+            // 2次元配列をList<object>に変換
+            var result = new List<object>();
+            for (int i = 1; i <= values.GetLength(0); i++)
+            {
+                result.Add(values[i, 1]);
+            }
+
+            return result;
+        }
+        finally
+        {
+            ReleaseComObject(offsetColumn);
+            ReleaseComObject(endCell);
+            ReleaseComObject(startCell);
+            ReleaseComObject(rows);
+            ReleaseComObject(range);
+        }
     }
 
     // columnIndex は 0-origin
     public static IEnumerable<object> GetColumnValues(this Excel.Range range, int columnIndex)
     {
-        // 指定された列インデックスが範囲外の場合に対応
-        int totalColumns = range.Columns.Count;
-        Excel.Range columnRange;
+        Excel.Range columns = null;
+        Excel.Range rows = null;
+        Excel.Range offsetRange = null;
+        Excel.Range columnRange = null;
 
-        if (columnIndex >= totalColumns)
+        try
         {
-            // 範囲外の列インデックスの場合、指定された列を元の範囲の行に合わせて取得
-            int offsetColumns = columnIndex - totalColumns + 1;
-            columnRange = range.Offset[0, offsetColumns].Resize[range.Rows.Count, 1];
-        }
-        else
-        {
-            // 指定された列の範囲を取得
-            columnRange = range.Columns[columnIndex + 1];
-        }
+            // 指定された列インデックスが範囲外の場合に対応
+            columns = range.Columns;
+            int totalColumns = columns.Count;
 
-        object value = columnRange.Value2;
-        if (value is object[,])
-        {
-            object[,] values = (object[,])value;
-            for (int i = 1; i <= values.GetLength(0); i++)
+            if (columnIndex >= totalColumns)
             {
-                yield return values[i, 1];
+                // 範囲外の列インデックスの場合、指定された列を元の範囲の行に合わせて取得
+                int offsetColumns = columnIndex - totalColumns + 1;
+                rows = range.Rows;
+                offsetRange = range.Offset[0, offsetColumns];
+                columnRange = offsetRange.Resize[rows.Count, 1];
             }
+            else
+            {
+                // 指定された列の範囲を取得
+                columnRange = columns[columnIndex + 1];
+            }
+
+            object value = columnRange.Value2;
+            var result = new List<object>();
+            if (value is object[,] values)
+            {
+                for (int i = 1; i <= values.GetLength(0); i++)
+                {
+                    result.Add(values[i, 1]);
+                }
+            }
+            else if (value != null)
+            {
+                result.Add(value);
+            }
+
+            return result;
         }
-        else if (value != null)
+        finally
         {
-            yield return value;
+            ReleaseComObject(columnRange);
+            ReleaseComObject(offsetRange);
+            ReleaseComObject(rows);
+            ReleaseComObject(columns);
         }
     }
 
     // 指定されたワークシートオブジェクトと列アドレスから列インデックスを取得する
     public static int ColumnAddressToIndex(this Excel.Worksheet worksheet, string columnAddress)
     {
-        Excel.Range range = worksheet.Range[columnAddress + "1"];
-        return range.Column;
+        Excel.Range range = null;
+        try
+        {
+            range = worksheet.Range[columnAddress + "1"];
+            return range.Column;
+        }
+        finally
+        {
+            ReleaseComObject(range);
+        }
     }
 
     public static void DeleteRows(this Excel.Worksheet worksheet, int startRow, int rowCount)
     {
-        Excel.Range rows = worksheet.Rows[startRow].Resize[rowCount];
-        rows.Delete();
+        Excel.Range startRowRange = null;
+        Excel.Range rows = null;
+        try
+        {
+            startRowRange = worksheet.Rows[startRow];
+            rows = startRowRange.Resize[rowCount];
+            rows.Delete();
+        }
+        finally
+        {
+            ReleaseComObject(rows);
+            ReleaseComObject(startRowRange);
+        }
     }
 
     public static void InsertRowsAndCopyFormulas(this Excel.Worksheet worksheet, int startRow, int rowCount)
     {
-        // 行を挿入
-        Excel.Range insertRange = worksheet.Rows[startRow].Resize[rowCount];
-        insertRange.Insert(Excel.XlInsertShiftDirection.xlShiftDown);
+        Excel.Application application = null;
+        Excel.Range insertStartRow = null;
+        Excel.Range insertRange = null;
+        Excel.Range sourceRange = null;
+        Excel.Range firstRowDestination = null;
+        Excel.Range sheetUsedRange = null;
+        Excel.Range secondRowDestination = null;
+        Excel.Range secondToLastRange = null;
 
-        // 挿入した行の上の行から数式をコピー
-        Excel.Range sourceRange = worksheet.Rows[startRow - 1];
-
-        // 1行目にフォーマットをコピー
-        Excel.Range firstRowDestination = worksheet.Rows[startRow];
-        sourceRange.Copy(firstRowDestination);
-
-        // シートの使用範囲を取得
-        Excel.Range sheetUsedRange = worksheet.UsedRange;
-
-        // UsedRange の列範囲を処理
-        int startColumn = sheetUsedRange.Column;
-        int endColumn = sheetUsedRange.Column + sheetUsedRange.Columns.Count - 1;
-
-        // 1行目に数式を持たないセルを空欄にする
-        for (int column = startColumn; column <= endColumn; column++)
+        try
         {
-            Excel.Range sourceCell = sourceRange.Cells[1, column];
-            if (!sourceCell.HasFormula) // 数式がない場合
+            application = worksheet.Application;
+
+            // 行を挿入
+            insertStartRow = worksheet.Rows[startRow];
+            insertRange = insertStartRow.Resize[rowCount];
+            insertRange.Insert(Excel.XlInsertShiftDirection.xlShiftDown);
+
+            // 挿入した行の上の行から数式をコピー
+            sourceRange = worksheet.Rows[startRow - 1];
+
+            // 1行目にフォーマットをコピー
+            firstRowDestination = worksheet.Rows[startRow];
+            sourceRange.Copy(firstRowDestination);
+
+            // シートの使用範囲を取得
+            sheetUsedRange = worksheet.UsedRange;
+
+            // UsedRange の列範囲を処理
+            int startColumn = sheetUsedRange.Column;
+            int endColumn = sheetUsedRange.Column + sheetUsedRange.Columns.Count - 1;
+
+            // 1行目に数式を持たないセルを空欄にする
+            for (int column = startColumn; column <= endColumn; column++)
             {
-                firstRowDestination.Cells[1, column].Value = null;
+                Excel.Range sourceCell = null;
+                Excel.Range destinationCell = null;
+                try
+                {
+                    sourceCell = sourceRange.Cells[1, column];
+                    if (!sourceCell.HasFormula) // 数式がない場合
+                    {
+                        destinationCell = firstRowDestination.Cells[1, column];
+                        destinationCell.Value = null;
+                    }
+                }
+                finally
+                {
+                    ReleaseComObject(destinationCell);
+                    ReleaseComObject(sourceCell);
+                }
             }
-        }
 
-        // 2行目以降がある場合、1行目からコピー
-        if (rowCount > 1)
+            // 2行目以降がある場合、1行目からコピー
+            if (rowCount > 1)
+            {
+                // firstRowDestination を1行下にずらし、サイズを設定
+                secondRowDestination = firstRowDestination.Offset[1];
+                secondToLastRange = secondRowDestination.Resize[rowCount - 1];
+                firstRowDestination.Copy(secondToLastRange);
+            }
+
+            UpdateNamedRanges(worksheet, startRow, rowCount);
+        }
+        finally
         {
-            // firstRowDestination を1行下にずらし、サイズを設定
-            Excel.Range secondToLastRange = firstRowDestination.Offset[1].Resize[rowCount - 1];
-            firstRowDestination.Copy(secondToLastRange);
-        }
+            try
+            {
+                if (application != null)
+                {
+                    application.CutCopyMode = 0;
+                }
+            }
+            catch
+            {
+            }
 
-        UpdateNamedRanges(worksheet, startRow, rowCount);
+            ReleaseComObject(secondToLastRange);
+            ReleaseComObject(secondRowDestination);
+            ReleaseComObject(sheetUsedRange);
+            ReleaseComObject(firstRowDestination);
+            ReleaseComObject(sourceRange);
+            ReleaseComObject(insertRange);
+            ReleaseComObject(insertStartRow);
+        }
     }
 
     // 名前付き範囲を自動的に検出し、必要であれば更新
     private static void UpdateNamedRanges(Excel.Worksheet worksheet, int startRow, int rowCount)
     {
-        foreach (Excel.Name name in worksheet.Names)
+        Excel.Names names = null;
+        try
         {
-            Excel.Range range = name.RefersToRange;
-            int rangeLastRow = range.Row + range.Rows.Count - 1;
+            names = worksheet.Names;
+            int nameCount = names.Count;
 
-            // 名前付き範囲が自動で拡張されないケースに対応
-            // 挿入位置が名前付き範囲の最終行に一致するかチェック
-            if (startRow == rangeLastRow)
+            for (int i = 1; i <= nameCount; i++)
             {
-                // 名前付き範囲を更新
-                int newLastRow = rangeLastRow + rowCount; // 追加された行数だけ最終行をシフト
+                Excel.Name name = null;
+                Excel.Range range = null;
+                Excel.Range firstCell = null;
+                Excel.Range lastCell = null;
+                Excel.Range newRange = null;
+                try
+                {
+                    name = names.Item(i);
+                    range = name.RefersToRange;
+                    int rangeLastRow = range.Row + range.Rows.Count - 1;
 
-                // 新しい範囲を計算して更新
-                int rangeLastColumn = range.Column + range.Columns.Count - 1;
-                var newRange = worksheet.Range[range.Cells[1, 1], worksheet.Cells[newLastRow, rangeLastColumn]];
-                worksheet.Names.Item(name.Name).RefersTo = "=" + worksheet.Name + "!" + newRange.Address;
+                    // 名前付き範囲が自動で拡張されないケースに対応
+                    // 挿入位置が名前付き範囲の最終行に一致するかチェック
+                    if (startRow == rangeLastRow)
+                    {
+                        // 名前付き範囲を更新
+                        int newLastRow = rangeLastRow + rowCount; // 追加された行数だけ最終行をシフト
+
+                        // 新しい範囲を計算して更新
+                        int rangeLastColumn = range.Column + range.Columns.Count - 1;
+                        firstCell = range.Cells[1, 1];
+                        lastCell = worksheet.Cells[newLastRow, rangeLastColumn];
+                        newRange = worksheet.Range[firstCell, lastCell];
+                        name.RefersTo = "=" + worksheet.Name + "!" + newRange.Address;
+                    }
+                }
+                finally
+                {
+                    ReleaseComObject(newRange);
+                    ReleaseComObject(lastCell);
+                    ReleaseComObject(firstCell);
+                    ReleaseComObject(range);
+                    ReleaseComObject(name);
+                }
             }
+        }
+        finally
+        {
+            ReleaseComObject(names);
         }
     }
 
     // 指定した範囲のセルに同じ値を代入します
     public static void SetRangeValue<T>(this Excel.Worksheet sheet, int startRow, int startColumn, int rowCount, int columnCount, T value)
     {
-        Excel.Range startCell = (Excel.Range)sheet.Cells[startRow, startColumn];
-        Excel.Range range = startCell.Resize[rowCount, columnCount];
+        Excel.Range startCell = null;
+        Excel.Range range = null;
 
-        range.Value = value;
+        try
+        {
+            startCell = (Excel.Range)sheet.Cells[startRow, startColumn];
+            range = startCell.Resize[rowCount, columnCount];
+            range.Value = value;
+        }
+        finally
+        {
+            ReleaseComObject(range);
+            ReleaseComObject(startCell);
+        }
     }
 
     public static void SetValueInSheet<T>(this Excel.Worksheet sheet, int startRow, int startColumn, T[,] array)
     {
-        Excel.Range range = sheet.Cells[startRow, startColumn] as Excel.Range;
-        range = range.Resize[array.GetLength(0), array.GetLength(1)];
-        range.Value = array;
+        Excel.Range startCell = null;
+        Excel.Range range = null;
+
+        try
+        {
+            startCell = sheet.Cells[startRow, startColumn] as Excel.Range;
+            range = startCell.Resize[array.GetLength(0), array.GetLength(1)];
+            range.Value = array;
+        }
+        finally
+        {
+            ReleaseComObject(range);
+            ReleaseComObject(startCell);
+        }
     }
 
     public static void SetValueInSheet<T>(this Excel.Worksheet sheet, int startRow, int startColumn, IEnumerable<T> source, bool isRow = true)
@@ -266,14 +476,36 @@ public static class ExcelExtensions
 
     public static Excel.Worksheet GetSheetIfExists(this Excel.Workbook workbook, string sheetName)
     {
-        foreach (Excel.Worksheet sheet in workbook.Sheets)
+        Excel.Sheets sheets = null;
+        try
         {
-            if (sheet.Name == sheetName)
+            sheets = workbook.Sheets;
+            foreach (Excel.Worksheet sheet in sheets)
             {
-                return sheet;
+                bool found = false;
+                try
+                {
+                    found = sheet.Name == sheetName;
+                    if (found)
+                    {
+                        return sheet;
+                    }
+                }
+                finally
+                {
+                    if (!found)
+                    {
+                        ReleaseComObject(sheet);
+                    }
+                }
             }
+
+            return null;
         }
-        return null;
+        finally
+        {
+            ReleaseComObject(sheets);
+        }
     }
 
     public static string GenerateTempSheetName(this Excel.Workbook workbook)
@@ -282,8 +514,22 @@ public static class ExcelExtensions
         int counter = 1;
 
         // 一時的な名前が既存のシート名と重複しないようにチェック
-        while (workbook.GetSheetIfExists(tempName) != null)
+        while (true)
         {
+            Excel.Worksheet existingSheet = null;
+            try
+            {
+                existingSheet = workbook.GetSheetIfExists(tempName);
+                if (existingSheet == null)
+                {
+                    break;
+                }
+            }
+            finally
+            {
+                ReleaseComObject(existingSheet);
+            }
+
             tempName = "TempSheetName" + counter;
             counter++;
         }
@@ -293,29 +539,50 @@ public static class ExcelExtensions
 
     public static Excel.Name GetNamedRange(this Excel.Worksheet sheet, string name)
     {
+        Excel.Names names = null;
         try
         {
-            Excel.Name namedRange = sheet.Names.Item(name);
+            names = sheet.Names;
+            Excel.Name namedRange = names.Item(name);
             return namedRange;
         }
         catch (Exception)
         {
             return null; // エラーが発生した場合は null を返します
         }
+        finally
+        {
+            ReleaseComObject(names);
+        }
     }
 
     public static void DeleteCustomProperty(this Excel.Worksheet sheet, string propertyName)
     {
-        var customProperties = sheet.CustomProperties;
-        foreach (Excel.CustomProperty property in customProperties)
+        Excel.CustomProperties customProperties = null;
+        try
         {
-            if (property.Name == propertyName)
+            customProperties = sheet.CustomProperties;
+            foreach (Excel.CustomProperty property in customProperties)
             {
-                property.Delete();  // 既存のプロパティを削除
-                return;
+                try
+                {
+                    if (property.Name == propertyName)
+                    {
+                        property.Delete();  // 既存のプロパティを削除
+                        return;
+                    }
+                }
+                finally
+                {
+                    ReleaseComObject(property);
+                }
             }
+            // 既存のプロパティが見つからない場合は何もしない
         }
-        // 既存のプロパティが見つからない場合は何もしない
+        finally
+        {
+            ReleaseComObject(customProperties);
+        }
     }
 
     public static void SetCustomProperty(this Excel.Worksheet sheet, string propertyName, string propertyValue)
@@ -327,54 +594,123 @@ public static class ExcelExtensions
         }
 
         // プロパティ値がnullまたは空でない場合、新規追加または更新
-        var customProperties = sheet.CustomProperties;
-        foreach (Excel.CustomProperty property in customProperties)
+        Excel.CustomProperties customProperties = null;
+        Excel.CustomProperty addedProperty = null;
+        try
         {
-            if (property.Name == propertyName)
+            customProperties = sheet.CustomProperties;
+            foreach (Excel.CustomProperty property in customProperties)
             {
-                property.Value = propertyValue;
-                return;
+                try
+                {
+                    if (property.Name == propertyName)
+                    {
+                        property.Value = propertyValue;
+                        return;
+                    }
+                }
+                finally
+                {
+                    ReleaseComObject(property);
+                }
             }
+
+            addedProperty = customProperties.Add(propertyName, propertyValue);
         }
-        customProperties.Add(propertyName, propertyValue);
+        finally
+        {
+            ReleaseComObject(addedProperty);
+            ReleaseComObject(customProperties);
+        }
     }
 
     public static string GetCustomProperty(this Excel.Worksheet sheet, string propertyName)
     {
-        var customProperties = sheet.CustomProperties;
-        foreach (Excel.CustomProperty property in customProperties)
+        Excel.CustomProperties customProperties = null;
+        try
         {
-            if (property.Name == propertyName)
+            customProperties = sheet.CustomProperties;
+            foreach (Excel.CustomProperty property in customProperties)
             {
-                return property.Value.ToString();
+                try
+                {
+                    if (property.Name == propertyName)
+                    {
+                        object value = property.Value;
+                        return value == null ? null : value.ToString();
+                    }
+                }
+                finally
+                {
+                    ReleaseComObject(property);
+                }
             }
+
+            return null;
         }
-        return null;
+        finally
+        {
+            ReleaseComObject(customProperties);
+        }
     }
 
     public static dynamic GetCustomPropertyObject(this Excel.Workbook workbook, string propertyName)
     {
-        dynamic properties = workbook.CustomDocumentProperties;
-        foreach (dynamic prop in properties)
+        dynamic properties = null;
+        try
         {
-            if (prop.Name == propertyName)
+            properties = workbook.CustomDocumentProperties;
+            foreach (dynamic prop in properties)
             {
-                return prop;
+                bool found = false;
+                try
+                {
+                    found = prop.Name == propertyName;
+                    if (found)
+                    {
+                        return prop;
+                    }
+                }
+                finally
+                {
+                    if (!found)
+                    {
+                        ReleaseComObject((object)prop);
+                    }
+                }
             }
+
+            return null;
         }
-        return null;
+        finally
+        {
+            ReleaseComObject((object)properties);
+        }
     }
 
     public static void SetCustomProperty(this Excel.Workbook workbook, string propertyName, string propertyValue)
     {
-        dynamic prop = GetCustomPropertyObject(workbook, propertyName);
-        if (prop != null)
+        dynamic prop = null;
+        dynamic properties = null;
+        dynamic addedProperty = null;
+        try
         {
-            prop.Value = propertyValue;
+            prop = GetCustomPropertyObject(workbook, propertyName);
+            if (prop != null)
+            {
+                prop.Value = propertyValue;
+            }
+            else
+            {
+                properties = workbook.CustomDocumentProperties;
+                addedProperty = properties.Add(propertyName, false, Office.MsoDocProperties.msoPropertyTypeString, propertyValue);
+            }
         }
-        else
+        finally
         {
-            workbook.CustomDocumentProperties.Add(propertyName, false, Office.MsoDocProperties.msoPropertyTypeString, propertyValue);
+            ReleaseComObject((object)addedProperty);
+            ReleaseComObject((object)properties);
+            ReleaseComObject((object)prop);
         }
     }
 
@@ -390,8 +726,16 @@ public static class ExcelExtensions
 
     public static string GetCustomProperty(this Excel.Workbook workbook, string propertyName)
     {
-        dynamic prop = GetCustomPropertyObject(workbook, propertyName);
-        return prop != null ? prop.Value : null;
+        dynamic prop = null;
+        try
+        {
+            prop = GetCustomPropertyObject(workbook, propertyName);
+            return prop != null ? prop.Value : null;
+        }
+        finally
+        {
+            ReleaseComObject((object)prop);
+        }
     }
 
     public static T GetCustomProperty<T>(this Excel.Workbook workbook, string propertyName)
