@@ -2721,11 +2721,38 @@ function evaluateInScope(expr, scope) {
     // ===== Parameter Evaluation =====
     var templateParamFnCache = Object.create(null);
 
+    function expandTemplateIntegerRange(paramsStr) {
+        var rangeMatch = paramsStr.match(/^(-?\d+(?:\.\d+)?)\s*\.\.\s*(-?\d+(?:\.\d+)?)$/);
+        if (!rangeMatch) {
+            return paramsStr;
+        }
+
+        var start = Number(rangeMatch[1]);
+        var end = Number(rangeMatch[2]);
+        if (!Number.isInteger(start) || !Number.isInteger(end)) {
+            throw new Error("range 記法では整数のみ使用できます。");
+        }
+        if (start < 0 || end < 0) {
+            throw new Error("range 記法ではマイナス値は使用できません。");
+        }
+
+        var count = Math.abs(end - start) + 1;
+        if (count > MAX_REPEAT) {
+            throw new Error("range 記法の要素数が上限を超えています。上限: " + MAX_REPEAT);
+        }
+
+        var step = start <= end ? 1 : -1;
+        return JSON.stringify(_.times(count, function(index) {
+            return start + step * index;
+        }));
+    }
+
     function evalTemplateParameters(paramsStr, node, currentParameters) {
         paramsStr = paramsStr.trim();
         if (paramsStr == "") {
             return {};
         }
+        paramsStr = expandTemplateIntegerRange(paramsStr);
 
         var referableParams = {};
         if (!_.isUndefined(currentParameters)) {
