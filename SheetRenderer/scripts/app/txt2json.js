@@ -225,6 +225,16 @@ function matchAnonymousTemplateCallText(text) {
     return trimmed && trimmed.match(/^\*\((.*)\)$/);
 }
 
+function joinNodeIds(prefix, id) {
+    if (_.isUndefined(prefix) || prefix === null || prefix === "") {
+        return id;
+    }
+    if (_.isUndefined(id) || id === null || id === "") {
+        return prefix;
+    }
+    return prefix + "_" + id;
+}
+
 function countLeadingSpaces(s) {
     var match = String(s).match(/^\s*/);
     return match ? match[0].length : 0;
@@ -1759,11 +1769,12 @@ _.forEach(noIdNodes, function(infos) {
         // 2) ディレクティブ @xxx:         …… 例: @init:, @set: など将来拡張含む
         if (element.node.children.length === 0) {
             var t = element.node.text;
-            return !/^(?:&[A-Za-z_]\w*:|@[A-Za-z_]\w*:)/.test(t);
+            return !/^(?:&[A-Za-z_]\w*:|@[A-Za-z_]\w*:)/.test(t) &&
+                !matchAnonymousTemplateCallText(t);
         }
 
         // テンプレート参照ノード
-        if (matchNamedTemplateCallText(element.node.text) || matchAnonymousTemplateCallText(element.node.text)) {
+        if (matchNamedTemplateCallText(element.node.text)) {
             return true;
         }
 
@@ -3531,7 +3542,7 @@ function evaluateInScope(expr, scope) {
         parent.children = insertedChildren;
     }
 
-    function expandTemplateRootIntoTarget(targetNode, targetIndex, templateRoot, parameters, callSiteScope, templateLabel, appendTargetChildren) {
+    function expandTemplateRootIntoTarget(targetNode, targetIndex, templateRoot, parameters, callSiteScope, templateLabel, appendTargetChildren, outputIdPrefix) {
         // 変数展開（共通 evaluator）
         if (typeof parameters === "string") {
             throw new TemplateError(templateLabel + "では文字列引数は使用できません。", targetNode);
@@ -3720,7 +3731,7 @@ function evaluateInScope(expr, scope) {
             n.group += targetNode.group;
             if (n.children.length === 0) {
                 // id を _ で連結
-                n.id = targetNode.id + "_" + n.id;
+                n.id = joinNodeIds(outputIdPrefix, n.id);
                 return true;
             }
         });
@@ -3756,7 +3767,7 @@ function evaluateInScope(expr, scope) {
                     };
                 }
                 var elementId = ("$id" in entry) ? entry.$id : "i" + index;
-                node.id = targetNode.id + "_" + elementId;
+                node.__anonymousIdPrefix = joinNodeIds(targetNode.__anonymousIdPrefix, elementId);
 
                 // ループメタを付与
                 entry = _.assign({}, entry, buildLoopMeta(index, total));
@@ -3784,7 +3795,16 @@ function evaluateInScope(expr, scope) {
         var templateRoot = cloneTemplateTree(targetNode);
         normalizeTemplateRootOffsets(templateRoot);
 
-        expandTemplateRootIntoTarget(targetNode, targetIndex, templateRoot, parameters, callSiteScope, "匿名テンプレート", false);
+        expandTemplateRootIntoTarget(
+            targetNode,
+            targetIndex,
+            templateRoot,
+            parameters,
+            callSiteScope,
+            "匿名テンプレート",
+            false,
+            targetNode.__anonymousIdPrefix
+        );
         targetNode.children = [];
     }
 
@@ -3848,7 +3868,8 @@ function evaluateInScope(expr, scope) {
             parameters,
             callSiteScope,
             "テンプレート'" + templateName + "'",
-            true
+            true,
+            targetNode.id
         );
     }
 
