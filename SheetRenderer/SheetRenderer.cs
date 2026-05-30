@@ -506,6 +506,8 @@ public class RibbonController : ExcelRibbon
         public int ConflictAppliedCellCount;
 
         public List<string> ConflictSheetNames = new List<string>();
+
+        public bool WasCanceled;
     }
 
     private sealed class PullSessionLog
@@ -3241,8 +3243,40 @@ public class RibbonController : ExcelRibbon
                     " row=" + displayRow +
                     " cell=" + cellAddress +
                     " local=" + (currentValue ?? "") +
-                    " remote=" + (mergedValue ?? ""));
+                    " resolved=" + (mergedValue ?? ""));
             }
+        }
+    }
+
+    private static string FormatSharedCellValueForLog(object value)
+    {
+        return FormatSharedCellValueForDiff(value)
+            .Replace("\r", "\\r")
+            .Replace("\n", "\\n")
+            .Replace("\t", "\\t");
+    }
+
+    private static void ApplySharedSheetConflictResolutions(IEnumerable<SharedSheetConflictResolution> conflicts)
+    {
+        foreach (SharedSheetConflictResolution conflict in conflicts ?? Enumerable.Empty<SharedSheetConflictResolution>())
+        {
+            if (conflict == null)
+            {
+                continue;
+            }
+
+            conflict.ApplyResolvedValue();
+            FileLogger.Info(
+                "[SharedReceiveConflictResolved] " +
+                "sheetId=" + (conflict.SheetId ?? "") +
+                " sheetName=" + (conflict.SheetName ?? "") +
+                " rowId=" + (conflict.RowId ?? "") +
+                " cell=" + (conflict.CellAddress ?? "") +
+                " resolution=" + (conflict.ResolutionSource ?? "") +
+                " base=" + FormatSharedCellValueForLog(conflict.BaseValue) +
+                " local=" + FormatSharedCellValueForLog(conflict.LocalValue) +
+                " remote=" + FormatSharedCellValueForLog(conflict.RemoteValue) +
+                " resolved=" + FormatSharedCellValueForLog(conflict.ResolvedValue));
         }
     }
 
@@ -3501,7 +3535,7 @@ public class RibbonController : ExcelRibbon
         }
 
         DialogResult dialogResult = MessageBox.Show(
-            "共有値の競合があり、共有先の値で上書きされました。" + Environment.NewLine +
+            "共有値の競合を解決して反映しました。" + Environment.NewLine +
             "競合シート数: " + result.ConflictAppliedSheetCount + Environment.NewLine +
             "競合セル数: " + result.ConflictAppliedCellCount +
             detail + Environment.NewLine + Environment.NewLine +
@@ -3509,7 +3543,7 @@ public class RibbonController : ExcelRibbon
             "ログファイルを開きますか？",
             "最新版取得",
             MessageBoxButtons.YesNo,
-            MessageBoxIcon.Warning);
+            MessageBoxIcon.Information);
 
         if (dialogResult == DialogResult.Yes)
         {
@@ -3662,6 +3696,7 @@ public class RibbonController : ExcelRibbon
         int missingSharedDocumentCount = 0;
         int fallbackMatchedCount = 0;
         int conflictAppliedCount = 0;
+        var pendingReceives = new List<PendingSharedSheetReceive>();
 
         foreach (SharedProjectManifestEntry entry in manifest.Sheets)
         {
@@ -3748,29 +3783,75 @@ public class RibbonController : ExcelRibbon
                     "sheetName='" + sheet.Name + "'.");
             }
 
+            if (mergeResult.ConflictCount != mergeResult.Conflicts.Count)
+            {
+                throw new InvalidOperationException(
+                    "Shared receive conflict resolution is unavailable. " +
+                    "Verify that shared rowIds are present and compatible. " +
+                    "sheetId='" + entry.SheetId + "', " +
+                    "sheetName='" + sheet.Name + "'.");
+            }
+
+            pendingReceives.Add(new PendingSharedSheetReceive
+            {
+                SheetId = entry.SheetId,
+                Sheet = sheet,
+                RemoteDocument = sharedSheetDocument,
+                MergeResult = mergeResult
+            });
+            progressReporter?.Invoke("共有値の更新候補を準備しました: " + sheet.Name);
+        }
+
+        List<SharedSheetConflictResolution> conflicts = pendingReceives
+            .Where(x => x != null && x.MergeResult != null)
+            .SelectMany(x => x.MergeResult.Conflicts ?? new List<SharedSheetConflictResolution>())
+            .ToList();
+
+        if (conflicts.Count > 0)
+        {
+            progressReporter?.Invoke("共有値の競合があります: " + conflicts.Count + " セル");
+            if (!SharedSheetConflictResolutionDialog.TryResolve(null, conflicts))
+            {
+                FileLogger.Warn("[SharedReceive] canceled during conflict resolution. conflicts=" + conflicts.Count);
+                progressReporter?.Invoke("共有値の反映をキャンセルしました（競合解決キャンセル）");
+                result.WasCanceled = true;
+                return result;
+            }
+
+            ApplySharedSheetConflictResolutions(conflicts);
+            foreach (PendingSharedSheetReceive pendingReceive in pendingReceives)
+            {
+                pendingReceive.MergeResult.MergedDocument.Hash =
+                    ComputeSharedSheetHash(pendingReceive.MergeResult.MergedDocument);
+            }
+            progressReporter?.Invoke("共有値の競合を解決しました: " + conflicts.Count + " セル");
+        }
+
+        foreach (PendingSharedSheetReceive pendingReceive in pendingReceives)
+        {
             ExcelUiSuspendScope uiSuspendScope = TryCreateExcelUiSuspendScope(workbook);
             if (uiSuspendScope == null)
             {
-                ApplySharedSheetDocumentToWorksheet(sheet, mergeResult.MergedDocument);
-                SaveSharedSheetBaseDocument(workbook, sharedSheetDocument);
+                ApplySharedSheetDocumentToWorksheet(pendingReceive.Sheet, pendingReceive.MergeResult.MergedDocument);
+                SaveSharedSheetBaseDocument(workbook, pendingReceive.RemoteDocument);
             }
             else
             {
                 using (uiSuspendScope)
                 {
-                    ApplySharedSheetDocumentToWorksheet(sheet, mergeResult.MergedDocument);
-                    SaveSharedSheetBaseDocument(workbook, sharedSheetDocument);
+                    ApplySharedSheetDocumentToWorksheet(pendingReceive.Sheet, pendingReceive.MergeResult.MergedDocument);
+                    SaveSharedSheetBaseDocument(workbook, pendingReceive.RemoteDocument);
                 }
             }
-            FileLogger.Info("[SharedReceive] applied sheetId=" + entry.SheetId + " hash=" + sharedSheetDocument.Hash);
-            if (mergeResult.ConflictCount > 0)
+            FileLogger.Info("[SharedReceive] applied sheetId=" + pendingReceive.SheetId + " hash=" + pendingReceive.RemoteDocument.Hash);
+            if (pendingReceive.MergeResult.ConflictCount > 0)
             {
                 conflictAppliedCount++;
-                result.ConflictAppliedCellCount += mergeResult.ConflictCount;
-                result.ConflictSheetNames.Add(sheet.Name);
-                progressReporter?.Invoke("共有値の競合を反映しました: " + sheet.Name + " (" + mergeResult.ConflictCount + "セル)");
+                result.ConflictAppliedCellCount += pendingReceive.MergeResult.ConflictCount;
+                result.ConflictSheetNames.Add(pendingReceive.Sheet.Name);
+                progressReporter?.Invoke("解決済みの共有値競合を反映しました: " + pendingReceive.Sheet.Name + " (" + pendingReceive.MergeResult.ConflictCount + "セル)");
             }
-            progressReporter?.Invoke("共有値を反映しました: " + sheet.Name);
+            progressReporter?.Invoke("共有値を反映しました: " + pendingReceive.Sheet.Name);
             appliedCount++;
         }
 
@@ -3787,7 +3868,7 @@ public class RibbonController : ExcelRibbon
         }
         else if (conflictAppliedCount > 0)
         {
-            progressReporter?.Invoke("共有値の競合上書きがありました: " + conflictAppliedCount + " シート");
+            progressReporter?.Invoke("解決済みの共有値競合を反映しました: " + conflictAppliedCount + " シート");
         }
 
         result.AppliedCount = appliedCount;
@@ -4024,6 +4105,15 @@ public class RibbonController : ExcelRibbon
     {
         public SharedSheetDocument MergedDocument { get; set; }
         public int ConflictCount { get; set; }
+        public List<SharedSheetConflictResolution> Conflicts { get; } = new List<SharedSheetConflictResolution>();
+    }
+
+    private sealed class PendingSharedSheetReceive
+    {
+        public string SheetId { get; set; }
+        public Excel.Worksheet Sheet { get; set; }
+        public SharedSheetDocument RemoteDocument { get; set; }
+        public SharedSheetMergeResult MergeResult { get; set; }
     }
 
     private static bool CanMergeSharedSheetByRowIds(SharedSheetDocument document)
@@ -4292,7 +4382,10 @@ public class RibbonController : ExcelRibbon
         Dictionary<string, object[]> baseRows = CreateSharedSheetRowMap(baseDocument);
         var mergedRows = new List<object[]>();
         var mergedRowIds = new List<object>();
+        Dictionary<string, int> displayRows = CreateSharedSheetDisplayRowMap(localDocument);
+        int? startColumn = TryGetSharedSheetStartColumn(localDocument.RangeAddress);
         int conflictCount = 0;
+        var conflicts = new List<SharedSheetConflictResolution>();
 
         foreach (object rowIdValue in localDocument.RowIds)
         {
@@ -4342,6 +4435,23 @@ public class RibbonController : ExcelRibbon
                 {
                     mergedRow[col] = NormalizeSharedCellValue(remoteValue);
                     conflictCount++;
+
+                    int displayRow;
+                    string cellAddress = displayRows.TryGetValue(rowId, out displayRow) && startColumn.HasValue
+                        ? GetExcelColumnLetter(startColumn.Value + col) + displayRow
+                        : "?";
+                    int conflictColumn = col;
+                    conflicts.Add(new SharedSheetConflictResolution
+                    {
+                        SheetId = localDocument.SheetId,
+                        SheetName = localDocument.SheetName,
+                        RowId = rowId,
+                        CellAddress = cellAddress,
+                        BaseValue = NormalizeSharedCellValue(baseValue),
+                        LocalValue = NormalizeSharedCellValue(localValue),
+                        RemoteValue = NormalizeSharedCellValue(remoteValue),
+                        ApplyValue = value => mergedRow[conflictColumn] = NormalizeSharedCellValue(value)
+                    });
                 }
             }
 
@@ -4367,11 +4477,13 @@ public class RibbonController : ExcelRibbon
         };
         mergedDocument.Hash = ComputeSharedSheetHash(mergedDocument);
 
-        return new SharedSheetMergeResult
+        var result = new SharedSheetMergeResult
         {
             MergedDocument = mergedDocument,
             ConflictCount = conflictCount
         };
+        result.Conflicts.AddRange(conflicts);
+        return result;
     }
 
     private static string GetRemoteSharedHash(SharedProjectManifest manifest, string sheetId)
@@ -8633,7 +8745,11 @@ public class RibbonController : ExcelRibbon
                     }
                     progressForm.AppendLine("共有値を確認します");
                     SharedReceiveResult sharedReceiveResult = await ReceiveSharedSheetsAsync(activeWorkbook, shareInfo, progressForm.AppendLine);
-                    progressForm.ShowContinueButton("閉じる", "共有値確認が完了しました");
+                    progressForm.ShowContinueButton(
+                        "閉じる",
+                        sharedReceiveResult.WasCanceled
+                            ? "共有値の反映をキャンセルしました"
+                            : "共有値確認が完了しました");
                     await progressForm.WaitForContinueAsync();
                     progressForm.CloseForm();
                     progressForm = null;
@@ -8824,6 +8940,10 @@ public class RibbonController : ExcelRibbon
         progressForm.AppendLine("共有値を反映しています");
         SharedReceiveResult sharedReceiveResult = await ReceiveSharedSheetsAsync(createdWorkbook, shareInfo, progressForm.AppendLine);
         ShowSharedReceiveConflictDialogIfNeeded(sharedReceiveResult);
+        if (sharedReceiveResult.WasCanceled)
+        {
+            progressForm.SetStatusText("共有値の反映をキャンセルしました");
+        }
         createdWorkbook.Save();
     }
 
