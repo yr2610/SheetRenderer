@@ -7533,7 +7533,7 @@ public class RibbonController : ExcelRibbon
 
         namedRange.Comment = serializer.Serialize(rangeInfo);
 
-        // 画像を貼る
+        // コメントまたは画像を貼る
         for (int i = 0; i < result.Count; i++)
         {
             for (int j = 0; j < result[i].Count; j++)
@@ -7548,23 +7548,31 @@ public class RibbonController : ExcelRibbon
                 // 整列後の列位置（j -> col2）。無ければスキップ。
                 if (!indexMap[i].TryGetValue(j, out int col2)) { continue; }
 
-                if (node.imageFilePath != null)
+                if (node.comment != null || node.imageFilePath != null)
                 {
-                    string path = GetAbsolutePathFromBasePath(jsonFilePath, node.imageFilePath);
                     Excel.Range cell = null;
 
                     try
                     {
                         cell = dstSheet.Cells[startRow + i, startColumn + col2] as Excel.Range;
 
-                        if (!File.Exists(path))
+                        if (node.imageFilePath != null)
                         {
-                            // XXX: 毎回パス構築はムダ
-                            path = GetAbsolutePathFromExecutingDirectory(noImageFilePath);
-                            missingImagePaths.Add((filePath: node.imageFilePath, sheetName: dstSheet.Name, address: cell.Address));
-                        }
+                            string path = GetAbsolutePathFromBasePath(jsonFilePath, node.imageFilePath);
 
-                        AddPictureAsComment(cell, path);
+                            if (!File.Exists(path))
+                            {
+                                // XXX: 毎回パス構築はムダ
+                                path = GetAbsolutePathFromExecutingDirectory(noImageFilePath);
+                                missingImagePaths.Add((filePath: node.imageFilePath, sheetName: dstSheet.Name, address: cell.Address));
+                            }
+
+                            AddPictureAsComment(cell, path);
+                        }
+                        else
+                        {
+                            AddTextAsComment(cell, node.comment);
+                        }
                     }
                     finally
                     {
@@ -7603,6 +7611,21 @@ public class RibbonController : ExcelRibbon
         dstSheet.SetCustomProperty(sheetIdCustomPropertyName, id);
 
         return missingImagePaths;
+    }
+
+    static void AddTextAsComment(Excel.Range cell, string text)
+    {
+        Excel.Comment comment = null;
+
+        try
+        {
+            comment = cell.AddComment(text);
+            comment.Visible = false;
+        }
+        finally
+        {
+            ReleaseExcelComObject(comment);
+        }
     }
 
     static void AddPictureAsComment(Excel.Range cell, string imageFilePath)
