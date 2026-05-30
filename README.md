@@ -6,4 +6,5 @@ SheetRenderer は、テキストで記述した構造を JSON に変換し、Exc
 ## ドキュメント
 
 - [はじめてのパーサーチュートリアル](docs/parser-tutorial.md)
+- [テンプレートを使う](docs/parser-template-tutorial.md)
 - [パーサーガイド](docs/parser-guide.md)
