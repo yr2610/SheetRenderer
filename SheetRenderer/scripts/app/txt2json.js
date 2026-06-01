@@ -3211,10 +3211,9 @@ function evaluateInScope(expr, scope) {
             var name = m[1];
             var raw  = m[2];
 
-            // ★ もっとも近い祖先に params を作ってそこへ保存
-            var owner = node.parent;
-            while (owner && !owner.params) owner = owner.parent;
-            if (!owner) owner = parent || root;       // どこにも無ければ親→root に作る
+            // 宣言行の直接の親に保存する。既存 params を持つ祖先まで登ると、
+            // シート内 YAML がある場合だけ兄弟ノードへ値が漏れてしまう。
+            var owner = node.parent || parent || root;
             owner.params = owner.params || {};
             var target = owner.params;
 
