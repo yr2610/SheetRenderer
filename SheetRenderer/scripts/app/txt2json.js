@@ -3564,6 +3564,10 @@ function evaluateInScope(expr, scope) {
             newNode.id = baseId + "_" + suffix;
             newNode.parent = parent;
 
+            if (!replacePlaceholdersInNode(newNode, callSiteScope, null)) {
+                return;
+            }
+
             replacements.push(newNode);
         });
 
