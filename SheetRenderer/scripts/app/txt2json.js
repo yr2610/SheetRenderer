@@ -3202,6 +3202,9 @@ function evaluateInScope(expr, scope) {
             if (!node || node.kind !== kindUL) return;
 
             var t = node.text.trim();
+            // *(...) の子は匿名テンプレ本体なので、反復ごとの展開時まで触らない。
+            if (matchAnonymousTemplateCallText(t)) return true;
+
             var m = t.match(/^&([A-Za-z_]\w*):\s*([\s\S]*)$/);
             if (!m) return;
 
@@ -3287,6 +3290,9 @@ function evaluateInScope(expr, scope) {
             root, null, -1,
             function (node, parent, index) {
                 if (!node) return true;
+
+                // *(...) の子は匿名テンプレ本体なので、反復ごとの展開時まで触らない。
+                if (matchAnonymousTemplateCallText(node.text)) return true;
 
                 var parentScope = scopeStack[scopeStack.length - 1];
                 var localScope = extendScope(parentScope, node.params || {});
