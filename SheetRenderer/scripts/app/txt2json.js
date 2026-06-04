@@ -1769,7 +1769,7 @@ _.forEach(noIdNodes, function(infos) {
         // 2) ディレクティブ @xxx:         …… 例: @init:, @set: など将来拡張含む
         if (element.node.children.length === 0) {
             var t = element.node.text;
-            return !/^(?:&[A-Za-z_]\w*:|@[A-Za-z_]\w*:)/.test(t) &&
+            return !/^(?:&[A-Za-z_]\w*(?:\[\])?:|@[A-Za-z_]\w*:)/.test(t) &&
                 !matchAnonymousTemplateCallText(t);
         }
 
@@ -2981,7 +2981,7 @@ function evaluateInScope(expr, scope) {
     }
 
     // ===== Template Collection =====
-    // &NAME: データ定義（params）を親に集約
+    // &NAME: / &NAME[]: データ定義（params）を親に集約
     function collectTemplateParamsFromULNodes() {
         forAllNodes_Recurse(root, null, -1, function(node, parent, index) { }, function(node, parent, index) {
             if (parent === null) {
@@ -2991,12 +2991,13 @@ function evaluateInScope(expr, scope) {
                 return;
             }
 
-            var match = node.text.trim().match(/^&([A-Za-z_]\w*):$/);
+            var match = node.text.trim().match(/^&([A-Za-z_]\w*)(\[\])?:$/);
             if (match === null) {
                 return;
             }
 
             var paramName = match[1];
+            var isArrayRows = match[2] === "[]";
 
             if (!_.isUndefined(parent.params)) {
                 // 重複エラー
@@ -3009,8 +3010,31 @@ function evaluateInScope(expr, scope) {
             }
 
             var param = [];
-            // XXX: 1階層の単純な構成の想定。エラーチェックとかは一切しない
             _.forEach(node.children, function(child) {
+                if (isArrayRows) {
+                    if (child.children && child.children.length > 0) {
+                        templateError(
+                            "配列データ'&" + paramName + "[]:'の各レコードは1行で記述してください。",
+                            child
+                        );
+                    }
+                    if (/[\r\n]/.test(child.text)) {
+                        templateError(
+                            "配列データ'&" + paramName + "[]:'では複数行テキストを使用できません。",
+                            child
+                        );
+                    }
+
+                    var values = _.map(child.text.split(","), function(value) {
+                        return parseConstLiteral(value);
+                    });
+                    param.push({
+                        $value: values,
+                        $id: child.id
+                    });
+                    return;
+                }
+
                 var o = {
                     $value: child.text,
                     $id: child.id
@@ -4004,7 +4028,7 @@ function evaluateInScope(expr, scope) {
     }
 
     // ===== Pipeline =====
-    // 1) データ定義（&name:）収集
+    // 1) データ定義（&name: / &name[]:）収集
     collectTemplateParamsFromULNodes();
 
     // 2) テンプレート宣言（&name()）収集
