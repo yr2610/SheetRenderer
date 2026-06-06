@@ -408,6 +408,7 @@ public static class JsonNodeHasher
 [ComVisible(true)]
 public class RibbonController : ExcelRibbon
 {
+    private static RibbonController currentController;
     private IRibbonUI ribbon;
     private ProgressBarForm progressBarForm;
     private bool renderCommandInProgress;
@@ -418,6 +419,11 @@ public class RibbonController : ExcelRibbon
     private static string currentGitLabBaseFileRelativePath;
     [ThreadStatic]
     private static string currentRootDirectory;
+
+    public RibbonController()
+    {
+        currentController = this;
+    }
 
     private sealed class PullSessionContext
     {
@@ -609,7 +615,18 @@ public class RibbonController : ExcelRibbon
 
     public void OnLoad(IRibbonUI ribbonUI)
     {
+        currentController = this;
         this.ribbon = ribbonUI;
+    }
+
+    [ExcelCommand(Name = "SheetRenderer_UpdateCurrentSheet", Description = "SheetRenderer: active sheet update")]
+    public static void UpdateCurrentSheetFromExternalCommand()
+    {
+        ExcelAsyncUtil.QueueAsMacro(() =>
+        {
+            RibbonController controller = currentController ?? new RibbonController();
+            controller.OnUpdateCurrentSheetButtonPressed(null);
+        });
     }
 
     public override string GetCustomUI(string RibbonID)
