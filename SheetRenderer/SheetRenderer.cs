@@ -408,6 +408,8 @@ public static class JsonNodeHasher
 [ComVisible(true)]
 public class RibbonController : ExcelRibbon
 {
+    private const string UpdateCurrentSheetCommandName = "SheetRenderer_UpdateCurrentSheet";
+    private const string UpdateCurrentSheetShortcutKey = "^+d";
     private static RibbonController currentController;
     private IRibbonUI ribbon;
     private ProgressBarForm progressBarForm;
@@ -619,7 +621,7 @@ public class RibbonController : ExcelRibbon
         this.ribbon = ribbonUI;
     }
 
-    [ExcelCommand(Name = "SheetRenderer_UpdateCurrentSheet", Description = "SheetRenderer: active sheet update")]
+    [ExcelCommand(Name = UpdateCurrentSheetCommandName, Description = "SheetRenderer: active sheet update")]
     public static void UpdateCurrentSheetFromExternalCommand()
     {
         ExcelAsyncUtil.QueueAsMacro(() =>
@@ -627,6 +629,24 @@ public class RibbonController : ExcelRibbon
             RibbonController controller = currentController ?? new RibbonController();
             controller.OnUpdateCurrentSheetButtonPressed(null);
         });
+    }
+
+    public static void RegisterUpdateCurrentSheetShortcut()
+    {
+        Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
+        excelApp.OnKey(UpdateCurrentSheetShortcutKey, UpdateCurrentSheetCommandName);
+    }
+
+    public static void UnregisterUpdateCurrentSheetShortcut()
+    {
+        try
+        {
+            Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
+            excelApp.OnKey(UpdateCurrentSheetShortcutKey);
+        }
+        catch
+        {
+        }
     }
 
     public override string GetCustomUI(string RibbonID)
@@ -10418,6 +10438,7 @@ public class AddIn : IExcelAddIn
 
         Notifier.Initialize();
         //Notifier.Info("アドイン起動", "準備が完了しました。");
+        RibbonController.RegisterUpdateCurrentSheetShortcut();
 
         // ここはExcelのUIスレッド。必ず最初に記録しておく
         ShellBridge.InitializeOnExcelUiThread();
@@ -10455,6 +10476,8 @@ public class AddIn : IExcelAddIn
     public void AutoClose()
     {
         //Notifier.Info("アドイン終了", "シャットダウンします。");
+        RibbonController.UnregisterUpdateCurrentSheetShortcut();
+
         try
         {
             JsHost.Shutdown();
