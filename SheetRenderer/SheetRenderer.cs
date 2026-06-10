@@ -5315,6 +5315,105 @@ public class RibbonController : ExcelRibbon
         }
     }
 
+    static void ReorderRenderedWorksheets(Excel.Workbook workbook, IReadOnlyList<string> sheetNamesInOrder)
+    {
+        if (workbook == null || sheetNamesInOrder == null || sheetNamesInOrder.Count == 0)
+        {
+            return;
+        }
+
+        var renderedSheetNames = new HashSet<string>(
+            sheetNamesInOrder.Where(name => !string.IsNullOrWhiteSpace(name)),
+            StringComparer.OrdinalIgnoreCase);
+
+        Excel.Worksheet insertAfter = FindLastWorksheetOutsideRenderedSet(workbook, renderedSheetNames);
+        Excel.Worksheet visibilityRestoreTarget = insertAfter;
+        Excel.XlSheetVisibility insertAfterOriginalVisibility = Excel.XlSheetVisibility.xlSheetVisible;
+        bool restoreInsertAfterVisibility = TryMakeWorksheetVisible(visibilityRestoreTarget, out insertAfterOriginalVisibility);
+
+        try
+        {
+            foreach (string sheetName in sheetNamesInOrder)
+            {
+                if (string.IsNullOrWhiteSpace(sheetName))
+                {
+                    continue;
+                }
+
+                Excel.Worksheet sheetToMove = workbook.Worksheets[sheetName] as Excel.Worksheet;
+                if (insertAfter == null)
+                {
+                    Excel.Worksheet firstWorksheet = workbook.Worksheets[1] as Excel.Worksheet;
+                    if (sheetToMove.Index != firstWorksheet.Index)
+                    {
+                        sheetToMove.Move(firstWorksheet, Type.Missing);
+                    }
+                }
+                else if (sheetToMove.Index != insertAfter.Index + 1)
+                {
+                    sheetToMove.Move(Type.Missing, insertAfter);
+                }
+
+                insertAfter = sheetToMove;
+            }
+        }
+        finally
+        {
+            if (restoreInsertAfterVisibility)
+            {
+                RestoreTemplateSheetVisibility(visibilityRestoreTarget, insertAfterOriginalVisibility, true);
+            }
+        }
+    }
+
+    static Excel.Worksheet FindLastWorksheetOutsideRenderedSet(
+        Excel.Workbook workbook,
+        HashSet<string> renderedSheetNames)
+    {
+        Excel.Worksheet result = null;
+        int worksheetCount = workbook.Worksheets.Count;
+
+        for (int i = 1; i <= worksheetCount; i++)
+        {
+            Excel.Worksheet worksheet = workbook.Worksheets[i] as Excel.Worksheet;
+            if (worksheet == null || renderedSheetNames.Contains(worksheet.Name))
+            {
+                continue;
+            }
+
+            result = worksheet;
+        }
+
+        return result;
+    }
+
+    static bool TryMakeWorksheetVisible(
+        Excel.Worksheet worksheet,
+        out Excel.XlSheetVisibility originalVisibility)
+    {
+        originalVisibility = Excel.XlSheetVisibility.xlSheetVisible;
+        if (worksheet == null)
+        {
+            return false;
+        }
+
+        try
+        {
+            originalVisibility = (Excel.XlSheetVisibility)worksheet.Visible;
+            if (originalVisibility == Excel.XlSheetVisibility.xlSheetVisible)
+            {
+                return false;
+            }
+
+            worksheet.Visible = Excel.XlSheetVisibility.xlSheetVisible;
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     static SortedSet<string> CollectImageFilePaths(JsonNode node)
     {
         var imageFilePaths = new SortedSet<string>();
@@ -5758,20 +5857,9 @@ public class RibbonController : ExcelRibbon
             }
         }
 
-        // シートの並び順修正
-        // リストに従ってシートを後ろに詰める
-        List<string> sheetNamesInOrder = sheetNodes.Select(item => item["text"].ToString()).ToList();
-        for (int i = 0; i < sheetNamesInOrder.Count; i++)
-        {
-            Excel.Worksheet sheetToMove = workbook.Sheets[sheetNamesInOrder[i]];
-            int targetIndex = workbook.Sheets.Count - (sheetNamesInOrder.Count - 1 - i);
-
-            // シートが既に正しい位置にない場合のみ移動
-            if (sheetToMove.Index != targetIndex)
-            {
-                sheetToMove.Move(Type.Missing, workbook.Sheets[targetIndex]);
-            }
-        }
+        // シートの並び順修正。隠しシートを Move の基準位置にすると順序が崩れるので、
+        // 更新対象シートだけをリスト順に後ろへ詰める。
+        ReorderRenderedWorksheets(workbook, sheetNodes.Select(item => item["text"].ToString()).ToList());
 
         // プログレスバーを更新
         progressBarForm.Invoke(new Action<string>(progressBarForm.UpdateSheetName), indexSheetName);
