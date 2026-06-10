@@ -104,7 +104,7 @@ internal sealed class SharedSheetConflictResolutionDialog : Form
             Width = ClientSize.Width - 24,
             Height = 38,
             Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
-            Text = "ローカルと共有先の両方で変更されたセルがあります。各セルの採用値を決めてください。キャンセルした場合、共有値は反映されません。"
+            Text = "ローカルと共有先の両方で変更されたセルがあります。各セルの採用値を決めてください。一覧の行をダブルクリックすると対象セルに移動します。キャンセルした場合、共有値は反映されません。"
         };
         Controls.Add(lblInfo);
 
@@ -417,19 +417,21 @@ internal sealed class SharedSheetConflictResolutionDialog : Form
             return;
         }
 
-        string columnName = grid.Columns[e.ColumnIndex].Name;
-        if (string.Equals(columnName, "BaseText", StringComparison.Ordinal))
+        var conflict = grid.Rows[e.RowIndex].DataBoundItem as SharedSheetConflictResolution;
+        SelectConflictCell(conflict);
+    }
+
+    private void SelectConflictCell(SharedSheetConflictResolution conflict)
+    {
+        if (conflict == null)
         {
-            ResolveSelected("ベース", SelectedConflict?.BaseValue);
+            return;
         }
-        else if (string.Equals(columnName, "LocalText", StringComparison.Ordinal))
-        {
-            ResolveSelected("ローカル", SelectedConflict?.LocalValue);
-        }
-        else if (string.Equals(columnName, "RemoteText", StringComparison.Ordinal))
-        {
-            ResolveSelected("共有先", SelectedConflict?.RemoteValue);
-        }
+
+        ExcelSelectionHelper.QueueSelectCell(
+            conflict.SheetName,
+            conflict.CellAddress,
+            Text);
     }
 
     private void Dialog_FormClosing(object sender, FormClosingEventArgs e)

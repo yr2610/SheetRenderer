@@ -137,6 +137,7 @@
   <ItemGroup>
     <Compile Include="AuthorizationHelper.cs" />
     <Compile Include="ExcelExtensions.cs" />
+    <Compile Include="ExcelSelectionHelper.cs" />
     <Compile Include="FileLogger.cs" />
     <Compile Include="FileSystemObject.cs" />
     <Compile Include="GitLabAuth.cs" />

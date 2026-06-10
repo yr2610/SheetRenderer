@@ -6943,81 +6943,10 @@ public class RibbonController : ExcelRibbon
                 return;
             }
 
-            ExcelAsyncUtil.QueueAsMacro(() =>
-            {
-                Excel.Worksheet sheet = null;
-                Excel.Range range = null;
-                try
-                {
-                    var excelApp = (Excel.Application)ExcelDnaUtil.Application;
-                    sheet = excelApp.Sheets[targetSheetName] as Excel.Worksheet;
-                    range = sheet.Range[targetAddress];
-                    sheet.Activate();
-                    SelectRangeWithComfortableScroll(excelApp, range);
-                }
-                catch (Exception ex)
-                {
-                    MessageBox.Show(
-                        $"セルの選択に失敗しました。\n\nシート: {targetSheetName}\nセル: {targetAddress}\n\n{ex.Message}",
-                        "Missing Image Files",
-                        MessageBoxButtons.OK,
-                        MessageBoxIcon.Warning);
-                }
-                finally
-                {
-                    ReleaseExcelComObject(range);
-                    ReleaseExcelComObject(sheet);
-                }
-            });
-        }
-
-        void SelectRangeWithComfortableScroll(Excel.Application excelApp, Excel.Range range)
-        {
-            Excel.Window activeWindow = null;
-            Excel.Range visibleRange = null;
-            Excel.Range visibleRows = null;
-            Excel.Range leftVisibleRange = null;
-            Excel.Range leftVisibleColumns = null;
-
-            try
-            {
-                range.Select();
-
-                activeWindow = excelApp.ActiveWindow;
-                if (activeWindow == null)
-                {
-                    return;
-                }
-
-                visibleRange = activeWindow.VisibleRange;
-                visibleRows = visibleRange.Rows as Excel.Range;
-                int visibleRowCount = Math.Max(1, visibleRows.Count);
-
-                int targetRow = range.Row;
-                int targetColumn = range.Column;
-
-                activeWindow.ScrollRow = Math.Max(1, targetRow - (visibleRowCount / 2));
-                activeWindow.ScrollColumn = 1;
-
-                leftVisibleRange = activeWindow.VisibleRange;
-                leftVisibleColumns = leftVisibleRange.Columns as Excel.Range;
-                int visibleColumnCount = Math.Max(1, leftVisibleColumns.Count);
-
-                if (targetColumn > visibleColumnCount)
-                {
-                    activeWindow.ScrollColumn = Math.Max(1, targetColumn - visibleColumnCount + 1);
-                }
-
-                range.Select();
-            }
-            finally
-            {
-                ReleaseExcelComObject(leftVisibleColumns);
-                ReleaseExcelComObject(leftVisibleRange);
-                ReleaseExcelComObject(visibleRows);
-                ReleaseExcelComObject(visibleRange);
-                ReleaseExcelComObject(activeWindow);
-            }
+            ExcelSelectionHelper.QueueSelectCell(
+                targetSheetName,
+                targetAddress,
+                "Missing Image Files");
         }
 
         listView.DoubleClick += (sender, e) =>
