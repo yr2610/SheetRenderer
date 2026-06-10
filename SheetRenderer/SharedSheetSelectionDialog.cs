@@ -14,6 +14,7 @@ internal sealed class SharedSheetSelectionItem
     public bool HasConflict { get; set; }
     public string DiffText { get; set; }
     public SharedSheetDocument Document { get; set; }
+    public SharedSheetDocument DisplayDocument { get; set; }
 }
 
 internal sealed class SharedSheetSelectionDialog : Form

@@ -3143,7 +3143,8 @@ public class RibbonController : ExcelRibbon
     private static string BuildSharedSheetDiffText(
         SharedSheetDocument baseDocument,
         SharedSheetDocument localDocument,
-        SharedSheetDocument remoteDocument)
+        SharedSheetDocument remoteDocument,
+        SharedSheetDocument displayDocument = null)
     {
         if (localDocument == null)
         {
@@ -3167,8 +3168,9 @@ public class RibbonController : ExcelRibbon
         Dictionary<string, object[]> remoteRows = CreateSharedSheetRowMap(remoteDocument);
         Dictionary<string, object[]> baseRows = CreateSharedSheetRowMap(baseDocument);
         List<string> rowOrder = BuildSharedSheetRowOrder(localDocument, remoteDocument, baseDocument);
-        Dictionary<string, int> displayRows = CreateSharedSheetDisplayRowMap(localDocument);
-        int? startColumn = TryGetSharedSheetStartColumn(localDocument.RangeAddress);
+        SharedSheetDocument displaySourceDocument = displayDocument ?? localDocument;
+        Dictionary<string, int> displayRows = CreateSharedSheetDisplayRowMap(displaySourceDocument);
+        int? startColumn = TryGetSharedSheetStartColumn(displaySourceDocument.RangeAddress);
 
         var lines = new List<string>();
         lines.Add("sheetName: " + (localDocument.SheetName ?? ""));
@@ -4584,8 +4586,10 @@ public class RibbonController : ExcelRibbon
                 DiffText = BuildSharedSheetDiffText(
                     baseDocument,
                     commitDocument,
-                    string.IsNullOrWhiteSpace(remoteHash) ? null : baseDocument),
-                Document = commitDocument
+                    string.IsNullOrWhiteSpace(remoteHash) ? null : baseDocument,
+                    document),
+                Document = commitDocument,
+                DisplayDocument = document
             });
         }
 
@@ -4654,6 +4658,7 @@ public class RibbonController : ExcelRibbon
             }
 
             SharedSheetDocument localDocument = item.Document;
+            SharedSheetDocument displayDocument = item.DisplayDocument ?? localDocument;
             SharedSheetDocument baseDocument = GetSharedSheetBaseDocument(workbook, item.SheetId);
             SharedSheetDocument remoteDocument = await TryDownloadSharedSheetDocumentAsync(
                 shareInfo,
@@ -4666,7 +4671,7 @@ public class RibbonController : ExcelRibbon
                 item.HasConflict = true;
                 item.ActionLabel = "競合";
                 item.StatusDetail = "共有先シートを取得できません";
-                item.DiffText = BuildSharedSheetDiffText(baseDocument, item.Document, null);
+                item.DiffText = BuildSharedSheetDiffText(baseDocument, item.Document, null, displayDocument);
                 conflictSheetNames.Add(item.SheetName);
                 continue;
             }
@@ -4679,7 +4684,7 @@ public class RibbonController : ExcelRibbon
                 item.StatusDetail = mergeResult == null
                     ? "競合判定に失敗しました"
                     : ("競合セル " + mergeResult.ConflictCount + " 件");
-                item.DiffText = BuildSharedSheetDiffText(baseDocument, localDocument, remoteDocument);
+                item.DiffText = BuildSharedSheetDiffText(baseDocument, localDocument, remoteDocument, displayDocument);
                 conflictSheetNames.Add(item.SheetName);
                 continue;
             }
@@ -4695,7 +4700,7 @@ public class RibbonController : ExcelRibbon
                 item.Selected = false;
                 item.ActionLabel = "対象外";
                 item.StatusDetail = "共有先と同じため送信しません";
-                item.DiffText = BuildSharedSheetDiffText(baseDocument, localDocument, remoteDocument);
+                item.DiffText = BuildSharedSheetDiffText(baseDocument, localDocument, remoteDocument, displayDocument);
                 item.Document = null;
                 continue;
             }
@@ -4703,7 +4708,7 @@ public class RibbonController : ExcelRibbon
             item.Document = commitDocument;
             item.ActionLabel = "マージ";
             item.StatusDetail = "共有先変更を取り込みます";
-            item.DiffText = BuildSharedSheetDiffText(baseDocument, localDocument, remoteDocument);
+            item.DiffText = BuildSharedSheetDiffText(baseDocument, localDocument, remoteDocument, displayDocument);
         }
 
         return conflictSheetNames
