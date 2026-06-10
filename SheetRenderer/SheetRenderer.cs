@@ -3140,20 +3140,16 @@ public class RibbonController : ExcelRibbon
         return "競合";
     }
 
-    private static string BuildSharedSheetDiffText(
+    private static List<SharedSheetDiffEntry> BuildSharedSheetDiffEntries(
         SharedSheetDocument baseDocument,
         SharedSheetDocument localDocument,
         SharedSheetDocument remoteDocument,
         SharedSheetDocument displayDocument = null)
     {
-        if (localDocument == null)
+        var entries = new List<SharedSheetDiffEntry>();
+        if (localDocument == null || !CanMergeSharedSheetByRowIds(localDocument))
         {
-            return "差分はありません。";
-        }
-
-        if (!CanMergeSharedSheetByRowIds(localDocument))
-        {
-            return "rowIds が無いため差分を表示できません。";
+            return entries;
         }
 
         int columnCount = Math.Max(
@@ -3172,13 +3168,6 @@ public class RibbonController : ExcelRibbon
         Dictionary<string, int> displayRows = CreateSharedSheetDisplayRowMap(displaySourceDocument);
         int? startColumn = TryGetSharedSheetStartColumn(displaySourceDocument.RangeAddress);
 
-        var lines = new List<string>();
-        lines.Add("sheetName: " + (localDocument.SheetName ?? ""));
-        lines.Add("sheetId: " + (localDocument.SheetId ?? ""));
-        lines.Add("range: " + (localDocument.RangeAddress ?? ""));
-        lines.Add("");
-
-        int diffCount = 0;
         foreach (string rowId in rowOrder)
         {
             object[] localRow;
@@ -3211,32 +3200,102 @@ public class RibbonController : ExcelRibbon
                     continue;
                 }
 
-                string stateLabel = BuildSharedDiffStateLabel(baseValue, localValue, remoteValue);
                 int displayRow;
                 bool hasDisplayRow = displayRows.TryGetValue(rowId, out displayRow);
                 string displayAddress = hasDisplayRow && startColumn.HasValue
                     ? GetExcelColumnLetter(startColumn.Value + col) + displayRow
                     : "?";
-                lines.Add(
-                    "addr=" + displayAddress +
-                    "\tstate=" + stateLabel +
-                    "\tbase=" + FormatSharedCellValueForDiff(baseValue) +
-                    "\tlocal=" + FormatSharedCellValueForDiff(localValue) +
-                    "\tremote=" + FormatSharedCellValueForDiff(remoteValue));
-                diffCount++;
+
+                entries.Add(new SharedSheetDiffEntry
+                {
+                    SheetId = localDocument.SheetId,
+                    SheetName = localDocument.SheetName,
+                    RowId = rowId,
+                    CellAddress = displayAddress,
+                    StateLabel = BuildSharedDiffStateLabel(baseValue, localValue, remoteValue),
+                    BaseValue = NormalizeSharedCellValue(baseValue),
+                    LocalValue = NormalizeSharedCellValue(localValue),
+                    RemoteValue = NormalizeSharedCellValue(remoteValue),
+                    HasRemoteValue = remoteDocument != null &&
+                        !ReferenceEquals(remoteDocument, baseDocument) &&
+                        !AreSharedCellValuesEqual(remoteValue, baseValue)
+                });
             }
         }
 
-        if (diffCount == 0)
+        return entries;
+    }
+
+    private static string BuildSharedSheetDiffText(
+        SharedSheetDocument baseDocument,
+        SharedSheetDocument localDocument,
+        SharedSheetDocument remoteDocument,
+        SharedSheetDocument displayDocument = null,
+        IReadOnlyList<SharedSheetDiffEntry> diffEntries = null)
+    {
+        if (localDocument == null)
+        {
+            return "差分はありません。";
+        }
+
+        if (!CanMergeSharedSheetByRowIds(localDocument))
+        {
+            return "rowIds が無いため差分を表示できません。";
+        }
+
+        IReadOnlyList<SharedSheetDiffEntry> entries = diffEntries ??
+            BuildSharedSheetDiffEntries(baseDocument, localDocument, remoteDocument, displayDocument);
+
+        var lines = new List<string>();
+        lines.Add("sheetName: " + (localDocument.SheetName ?? ""));
+        lines.Add("sheetId: " + (localDocument.SheetId ?? ""));
+        lines.Add("range: " + (localDocument.RangeAddress ?? ""));
+        lines.Add("");
+
+        if (entries.Count == 0)
         {
             lines.Add("差分はありません。");
+            return string.Join(Environment.NewLine, lines);
         }
-        else
+
+        lines.Add("changedCells: " + entries.Count);
+        foreach (SharedSheetDiffEntry entry in entries)
         {
-            lines.Insert(4, "changedCells: " + diffCount);
+            lines.Add(
+                "addr=" + entry.CellAddress +
+                "\tstate=" + entry.StateLabel +
+                "\tbase=" + FormatSharedCellValueForDiff(entry.BaseValue) +
+                "\tlocal=" + FormatSharedCellValueForDiff(entry.LocalValue) +
+                "\tremote=" + FormatSharedCellValueForDiff(entry.RemoteValue));
         }
 
         return string.Join(Environment.NewLine, lines);
+    }
+
+    private static void SetSharedSheetSelectionDiff(
+        SharedSheetSelectionItem item,
+        SharedSheetDocument baseDocument,
+        SharedSheetDocument localDocument,
+        SharedSheetDocument remoteDocument,
+        SharedSheetDocument displayDocument = null)
+    {
+        if (item == null)
+        {
+            return;
+        }
+
+        List<SharedSheetDiffEntry> entries = BuildSharedSheetDiffEntries(
+            baseDocument,
+            localDocument,
+            remoteDocument,
+            displayDocument);
+        item.DiffEntries = entries;
+        item.DiffText = BuildSharedSheetDiffText(
+            baseDocument,
+            localDocument,
+            remoteDocument,
+            displayDocument,
+            entries);
     }
 
     private static void LogSharedOverwriteDifferences(Excel.Worksheet sheet, SheetValuesInfo currentSheetValuesInfo, object[,] mergedValues)
@@ -4574,7 +4633,7 @@ public class RibbonController : ExcelRibbon
                 continue;
             }
 
-            items.Add(new SharedSheetSelectionItem
+            var item = new SharedSheetSelectionItem
             {
                 Selected = true,
                 SheetName = commitDocument.SheetName,
@@ -4583,14 +4642,16 @@ public class RibbonController : ExcelRibbon
                 StatusDetail = string.IsNullOrWhiteSpace(remoteHash)
                     ? "共有先にまだありません"
                     : "ローカル変更があります",
-                DiffText = BuildSharedSheetDiffText(
-                    baseDocument,
-                    commitDocument,
-                    string.IsNullOrWhiteSpace(remoteHash) ? null : baseDocument,
-                    document),
                 Document = commitDocument,
                 DisplayDocument = document
-            });
+            };
+            SetSharedSheetSelectionDiff(
+                item,
+                baseDocument,
+                commitDocument,
+                string.IsNullOrWhiteSpace(remoteHash) ? null : baseDocument,
+                document);
+            items.Add(item);
         }
 
         return items
@@ -4671,7 +4732,7 @@ public class RibbonController : ExcelRibbon
                 item.HasConflict = true;
                 item.ActionLabel = "競合";
                 item.StatusDetail = "共有先シートを取得できません";
-                item.DiffText = BuildSharedSheetDiffText(baseDocument, item.Document, null, displayDocument);
+                SetSharedSheetSelectionDiff(item, baseDocument, item.Document, null, displayDocument);
                 conflictSheetNames.Add(item.SheetName);
                 continue;
             }
@@ -4684,7 +4745,7 @@ public class RibbonController : ExcelRibbon
                 item.StatusDetail = mergeResult == null
                     ? "競合判定に失敗しました"
                     : ("競合セル " + mergeResult.ConflictCount + " 件");
-                item.DiffText = BuildSharedSheetDiffText(baseDocument, localDocument, remoteDocument, displayDocument);
+                SetSharedSheetSelectionDiff(item, baseDocument, localDocument, remoteDocument, displayDocument);
                 conflictSheetNames.Add(item.SheetName);
                 continue;
             }
@@ -4700,7 +4761,7 @@ public class RibbonController : ExcelRibbon
                 item.Selected = false;
                 item.ActionLabel = "対象外";
                 item.StatusDetail = "共有先と同じため送信しません";
-                item.DiffText = BuildSharedSheetDiffText(baseDocument, localDocument, remoteDocument, displayDocument);
+                SetSharedSheetSelectionDiff(item, baseDocument, localDocument, remoteDocument, displayDocument);
                 item.Document = null;
                 continue;
             }
@@ -4708,7 +4769,7 @@ public class RibbonController : ExcelRibbon
             item.Document = commitDocument;
             item.ActionLabel = "マージ";
             item.StatusDetail = "共有先変更を取り込みます";
-            item.DiffText = BuildSharedSheetDiffText(baseDocument, localDocument, remoteDocument, displayDocument);
+            SetSharedSheetSelectionDiff(item, baseDocument, localDocument, remoteDocument, displayDocument);
         }
 
         return conflictSheetNames
@@ -9094,9 +9155,10 @@ public class RibbonController : ExcelRibbon
             {
                 SheetName = localDocument.SheetName,
                 SheetId = localDocument.SheetId,
-                DiffText = BuildSharedSheetDiffText(baseDocument, localDocument, remoteDocument),
-                Document = localDocument
+                Document = localDocument,
+                DisplayDocument = localDocument
             };
+            SetSharedSheetSelectionDiff(item, baseDocument, localDocument, remoteDocument, localDocument);
 
             SharedSheetSelectionDialog.ShowDiff(GetExcelOwnerWindow(), item);
         }

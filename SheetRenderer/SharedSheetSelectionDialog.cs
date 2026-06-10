@@ -13,6 +13,7 @@ internal sealed class SharedSheetSelectionItem
     public string StatusDetail { get; set; }
     public bool HasConflict { get; set; }
     public string DiffText { get; set; }
+    public List<SharedSheetDiffEntry> DiffEntries { get; set; }
     public SharedSheetDocument Document { get; set; }
     public SharedSheetDocument DisplayDocument { get; set; }
 }
@@ -208,6 +209,12 @@ internal sealed class SharedSheetSelectionDialog : Form
 
     private static void ShowDiffDialog(IWin32Window owner, SharedSheetSelectionItem item)
     {
+        if (item != null && item.DiffEntries != null)
+        {
+            SharedSheetDiffDialog.Show(owner, item);
+            return;
+        }
+
         using (var form = new Form())
         using (var textBox = new TextBox())
         using (var closeButton = new Button())

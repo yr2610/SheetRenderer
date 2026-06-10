@@ -168,6 +168,7 @@
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="ShellBridge.cs" />
     <Compile Include="SharedSheetConflictResolutionDialog.cs" />
+    <Compile Include="SharedSheetDiffDialog.cs" />
     <Compile Include="SharedSheetModels.cs" />
     <Compile Include="SharedSheetSelectionDialog.cs" />
     <Compile Include="TimeAssigner.cs" />
