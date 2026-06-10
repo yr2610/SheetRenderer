@@ -3571,7 +3571,9 @@ public class RibbonController : ExcelRibbon
             }
         }
 
+        IWin32Window owner = GetExcelOwnerWindow();
         DialogResult dialogResult = MessageBox.Show(
+            owner,
             "共有値の競合を解決して反映しました。" + Environment.NewLine +
             "競合シート数: " + result.ConflictAppliedSheetCount + Environment.NewLine +
             "競合セル数: " + result.ConflictAppliedCellCount +
@@ -3590,7 +3592,7 @@ public class RibbonController : ExcelRibbon
             }
             catch (Exception ex)
             {
-                MessageBox.Show(ex.ToString(), "ログファイルを開けませんでした");
+                MessageBox.Show(owner, ex.ToString(), "ログファイルを開けませんでした");
             }
         }
     }
@@ -3847,7 +3849,7 @@ public class RibbonController : ExcelRibbon
         if (conflicts.Count > 0)
         {
             progressReporter?.Invoke("共有値の競合があります: " + conflicts.Count + " セル");
-            if (!SharedSheetConflictResolutionDialog.TryResolve(null, conflicts))
+            if (!SharedSheetConflictResolutionDialog.TryResolve(GetExcelOwnerWindow(), conflicts))
             {
                 FileLogger.Warn("[SharedReceive] canceled during conflict resolution. conflicts=" + conflicts.Count);
                 progressReporter?.Invoke("共有値の反映をキャンセルしました（競合解決キャンセル）");
@@ -9091,7 +9093,7 @@ public class RibbonController : ExcelRibbon
                 Document = localDocument
             };
 
-            SharedSheetSelectionDialog.ShowDiff(null, item);
+            SharedSheetSelectionDialog.ShowDiff(GetExcelOwnerWindow(), item);
         }
         catch (Exception ex)
         {
@@ -9308,7 +9310,7 @@ public class RibbonController : ExcelRibbon
 
             if (conflictSheetNames.Count > 0)
             {
-                SharedSheetSelectionDialog.ShowConflictReview(null, selectionItems);
+                SharedSheetSelectionDialog.ShowConflictReview(GetExcelOwnerWindow(), selectionItems);
                 return;
             }
 
@@ -9319,7 +9321,7 @@ public class RibbonController : ExcelRibbon
             }
 
             List<SharedSheetSelectionItem> selectedItems;
-            if (!SharedSheetSelectionDialog.TryShow(null, selectionItems, out selectedItems))
+            if (!SharedSheetSelectionDialog.TryShow(GetExcelOwnerWindow(), selectionItems, out selectedItems))
             {
                 return;
             }
