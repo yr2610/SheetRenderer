@@ -1305,6 +1305,49 @@ public class RibbonController : ExcelRibbon
         }
     }
 
+    private static void ShowUserFacingError(
+        string title,
+        Exception ex,
+        string guidance = null,
+        IWin32Window owner = null)
+    {
+        TryLogException(title, ex);
+
+        string message = ex == null ? null : ex.Message;
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            message = "エラーが発生しました。";
+        }
+
+        if (!string.IsNullOrWhiteSpace(guidance))
+        {
+            message += Environment.NewLine + Environment.NewLine + guidance;
+        }
+
+        MessageBox.Show(
+            owner,
+            message,
+            title,
+            MessageBoxButtons.OK,
+            MessageBoxIcon.Error);
+    }
+
+    private static void TryLogException(string title, Exception ex)
+    {
+        if (ex == null)
+        {
+            return;
+        }
+
+        try
+        {
+            FileLogger.Error("[" + (title ?? "Error") + "] " + ex);
+        }
+        catch
+        {
+        }
+    }
+
     private void InvalidateRenderCommandControls()
     {
         try
@@ -3705,7 +3748,11 @@ public class RibbonController : ExcelRibbon
             }
             catch (Exception ex)
             {
-                MessageBox.Show(owner, ex.ToString(), "ログファイルを開けませんでした");
+                ShowUserFacingError(
+                    "ログファイルを開けませんでした",
+                    ex,
+                    "ログファイルが存在するか、開く権限があるか確認してください。",
+                    owner);
             }
         }
     }
@@ -9076,7 +9123,10 @@ public class RibbonController : ExcelRibbon
         }
         catch (Exception ex)
         {
-            System.Windows.Forms.MessageBox.Show(ex.ToString(), "最新版取得に失敗しました");
+            ShowUserFacingError(
+                "最新版取得に失敗しました",
+                ex,
+                "GitLab 設定、アクセストークン、ネットワーク状態を確認してください。");
         }
         finally
         {
@@ -9176,7 +9226,10 @@ public class RibbonController : ExcelRibbon
         }
         catch (Exception ex)
         {
-            System.Windows.Forms.MessageBox.Show(ex.ToString(), "最新版取得に失敗しました");
+            ShowUserFacingError(
+                "最新版取得に失敗しました",
+                ex,
+                "GitLab 設定、アクセストークン、ネットワーク状態を確認してください。");
         }
         finally
         {
@@ -9295,7 +9348,10 @@ public class RibbonController : ExcelRibbon
         }
         catch (Exception ex)
         {
-            MessageBox.Show(ex.ToString(), dialogTitle);
+            ShowUserFacingError(
+                dialogTitle,
+                ex,
+                "ブックの共有状態を確認してから、もう一度実行してください。");
         }
     }
 
@@ -9405,7 +9461,10 @@ public class RibbonController : ExcelRibbon
         }
         catch (Exception ex)
         {
-            MessageBox.Show(ex.ToString(), dialogTitle);
+            ShowUserFacingError(
+                dialogTitle,
+                ex,
+                "ブックの共有状態を確認してから、もう一度実行してください。");
         }
     }
 
@@ -9577,7 +9636,10 @@ public class RibbonController : ExcelRibbon
                 progressForm.CloseForm();
                 progressForm = null;
             }
-            MessageBox.Show(ex.ToString(), dialogTitle);
+            ShowUserFacingError(
+                dialogTitle,
+                ex,
+                "GitLab 設定、アクセストークン、共有先の状態を確認してください。");
         }
         finally
         {
@@ -10660,7 +10722,10 @@ public class RibbonController : ExcelRibbon
         }
         catch (Exception ex)
         {
-            MessageBox.Show(ex.ToString(), "Token Manager Error");
+            ShowUserFacingError(
+                "トークン管理を開けませんでした",
+                ex,
+                "保存済みトークン情報を確認できませんでした。");
         }
     }
 
