@@ -9131,7 +9131,7 @@ public class RibbonController : ExcelRibbon
         OnShareButtonPressed(control, activeSheet.Name);
     }
 
-    public async void OnShowCurrentSheetDiffButtonPressed(IRibbonControl control)
+    public void OnShowCurrentSheetDiffButtonPressed(IRibbonControl control)
     {
         string dialogTitle = "シート差分表示";
 
@@ -9155,12 +9155,6 @@ public class RibbonController : ExcelRibbon
                 return;
             }
 
-            if (workbookInfo.ShareInfo == null)
-            {
-                MessageBox.Show("このブックには共有先の情報が保存されていません。", dialogTitle);
-                return;
-            }
-
             SharedSheetDocument localDocument = CreateSharedSheetDocument(activeSheet);
             if (localDocument == null)
             {
@@ -9169,36 +9163,6 @@ public class RibbonController : ExcelRibbon
             }
 
             SharedSheetDocument baseDocument = GetSharedSheetBaseDocument(workbook, localDocument.SheetId);
-            SharedSheetDocument remoteDocument = null;
-
-            string shareToken = GitLabAuth.GetOrPromptToken(
-                workbookInfo.ShareInfo.BaseUrl,
-                workbookInfo.ShareInfo.ProjectId);
-            if (!string.IsNullOrWhiteSpace(shareToken))
-            {
-                await EnsureValidatedShareRefNameAsync(
-                    workbookInfo.ShareInfo,
-                    shareToken,
-                    workbook).ConfigureAwait(true);
-
-                SharedProjectManifest remoteManifest = await TryDownloadSharedProjectManifestAsync(
-                    workbookInfo.ShareInfo,
-                    workbookInfo.ProjectId,
-                    shareToken).ConfigureAwait(true);
-
-                SharedProjectManifestEntry remoteEntry = remoteManifest == null || remoteManifest.Sheets == null
-                    ? null
-                    : remoteManifest.Sheets.FirstOrDefault(x => x != null && string.Equals(x.SheetId, localDocument.SheetId, StringComparison.Ordinal));
-
-                if (remoteEntry != null)
-                {
-                    remoteDocument = await TryDownloadSharedSheetDocumentAsync(
-                        workbookInfo.ShareInfo,
-                        workbookInfo.ProjectId,
-                        localDocument.SheetId,
-                        shareToken).ConfigureAwait(true);
-                }
-            }
 
             var item = new SharedSheetSelectionItem
             {
@@ -9207,7 +9171,7 @@ public class RibbonController : ExcelRibbon
                 Document = localDocument,
                 DisplayDocument = localDocument
             };
-            SetSharedSheetSelectionDiff(item, baseDocument, localDocument, remoteDocument, localDocument);
+            SetSharedSheetSelectionDiff(item, baseDocument, localDocument, null, localDocument);
 
             SharedSheetSelectionDialog.ShowDiff(GetExcelOwnerWindow(), item);
         }
