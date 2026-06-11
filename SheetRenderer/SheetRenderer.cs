@@ -414,6 +414,7 @@ public class RibbonController : ExcelRibbon
     private IRibbonUI ribbon;
     private ProgressBarForm progressBarForm;
     private bool renderCommandInProgress;
+    private bool syncCommandInProgress;
     private static readonly List<Form> openMissingImageFileDialogs = new List<Form>();
     private static PullSessionContext currentPullSession;
     private static PullSessionContext lastSuccessfulPullSession;
@@ -1217,16 +1218,8 @@ public class RibbonController : ExcelRibbon
 
     private bool TryBeginRenderCommand(string statusText)
     {
-        if (renderCommandInProgress)
+        if (!TryEnsureNoCommandInProgress())
         {
-            try
-            {
-                Notifier.Warn("処理中", "更新処理が完了してから再実行してください。");
-            }
-            catch
-            {
-            }
-
             return false;
         }
 
@@ -1247,10 +1240,69 @@ public class RibbonController : ExcelRibbon
         return true;
     }
 
+    private bool TryBeginSyncCommand(string statusText)
+    {
+        if (!TryEnsureNoCommandInProgress())
+        {
+            return false;
+        }
+
+        syncCommandInProgress = true;
+
+        try
+        {
+            Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
+            excelApp.StatusBar = string.IsNullOrWhiteSpace(statusText)
+                ? "SheetRenderer: 処理中..."
+                : statusText;
+        }
+        catch
+        {
+        }
+
+        return true;
+    }
+
     private void EndRenderCommand()
     {
         renderCommandInProgress = false;
         InvalidateRenderCommandControls();
+    }
+
+    private void EndSyncCommand()
+    {
+        syncCommandInProgress = false;
+    }
+
+    private bool TryEnsureNoCommandInProgress()
+    {
+        if (!renderCommandInProgress && !syncCommandInProgress)
+        {
+            return true;
+        }
+
+        NotifyCommandInProgress();
+        return false;
+    }
+
+    private static void NotifyCommandInProgress()
+    {
+        try
+        {
+            Notifier.Warn("処理中", "現在の処理が完了してから再実行してください。");
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
+            excelApp.StatusBar = "SheetRenderer: 現在の処理が完了してから再実行してください。";
+        }
+        catch
+        {
+        }
     }
 
     private void InvalidateRenderCommandControls()
@@ -8750,6 +8802,11 @@ public class RibbonController : ExcelRibbon
 
     public void OnPullSourceSettingsButtonPressed(IRibbonControl control)
     {
+        if (!TryEnsureNoCommandInProgress())
+        {
+            return;
+        }
+
         Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
         Excel.Workbook workbook = excelApp.ActiveWorkbook as Excel.Workbook;
         GitLabLastInput initial = GetInitialPullSettingsForDialog(workbook);
@@ -8765,6 +8822,11 @@ public class RibbonController : ExcelRibbon
 
     public void OnPullShareSettingsButtonPressed(IRibbonControl control)
     {
+        if (!TryEnsureNoCommandInProgress())
+        {
+            return;
+        }
+
         Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
         Excel.Workbook workbook = excelApp.ActiveWorkbook as Excel.Workbook;
         GitLabLastInput pullInfo = GetInitialPullSettingsForDialog(workbook);
@@ -8781,10 +8843,15 @@ public class RibbonController : ExcelRibbon
 
     public async void OnPullButtonPressed(IRibbonControl control)
     {
-        Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
-        var activeSheet = excelApp.ActiveSheet as Excel.Worksheet;
-        Excel.Workbook activeWorkbook = activeSheet == null ? null : activeSheet.Parent as Excel.Workbook;
-        PullProgressForm progressForm = new PullProgressForm();
+        if (!TryBeginSyncCommand("SheetRenderer: 最新版取得を開始しています..."))
+        {
+            return;
+        }
+
+        Excel.Application excelApp = null;
+        Excel.Worksheet activeSheet = null;
+        Excel.Workbook activeWorkbook = null;
+        PullProgressForm progressForm = null;
         GitLabShareInfo shareInfo = null;
 
         if (SynchronizationContext.Current == null)
@@ -8794,6 +8861,11 @@ public class RibbonController : ExcelRibbon
 
         try
         {
+            excelApp = (Excel.Application)ExcelDnaUtil.Application;
+            activeSheet = excelApp.ActiveSheet as Excel.Worksheet;
+            activeWorkbook = activeSheet == null ? null : activeSheet.Parent as Excel.Workbook;
+            progressForm = new PullProgressForm();
+
             ClearPullSessionState();
 
             GitLabLastInput input;
@@ -9008,25 +9080,45 @@ public class RibbonController : ExcelRibbon
         }
         finally
         {
-            if (progressForm != null)
+            try
             {
-                progressForm.CloseForm();
+                if (progressForm != null)
+                {
+                    progressForm.CloseForm();
+                }
             }
-            ClearPullSessionState();
+            catch
+            {
+            }
+
+            try
+            {
+                ClearPullSessionState();
+            }
+            finally
+            {
+                EndSyncCommand();
+            }
         }
     }
 
     public async void OnPullCreateButtonPressed(IRibbonControl control)
     {
-        Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
+        if (!TryBeginSyncCommand("SheetRenderer: 最新版取得で新規作成を開始しています..."))
+        {
+            return;
+        }
+
         if (SynchronizationContext.Current == null)
         {
             SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());
         }
 
-        PullProgressForm progressForm = new PullProgressForm();
+        PullProgressForm progressForm = null;
         try
         {
+            progressForm = new PullProgressForm();
+
             ClearPullSessionState();
             GitLabLastInput input;
             GitLabShareInfo shareInfo;
@@ -9088,8 +9180,25 @@ public class RibbonController : ExcelRibbon
         }
         finally
         {
-            progressForm.CloseForm();
-            ClearPullSessionState();
+            try
+            {
+                if (progressForm != null)
+                {
+                    progressForm.CloseForm();
+                }
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                ClearPullSessionState();
+            }
+            finally
+            {
+                EndSyncCommand();
+            }
         }
     }
 
@@ -9120,6 +9229,11 @@ public class RibbonController : ExcelRibbon
 
     public void OnShareCurrentSheetButtonPressed(IRibbonControl control)
     {
+        if (!TryEnsureNoCommandInProgress())
+        {
+            return;
+        }
+
         Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
         Excel.Worksheet activeSheet = excelApp.ActiveSheet as Excel.Worksheet;
         if (activeSheet == null)
@@ -9134,6 +9248,10 @@ public class RibbonController : ExcelRibbon
     public void OnShowCurrentSheetDiffButtonPressed(IRibbonControl control)
     {
         string dialogTitle = "シート差分表示";
+        if (!TryEnsureNoCommandInProgress())
+        {
+            return;
+        }
 
         try
         {
@@ -9184,6 +9302,10 @@ public class RibbonController : ExcelRibbon
     public void OnRevertCurrentSheetChangesButtonPressed(IRibbonControl control)
     {
         string dialogTitle = "シート変更を戻す";
+        if (!TryEnsureNoCommandInProgress())
+        {
+            return;
+        }
 
         try
         {
@@ -9294,24 +9416,32 @@ public class RibbonController : ExcelRibbon
 
     private async void OnShareButtonPressed(IRibbonControl control, string targetSheetName)
     {
+        string dialogTitle = string.IsNullOrWhiteSpace(targetSheetName) ? "変更共有" : "シート共有";
+        if (!TryBeginSyncCommand("SheetRenderer: " + dialogTitle + "を開始しています..."))
+        {
+            return;
+        }
+
         if (SynchronizationContext.Current == null)
         {
             SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());
         }
 
-        Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
-        string dialogTitle = string.IsNullOrWhiteSpace(targetSheetName) ? "変更共有" : "シート共有";
-        Excel.Workbook workbook = excelApp.ActiveWorkbook as Excel.Workbook;
+        Excel.Application excelApp = null;
+        Excel.Workbook workbook = null;
         PullProgressForm progressForm = null;
-
-        if (workbook == null)
-        {
-            MessageBox.Show("アクティブなブックがありません。", dialogTitle);
-            return;
-        }
 
         try
         {
+            excelApp = (Excel.Application)ExcelDnaUtil.Application;
+            workbook = excelApp.ActiveWorkbook as Excel.Workbook;
+
+            if (workbook == null)
+            {
+                MessageBox.Show("アクティブなブックがありません。", dialogTitle);
+                return;
+            }
+
             WorkbookInfo workbookInfo = WorkbookInfo.CreateFromWorkbook(workbook);
             if (workbookInfo == null)
             {
@@ -9451,9 +9581,19 @@ public class RibbonController : ExcelRibbon
         }
         finally
         {
-            if (progressForm != null)
+            try
             {
-                progressForm.CloseForm();
+                if (progressForm != null)
+                {
+                    progressForm.CloseForm();
+                }
+            }
+            catch
+            {
+            }
+            finally
+            {
+                EndSyncCommand();
             }
         }
     }
