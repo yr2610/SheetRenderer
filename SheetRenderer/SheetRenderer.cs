@@ -5122,10 +5122,7 @@ public class RibbonController : ExcelRibbon
             templateSheetVisible = templateSheet.Visible;
             templateSheet.Visible = Excel.XlSheetVisibility.xlSheetVisible;
             templateSheetVisibilityChanged = true;
-            templateSheet.Copy(After: sheet);
-
-            // コピーされたシートはアクティブシートになるので、それを取得
-            newSheet = excelApp.ActiveSheet as Excel.Worksheet;
+            newSheet = CopyWorksheetAfter(workbook, templateSheet, sheet);
 
             // 元のシートから今の入力内容を取り込む
             sheetValuesInfo = SheetValuesInfo.CreateFromSheet(sheet);
@@ -5356,6 +5353,60 @@ public class RibbonController : ExcelRibbon
         }
 
         return null;
+    }
+
+    static Excel.Worksheet CopyWorksheetAfter(
+        Excel.Workbook workbook,
+        Excel.Worksheet sourceSheet,
+        object afterSheet)
+    {
+        if (workbook == null)
+        {
+            throw new ArgumentNullException(nameof(workbook));
+        }
+        if (sourceSheet == null)
+        {
+            throw new ArgumentNullException(nameof(sourceSheet));
+        }
+        if (afterSheet == null)
+        {
+            throw new ArgumentNullException(nameof(afterSheet));
+        }
+
+        var existingSheetNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (Excel.Worksheet worksheet in workbook.Worksheets)
+        {
+            if (worksheet == null)
+            {
+                continue;
+            }
+
+            existingSheetNames.Add(worksheet.Name);
+        }
+
+        sourceSheet.Copy(Type.Missing, afterSheet);
+
+        foreach (Excel.Worksheet worksheet in workbook.Worksheets)
+        {
+            if (worksheet == null)
+            {
+                continue;
+            }
+
+            if (!existingSheetNames.Contains(worksheet.Name))
+            {
+                return worksheet;
+            }
+        }
+
+        Excel.Application excelApp = workbook.Application;
+        Excel.Worksheet activeSheet = excelApp.ActiveSheet as Excel.Worksheet;
+        if (activeSheet != null && !existingSheetNames.Contains(activeSheet.Name))
+        {
+            return activeSheet;
+        }
+
+        throw new InvalidOperationException("コピーされたシートを特定できませんでした。");
     }
 
     static void ApplyViewState(Excel.Application excelApp, Excel.Worksheet sheet, SheetViewState viewState)
@@ -5871,8 +5922,7 @@ public class RibbonController : ExcelRibbon
                 }
 
                 // シートをコピー
-                templateSheet.Copy(After: sheet);
-                Excel.Worksheet newSheet = workbook.Sheets[sheet.Index + 1];
+                Excel.Worksheet newSheet = CopyWorksheetAfter(workbook, templateSheet, sheet);
 
                 SheetValuesInfo sheetValuesInfo = null;
                 try
@@ -5909,8 +5959,7 @@ public class RibbonController : ExcelRibbon
                 // シートをコピー
                 // 一旦は最後に追加。最後にまとめて並び替える
                 var beforeSheet = workbook.Sheets[workbook.Sheets.Count];
-                templateSheet.Copy(After: beforeSheet);
-                Excel.Worksheet newSheet = workbook.Sheets[beforeSheet.Index + 1];
+                Excel.Worksheet newSheet = CopyWorksheetAfter(workbook, templateSheet, beforeSheet);
                 newSheet.Name = newSheetName;
 
                 var missingImagePathsInSheet = RenderSheet(sheetNode, confData, jsonFilePath, newSheet, null);
@@ -6094,8 +6143,8 @@ public class RibbonController : ExcelRibbon
             progressBarForm.Invoke(new Action<string>(progressBarForm.UpdateSheetName), newSheetName);
 
             // シートをコピーしてリネーム
-            templateSheet.Copy(After: workbook.Sheets[workbook.Sheets.Count]);
-            Excel.Worksheet newSheet = workbook.Sheets[workbook.Sheets.Count];
+            Excel.Worksheet insertAfter = workbook.Sheets[workbook.Sheets.Count];
+            Excel.Worksheet newSheet = CopyWorksheetAfter(workbook, templateSheet, insertAfter);
             newSheet.Name = newSheetName;
 
             SheetValuesInfo sheetValuesInfo = null;
