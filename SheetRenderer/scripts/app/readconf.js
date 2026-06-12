@@ -6,10 +6,6 @@
 
     var postProcess = [];
 
-    //var indexFilePath = FileSystem.BuildPath(FileSystem.GetParentFolderName(filePath), "index.yml");
-    //var index = Yaml.LoadFile(indexFilePath);
-    //printJSON(index);
-
     function processFunctions(data) {
         if (_.isUndefined(data.$functions)) {
             return;
@@ -35,12 +31,6 @@
         return CL.withActiveReadFile(baseFile, function() {
             var baseDirectory = FileSystem.GetParentFolderName(baseFile);
 
-            // XXX: ついでに template_dxl もここで処理
-            //if (!_.isUndefined(data.$template_dxl)) {
-            //    xmlFilePath = FileSystem.BuildPath(baseDirectory, data.$template_dxl);
-            //    delete data.$template_dxl;
-            //}
-
             // XXX: ついでに functions もここで
             processFunctions(data);
 
@@ -54,7 +44,6 @@
                     var includeFilePath = FileSystem.BuildPath(baseDirectory, value);
                     var includeData = CL.readYAMLFile(includeFilePath, includeFilePath);
                     processIncludeFiles(includeData, includeFilePath);
-                    //_.assign(data, includeData);  // 上書きする
                     _.defaults(data, includeData);  // 上書きしない
                 });
             }
@@ -91,7 +80,6 @@
                 if (finished[key]) {
                     return;
                 }
-                //WScript.Echo(typeof value +"\n" + JSON.stringify(value, undefined, 4));
                 if (!re.test(value)) {
                     finished[key] = true;
                     return;

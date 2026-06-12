@@ -384,7 +384,6 @@ var conf = null;
 
 function computeRootId() {
     // root.children を基に hash を求める
-    //var k = JSON.stringify(root.children);
     var k = _.values(srcTexts).join("\n");
     var scopeHash = root.globalScopeHash || "";
     k += scopeHash;
@@ -687,7 +686,6 @@ function AddSrcTextToRewrite(noIdLineData, newSrcText) {
     var lineObj = noIdLineData.lineObj;
     var filePath = lineObj.filePath;
     var projectDirectory = lineObj.projectDirectory;
-    //var filePathProjectLocal = getProjectLocalPath(filePath, projectDirectory);
     var key = buildProjectKey(projectDirectory, filePath);
     var lineNum = noIdLineData.lineNum;
 
@@ -876,7 +874,6 @@ function parseHeading(lineObj) {
     };
     AddChildNode(stack.peek(), item);
     stack.push(item);
-    //WScript.Echo(item.level + "\n" + item.text);
 
     if (fResetId ||
         level === 1 && !uid) {
@@ -1107,21 +1104,7 @@ function parseUnorderedList(lineObj, line) {
         text = commentResult.text;
         comment = commentResult.comment;
         imageFilePath = commentResult.imageFilePath;
-        //var v = {
-        //    text: commentResult.text,
-        //    comment: commentResult.comment,
-        //    imageFilePath: commentResult.imageFilePath
-        //};
-        //printJSON(v);
     }
-
-    //var commentMatch = text.trim().match(/^([\s\S]+)\s*\[\^(.+)\]$/);
-    //var comment = undefined;
-    //if (commentMatch) {
-    //    text = commentMatch[1].trim();
-    //    comment = commentMatch[2].trim();
-    //    comment = comment.replace(/<br>/gi, "\n");
-    //}
 
     // １行のみ、行全体以外は対応しない
     var link = text.trim().match(/^\[(.+)\]\((.+)\)$/);
@@ -1169,7 +1152,6 @@ function parseUnorderedList(lineObj, line) {
 
     AddChildNode(stack.peek(), item);
     stack.push(item);
-    //WScript.Echo(ul.length + "\n" + line);
 
     if (!uidMatch || fResetId) {
         // tree構築後にleafだったらIDをふる
@@ -1266,7 +1248,6 @@ while (!srcLines.atEnd) {
     var headerList = line.match(/^(?:\s*)([\*\+\-])\.\s+(.*)\s*$/);
     if (headerList) {
         lastLineWasHeading = false;
-        //var level = headerList[1].length;
         var marker = headerList[1];
         var text = headerList[2];
         var parent = stack.peek();
@@ -1411,13 +1392,11 @@ while (!srcLines.atEnd) {
 
         try {
             o = jsyaml.load(s);
-            //o = Yaml.Load(s);
         }
         catch (e) {
             var errorMessage = "YAML の parse に失敗しました。";
             MyError(errorMessage, lineObj.filePath, lineObj.lineNum);
         }
-        //printJSON(o);
 
         // 関数定義な文字列は関数にする
         function convertFunctions(o) {
@@ -1430,44 +1409,6 @@ while (!srcLines.atEnd) {
             });
         }
         convertFunctions(o);
-        //_.forEach(o, function (v, k) {
-        //    if (_.isString(v) && v.match(/^function/)) {
-        //        o[k] = Function.call(this, 'return ' + v)();
-        //    }
-        //});
-
-//        // プリミティブな配列を { $value: value } な配列にする
-//        function primitiveArrayToObjectArray(value, key, collection) {
-//            // XXX: 要素数 1 以上前提の作り
-//            if (_.isArray(value) && !_.isObject(value[1])) {
-//                collection[key] = _.map(value, function(n) {
-//                    return { $value: n };
-//                });
-//                _.forEach(collection[key], function(n) {
-//                    _.forEach(n, primitiveArrayToObjectArray);
-//                });
-//            }
-//            else if (_.isObject(value)) {
-//                _.forEach(value, primitiveArrayToObjectArray);
-//            }
-//        }
-//        _.forEach(o, primitiveArrayToObjectArray);
-//        //printJSON(o);
-//
-//        // $index プロパティをセットする
-//        function addIndexProperty(value, key, collection) {
-//            if (_.isArray(value)) {
-//                _.forEach(collection[key], function(element, index, collection) {
-//                    collection[index].$index = index;
-//                    _.forEach(collection[index], addIndexProperty);
-//                });
-//            }
-//            if (_.isObject(value)) {
-//                _.forEach(value, addIndexProperty);
-//            }
-//        }
-//        _.forEach(o, addIndexProperty);
-//        //printJSON(o);
 
         // 一旦は YAML の場合は記述位置に関係なくシートのrootに持っておくことにする
         var paramNode;
@@ -1478,8 +1419,6 @@ while (!srcLines.atEnd) {
         if (_.isUndefined(paramNode.params)) {
             paramNode.params = {};
         }
-        //_.assign(paramNode.params, o);  // 上書きする
-        //_.defaults(paramNode.params, o);  // 上書きしない
         // deep merge
         // 同名の配列が宣言された場合は、後から宣言された方で丸ごと上書きされる
         paramNode.params = _.merge(paramNode.params, o, function(a, b) {
@@ -1488,20 +1427,6 @@ while (!srcLines.atEnd) {
             }
         });
     }
-
-    
-
-
-    // obsolete
-    /*
-    var image = line.match(/^(\s*)!\[\]\((.+)\)$/);
-    if (image)
-    {
-        stack.peek().image = image[2];
-        continue;
-    }
-    */
-
     // 自由にプロパティを追加できるようにしてしまう…
     var property = line.match(/^(\s*)\[(.+)\]:\s+(.+)$/);
     if (property) {
@@ -1802,7 +1727,6 @@ _.forEach(noIdNodes, function(infos) {
 
         // ID 挿入して書き換え
         // "{{foo}}" みたいな文法を作ろうとしたら {} に置換されてしまうので、汎用 format ではなく "{uid}" 専用の replace 処理に
-        //var newSrcText = info.newSrcText.format({uid: uid});
         var newSrcText = info.newSrcText.replace(/\{uid\}/, uid);
 
         AddSrcTextToRewrite(info, newSrcText);
@@ -2684,15 +2608,6 @@ function applyPlaceholdersEverywhere() {
     );
 }
 
-//// 使用例
-//var globalScope = { foo: 1 };
-//var localScope = Object.create(globalScope);
-//localScope.bar = 2;
-//
-//// 平坦化（継承元も含めて）
-//var flatScope = _.assign({}, localScope);
-//
-//var result = evaluateInScope("foo + bar", flatScope); // → 3
 function evaluateInScope(expr, scope) {
     var keys = _.keys(scope);
     var values = _.map(keys, function(k) { return scope[k]; });
@@ -4132,10 +4047,6 @@ forAllNodes_Recurse(root, null, -1, function(node, parent, index) {
     // エントリープロジェクトからの相対パスを求める
     function getImageFilePathFromEntryProject(imageFilePath) {
         if (imageFilePath.charAt(0) != "/") {
-            //if (imageDirectory) {
-            //    // XXX: imageDirectory の仕様は廃止の方がいい
-            //    imageFilePath = FileSystem.BuildPath(imageDirectory, imageFilePath);
-            //}
             imageFilePath = FileSystem.BuildPath(fileParentFolderAbs, imageFilePath);
         }
         else {
@@ -4146,9 +4057,6 @@ forAllNodes_Recurse(root, null, -1, function(node, parent, index) {
     }
 
     node.imageFilePath = getImageFilePathFromEntryProject(node.imageFilePath);
-
-    // TODO: entry file のプロジェクトからの相対パスにする
-    //imageFilePath = FileSystem.BuildPath(FileSystem.GetParentFolderName(filePath), image);
     
 });
 
@@ -4433,34 +4341,19 @@ function getAbsoluteBackupPath(filePathProjectLocal, projectPathFromRoot) {
 // 元ファイルをリネームだとエディターで開いてる元ファイルが閉じてしまうので
 for (var key in srcTextsToRewrite) {
     var noIdLineData = srcTextsToRewrite[key];
-    //printJSON(noIdLineData);
     var filePath = noIdLineData.filePath;
     var projectDirectory = noIdLineData.projectDirectory;
     var filePathAbs = sourceLocalPathToAbsolutePath(filePath, projectDirectory);
     var entryFileFolderName = FileSystem.GetParentFolderName(rootFilePath);
     var folderName = FileSystem.GetParentFolderName(filePath);
-    //var backupFolderName = FileSystem.BuildPath(entryFileFolderName, "bak");
     var backupFolderName = getAbsoluteBackupDirectory(projectDirectory);
     backupFolderName = FileSystem.BuildPath(backupFolderName, "txt");
 
-    // 何やってたか忘れたので一旦コメントアウト
-    //if (folderName !== entryFileFolderName) {
-    //    if (_.startsWith(folderName, entryFileFolderName)) {
-    //        var backupSubFolderName = folderName.slice(entryFileFolderName.length + 1);
-    //        backupFolderName = FileSystem.BuildPath(backupFolderName, backupSubFolderName);
-    //    } else {
-    //        // XXX: 何かした方が良いんだろうけど、とりあえず何もしない…
-    //    }
-    //}
-
-    // 最初から filePath を使えば済む話？
     var fileDirectoryAbs = FileSystem.GetParentFolderName(filePathAbs);
     var fileDirectoryFromSource = absolutePathToSourceLocalPath(fileDirectoryAbs, projectDirectory);
     backupFolderName = FileSystem.BuildPath(backupFolderName, fileDirectoryFromSource);
     CL.createFolder(backupFolderName);
 
-    //var backupPath = getAbsoluteBackupPath(filePath, projectDirectory);
-    //alert(filePath + "\n" + projectDirectory + "\n" + backupPath);
     var backupFileName = CL.makeBackupFileName(filePathAbs);
     var backupFilePath = FileSystem.BuildPath(backupFolderName, backupFileName);
 
@@ -4483,25 +4376,6 @@ for (var key in srcTextsToRewrite) {
 }
 })();
 
-/**
-(function(){
-var s = "";
-for (var filePath in srcTextsToRewrite)
-{
-    s += "[ " + filePath + " ]\n";
-    for (var lineNum in srcTextsToRewrite[filePath])
-    {
-        var text = srcTextsToRewrite[filePath][lineNum];
-        s += lineNum + ": ";
-        s += text + "\n";
-    }
-
-    s += "\n";
-}
-Error(s);
-})();
-/**/
-
 // TODO: leaf じゃない node に ID がふられてたら無駄なので削除
 
 
@@ -4511,40 +4385,6 @@ computeRootId();
 
 
 var sJson = stringifyPretty(root);
-
-// 直列な感じにしてみるテスト
-// 全部シートを１つの配列にすると json のサイズは半分ぐらいになるけど jsondiffpatch が簡単にスタック食いつぶすっぽい
-// シート内だけを配列にすると json のサイズが2/3ぐらいで、 jsondiffpatch でも良い感じで diff がとれるっぽい。ただし、１シートのnode数が多いとスタック食いつぶす危険性はつねにある
-// 恐らくサイズの違いの主な要素はインデント（半角スペース）
-/*
-sJson = (function () {
-    function treeToArray(node, nodes, parentIndex) {
-        node.parent = parentIndex;
-        parentIndex = nodes.length;
-        nodes.push(node);
-        for (var i = 0; i < node.children.length; i++) {
-            treeToArray(node.children[i], nodes, parentIndex);
-        }
-        delete node.children;
-    }
-
-    var tree = JSON.parse(sJson);
-    var children = {};
-    var childrenOrder = [];
-    for (var i = 0; i < tree.children.length; i++) {
-        var nodes = [];
-        treeToArray(tree.children[i], nodes, -1);
-        var id = nodes[0].id;
-        children[id] = nodes;
-        childrenOrder.push(id);
-    }
-    delete tree.children;
-    tree.childrenOrder = childrenOrder;
-    tree.children = children;
-
-    return JSON.stringify(tree, undefined, 4);
-})();
-*/
 
 File.WriteAllText(outfilePath, sJson);
 

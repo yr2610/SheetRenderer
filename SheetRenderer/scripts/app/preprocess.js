@@ -95,12 +95,6 @@ function preProcessConditionalCompile(lines, defines, currentProjectDirectoryFro
 
     function currentCondtion() {
         return states.every(s => s.cond);
-        //for (var i = 0; i < states.length; i++) {
-        //    if (!states[i].cond) {
-        //        return false;
-        //    }
-        //}
-        //return true;
     }
 
     function evalFormula(formula, objs) {
@@ -122,7 +116,6 @@ function preProcessConditionalCompile(lines, defines, currentProjectDirectoryFro
         }
 
         s += "return(" + formula + ");})();";
-        //WScript.Echo(s);
         return eval(s);
     }
 
@@ -206,14 +199,11 @@ function preProcessConditionalCompile(lines, defines, currentProjectDirectoryFro
         }
 
         if (!isReservedName(name)) {
-            //if (name in objs) {
             delete objs[name];
-            //}
         }
 
         // undef の場合は set false 扱い、にしようと思ったけど undef の後で define で redefine 扱いになるので
         // 素直に削除だけにしておく
-        //parseSet(name + " = false", lineObj);
     }
 
     function parseSet(option, lineObj) {
@@ -226,7 +216,6 @@ function preProcessConditionalCompile(lines, defines, currentProjectDirectoryFro
             var errorMessage = "@set コマンドの文法が正しくありません。";
             throw new ParseError(errorMessage, lineObj);
         }
-        //WScript.Echo(JSON.stringify(optionMatch, undefined, 4));
         var name = optionMatch[1];
 
         if (isReservedName(name)) {
@@ -324,11 +313,6 @@ function preProcessConditionalCompile(lines, defines, currentProjectDirectoryFro
             return null;
         }
 
-        //var s = "";
-        //for (var i = 0; i < commandMatch.length; i++) {
-        //    s += i + " : " + commandMatch[i] + "\n";
-        //}
-        //WScript.Echo(s);
         var command = commandMatch[1];
         var option = commandMatch[2];
 
@@ -391,14 +375,12 @@ function preProcessConditionalCompile(lines, defines, currentProjectDirectoryFro
             var errorMessage = "include パラメータが不正です。";
             throw new ParseError(errorMessage, lineObj);
         }
-        //printJSON(includeParam);
 
         // include ファイルに渡す用
         // 上書きする（階層が深い方を優先）
         var localTemplateVariables = _.assign(templateVariables, includeParam);
 
         localTemplateVariables.$currentProjectDirectory = currentProjectDirectoryFromRoot;
-        //printJSON(localTemplateVariables);
 
         var includeProjectDirectoryFromRoot = includeFileInfo.projectDirectory;
 
@@ -411,9 +393,6 @@ function preProcessConditionalCompile(lines, defines, currentProjectDirectoryFro
 
         if (!FileSystem.FileExists(pathAbs)) {
             var sourceDirectory = FileSystem.BuildPath(includeFileInfo.projectDirectory, sourceDirectoryName);
-            //var relativeProjectPath = CL.getRelativePath(conf.$rootDirectory, includeFileInfo.sourceDirectory);
-            //var relativePath = CL.getRelativePath(includeFileInfo.sourceDirectory, path);
-            //var relativePath = includeFileString;
 
             var errorMessage = "フォルダ\n" + sourceDirectory + "\nには\nファイル\n" + path + "\nが存在しません";
             throw new ParseError(errorMessage, lineObj);
@@ -451,17 +430,11 @@ function preProcessConditionalCompile(lines, defines, currentProjectDirectoryFro
         throw new ParseError(errorMessage, state.lineObj);
     }
 
-    //WScript.Echo(JSON.stringify(objs, undefined, 4));
-
-    // TODO: if が end で終わってないエラー
-    // スタックがカラじゃなければエラーとすればOK？
-    
     }
     catch (e) {
         if (_.isUndefined(e.lineObj) || _.isUndefined(e.errorMessage)){
             throw e;
         }
-        //WScript.Echo(JSON.stringify(e, undefined, 4));
         parseError(e);
     }
 
@@ -478,20 +451,6 @@ function replaceText(s, data) {
     }
 
     return s.replace(/\{\{\=\s*([\w\$]+)\s*\}\}/g, rep_fn);
-  
-//    for (;;) {
-//        var templateMatch = s.match(/^(.*)\{\{\=\s*([\w\$]+)\s*\}\}(.*)$/);
-//        if (!templateMatch) {
-//            break;
-//        }
-//        var name = templateMatch[2];
-//        if (!(name in data)) {
-//            throw "no member '" + name + "' in data.";
-//        }
-//        s = templateMatch[1] + data[name] + data[3];
-//    }
-//
-//    return s;
 }
 
 // filename.txt とだけ指定した場合は現在のプロジェクトの source 直下
@@ -530,13 +489,11 @@ function parseIncludeFilePath(s, currentProjectPathFromRoot, currentFilePathAbs,
             var message = "外部参照では現在のファイルからの相対指定はできません";
             throw new IncludeFilePathError(message);
         }
-        //var directoryFromRoot = FileSystem.GetParentFolderName(currentFilePathAbs);
         var currentFileDirectoryAbs = FileSystem.GetParentFolderName(currentFilePathAbs);
         var pathAbs = FileSystem.BuildPath(currentFileDirectoryAbs, localPath);
         var filePath = absolutePathToSourceLocalPath(pathAbs, currentProjectPathFromRoot);
         var result = {
             projectDirectory: currentProjectPathFromRoot,
-            //filePath: FileSystem.BuildPath(directoryFromRoot, localPath)
             filePath: filePath
         };
 
@@ -549,8 +506,6 @@ function parseIncludeFilePath(s, currentProjectPathFromRoot, currentFilePathAbs,
     }
     else {
         // root 指定の有無に関係なく root を優先して読む
-        //projectDirectoryFromRoot = FileSystem.BuildPath(rootPathAbs, projectDirectoryFromRoot);
-
         var fromRoot = (includeMatch[2] !== undefined);
         if (!fromRoot) {
             // TODO: root 指定ナシの場合は include path も検索する
@@ -558,13 +513,6 @@ function parseIncludeFilePath(s, currentProjectPathFromRoot, currentFilePathAbs,
     }
 
     // source 直下からの相対
-
-    //var directoryFromRoot = FileSystem.BuildPath(projectDirectoryFromRoot, sourceDirectoryName);
-
-    //var rootPathAbs = conf.$rootDirectory;
-    //var filePathAbs = FileSystem.BuildPath(directoryFromRoot, localPath);
-    //filePathAbs = FileSystem.BuildPath(rootPathAbs, filePathAbs);
-
     var result = {
         projectDirectory: projectDirectoryFromRoot,
         filePath: localPath
@@ -586,9 +534,6 @@ function parseIncludeParameters(s, variables) {
 
     // 各パラメータを template 処理
     _.forEach(params, function(value, name) {
-        //if (value.indexOf('{{=') == -1) {
-        //    return;
-        //}
         params[name] = replaceText(value, variables);
         // TODO: システム変数（$currentProject）の処理
         // TODO: $currentProject は root から現在の stack top への相対
@@ -602,15 +547,11 @@ function preProcess_Recurse(filePath, currentProjectDirectoryFromRoot, defines, 
     // 上書きする（階層が深い方を優先）
     templateVariables = _.assign(templateVariables, { $currentProjectDirectory: currentProjectDirectoryFromRoot });
 
-    //alert(currentProjectDirectoryFromRoot);
     var filePathAbs = directoryLocalPathToAbsolutePath(filePath, currentProjectDirectoryFromRoot, sourceDirectoryName);
 
     return CL.withActiveReadFile(filePathAbs, function() {
         var allLines = CL.readTextFile(filePathAbs, filePathAbs);
 
-        //var path = FileSystem.BuildPath(parentFolderName, image);
-
-        //var lineArray = new ArrayReader(allLines.split(/\r\n|\r|\n/));
         // 空要素も結果に含めたいのでsplitには正規表現を使わないように
         var lineArray = allLines.replace(/\r\n|\r/g, "\n").split("\n");
 
