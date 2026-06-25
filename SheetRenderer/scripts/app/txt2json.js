@@ -3578,10 +3578,8 @@ function evaluateInScope(expr, scope) {
 
         attachArgAliases(parametersScopeTop, parameters);
 
-        // 省略時はこれを使う（引数1個を想定）
+        // "{{}}" is shorthand for "$value" only. Object fields must be referenced explicitly.
         var defaultParam = "$value";
-        var firstParam = _.find(_.keys(parameters), function(s) { return s.substr(0,1) != "$"; });
-        if (!_.isUndefined(firstParam)) defaultParam = firstParam;
 
         runAnchorDeclarations(templateRoot, parametersScopeTop);
         runInitDirectives(templateRoot, parametersScopeTop);
