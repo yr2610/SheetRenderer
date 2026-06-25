@@ -1908,9 +1908,9 @@ forAllNodes_Recurse(root, null, -1, function(node, parent, index) {
 // marker は不要なので削除
 CL.deletePropertyForAllNodes(root, "marker");
 
-var PLACEHOLDER_WARN_ON_UNDEFINED = true;   // まずは警告だけ出す
+var PLACEHOLDER_WARN_ON_UNDEFINED = true;   // 旧警告モード用。通常はエラーが優先される
 var PLACEHOLDER_LEGACY_DROP       = true;   // 互換: 裸 {{…}} は falsy で行削除
-var PLACEHOLDER_UNDEFINED_IS_ERROR = false; // 将来: 未定義でエラーに切り替える
+var PLACEHOLDER_UNDEFINED_IS_ERROR = true;  // 未定義プレースホルダーはエラーにする
 var Q_BOOL_STRICT                 = false;  // {{?}} を bool 限定にするか
 var PLACEHOLDER_WARN_DIALOG_LIMIT = 3;      // ダイアログに表示する警告の上限
 var PLACEHOLDER_WARNINGS_FILENAME = "placeholder_warnings.txt";
@@ -2447,12 +2447,11 @@ function evalPlaceholderToken(raw, scope, node) {
         };
     }
 
-    // 警告だけ
     if (val === void 0) {
         handleUndefinedPlaceholder(s, node);
     }
 
-    // true は空文字、null/undefined は空
+    // true は空文字、null は空
     return {
         drop: false,
         text: (val === true ? "" : (val == null ? "" : String(val)))
