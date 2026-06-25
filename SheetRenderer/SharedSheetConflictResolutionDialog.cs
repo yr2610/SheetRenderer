@@ -151,7 +151,6 @@ internal sealed class SharedSheetConflictResolutionDialog : Form
         detailPanel.Controls.Add(txtRemote, 2, 1);
         detailPanel.Controls.Add(txtResolved, 3, 1);
 
-        detailPanel.Controls.Add(CreateResolveButton("ベースを採用", () => ResolveSelected("ベース", SelectedConflict?.BaseValue)), 0, 2);
         detailPanel.Controls.Add(CreateResolveButton("ローカルを採用", () => ResolveSelected("ローカル", SelectedConflict?.LocalValue)), 1, 2);
         detailPanel.Controls.Add(CreateResolveButton("共有先を採用", () => ResolveSelected("共有先", SelectedConflict?.RemoteValue)), 2, 2);
 
