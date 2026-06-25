@@ -59,8 +59,8 @@
 その時は `include` を使って、内容を複数のファイルへ分けます。
 
 ```text
+index.txt
 source/
-  index.txt
   application.txt
   final-check.txt
 ```
@@ -72,7 +72,7 @@ source/
 <<[final-check.txt]
 ```
 
-`application.txt`:
+`source/application.txt`:
 
 ```text
 # 申請内容
@@ -84,7 +84,7 @@ source/
   - 本人確認書類
 ```
 
-`final-check.txt`:
+`source/final-check.txt`:
 
 ```text
 # 最終確認

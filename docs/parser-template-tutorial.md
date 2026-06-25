@@ -182,9 +182,9 @@ checks:
 コピーするのも面倒です。その場合に限り、`vars.yml` へ移せます。
 
 ```text
+index.txt
+vars.yml
 source/
-  index.txt
-  vars.yml
 ```
 
 `vars.yml`:
