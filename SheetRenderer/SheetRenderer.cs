@@ -1150,6 +1150,7 @@ public class RibbonController : ExcelRibbon
     const string ssSheetRangeName = "SS_SHEET";
 
     const string noImageFilePath = "images/no_image.jpg";
+    const int sharedSheetWriteVerificationLogLimit = 50;
 
     class RangeInfo
     {
@@ -3441,6 +3442,195 @@ public class RibbonController : ExcelRibbon
         }
     }
 
+    private sealed class SharedSheetWriteVerificationMismatch
+    {
+        public string CellAddress { get; set; }
+        public string RowId { get; set; }
+        public object ExpectedValue { get; set; }
+        public object ActualValue { get; set; }
+    }
+
+    private sealed class SharedSheetWriteVerificationResult
+    {
+        public bool HasSizeMismatch { get; set; }
+        public int ExpectedRowCount { get; set; }
+        public int ExpectedColumnCount { get; set; }
+        public int ActualRowCount { get; set; }
+        public int ActualColumnCount { get; set; }
+        public int MismatchCount { get; set; }
+        public List<SharedSheetWriteVerificationMismatch> LoggedMismatches { get; } =
+            new List<SharedSheetWriteVerificationMismatch>();
+
+        public bool HasFailure
+        {
+            get { return HasSizeMismatch || MismatchCount > 0; }
+        }
+    }
+
+    private static object GetOneBasedArrayValue(object[,] values, int row, int column)
+    {
+        if (values == null)
+        {
+            return null;
+        }
+
+        int rowIndex = values.GetLowerBound(0) + row - 1;
+        int columnIndex = values.GetLowerBound(1) + column - 1;
+        if (rowIndex < values.GetLowerBound(0) ||
+            rowIndex > values.GetUpperBound(0) ||
+            columnIndex < values.GetLowerBound(1) ||
+            columnIndex > values.GetUpperBound(1))
+        {
+            return null;
+        }
+
+        return values[rowIndex, columnIndex];
+    }
+
+    private static SharedSheetWriteVerificationResult VerifySharedSheetWrittenValues(
+        SheetValuesInfo currentSheetValuesInfo,
+        object[,] expectedValues,
+        object[,] actualValues)
+    {
+        var result = new SharedSheetWriteVerificationResult();
+        if (currentSheetValuesInfo == null || expectedValues == null || actualValues == null)
+        {
+            result.HasSizeMismatch = true;
+            return result;
+        }
+
+        result.ExpectedRowCount = expectedValues.GetLength(0);
+        result.ExpectedColumnCount = expectedValues.GetLength(1);
+        result.ActualRowCount = actualValues.GetLength(0);
+        result.ActualColumnCount = actualValues.GetLength(1);
+        result.HasSizeMismatch =
+            result.ExpectedRowCount != result.ActualRowCount ||
+            result.ExpectedColumnCount != result.ActualColumnCount;
+
+        var ids = currentSheetValuesInfo.Ids == null
+            ? null
+            : currentSheetValuesInfo.Ids.Select(x => x == null ? null : x.ToString()).ToArray();
+        HashSet<int> ignoreColumnOffsets = currentSheetValuesInfo.IgnoreColumnOffsets;
+
+        for (int row = 1; row <= result.ExpectedRowCount; row++)
+        {
+            string rowId = ids != null && row - 1 < ids.Length ? ids[row - 1] : null;
+
+            for (int col = 1; col <= result.ExpectedColumnCount; col++)
+            {
+                if (ignoreColumnOffsets.Contains(col - 1))
+                {
+                    continue;
+                }
+
+                object expectedValue = GetOneBasedArrayValue(expectedValues, row, col);
+                object actualValue = GetOneBasedArrayValue(actualValues, row, col);
+                if (AreSharedCellValuesEqual(expectedValue, actualValue))
+                {
+                    continue;
+                }
+
+                result.MismatchCount++;
+                if (result.LoggedMismatches.Count < sharedSheetWriteVerificationLogLimit)
+                {
+                    result.LoggedMismatches.Add(new SharedSheetWriteVerificationMismatch
+                    {
+                        CellAddress = currentSheetValuesInfo.GetCellAddress(row, col),
+                        RowId = rowId,
+                        ExpectedValue = NormalizeSharedCellValue(expectedValue),
+                        ActualValue = NormalizeSharedCellValue(actualValue)
+                    });
+                }
+            }
+        }
+
+        return result;
+    }
+
+    private static void LogSharedSheetWriteVerificationFailure(
+        Excel.Worksheet sheet,
+        SharedSheetWriteVerificationResult verificationResult)
+    {
+        if (sheet == null || verificationResult == null)
+        {
+            return;
+        }
+
+        FileLogger.Error(
+            "[SharedReceiveWriteVerifyFailed] " +
+            "sheetId=" + sheet.GetCustomProperty(sheetIdCustomPropertyName) +
+            " sheetName=" + sheet.Name +
+            " mismatchCount=" + verificationResult.MismatchCount +
+            " sizeMismatch=" + verificationResult.HasSizeMismatch +
+            " expectedRows=" + verificationResult.ExpectedRowCount +
+            " expectedColumns=" + verificationResult.ExpectedColumnCount +
+            " actualRows=" + verificationResult.ActualRowCount +
+            " actualColumns=" + verificationResult.ActualColumnCount);
+
+        foreach (SharedSheetWriteVerificationMismatch mismatch in verificationResult.LoggedMismatches)
+        {
+            FileLogger.Error(
+                "[SharedReceiveWriteVerifyMismatch] " +
+                "sheetId=" + sheet.GetCustomProperty(sheetIdCustomPropertyName) +
+                " sheetName=" + sheet.Name +
+                " rowId=" + (mismatch.RowId ?? "") +
+                " cell=" + (mismatch.CellAddress ?? "") +
+                " expected=" + FormatSharedCellValueForLog(mismatch.ExpectedValue) +
+                " actual=" + FormatSharedCellValueForLog(mismatch.ActualValue));
+        }
+
+        if (verificationResult.MismatchCount > verificationResult.LoggedMismatches.Count)
+        {
+            FileLogger.Error(
+                "[SharedReceiveWriteVerifyMismatchOmitted] " +
+                "sheetId=" + sheet.GetCustomProperty(sheetIdCustomPropertyName) +
+                " sheetName=" + sheet.Name +
+                " omitted=" + (verificationResult.MismatchCount - verificationResult.LoggedMismatches.Count));
+        }
+    }
+
+    private static void WriteAndVerifySharedSheetValues(
+        Excel.Worksheet sheet,
+        SheetValuesInfo currentSheetValuesInfo,
+        object[,] mergedValues)
+    {
+        if (sheet == null)
+        {
+            throw new ArgumentNullException(nameof(sheet));
+        }
+
+        if (currentSheetValuesInfo == null)
+        {
+            throw new ArgumentNullException(nameof(currentSheetValuesInfo));
+        }
+
+        ExecuteExcelComWithRetry(() =>
+        {
+            currentSheetValuesInfo.Range.Value2 = mergedValues;
+            return true;
+        });
+
+        object[,] actualValues = ExecuteExcelComWithRetry(
+            () => ExcelExtensions.GetValuesAs2DArray(currentSheetValuesInfo.Range.Value2));
+        SharedSheetWriteVerificationResult verificationResult = VerifySharedSheetWrittenValues(
+            currentSheetValuesInfo,
+            mergedValues,
+            actualValues);
+        if (!verificationResult.HasFailure)
+        {
+            return;
+        }
+
+        LogSharedSheetWriteVerificationFailure(sheet, verificationResult);
+        throw new InvalidOperationException(
+            "共有値を Excel に反映できませんでした。ローカル base は更新していません。" + Environment.NewLine +
+            "保存せずにブックを閉じると、取得前の状態に戻せます。" + Environment.NewLine +
+            "セルの編集状態を解除してから、もう一度最新版取得を実行してください。" + Environment.NewLine +
+            "詳細はログを確認してください。" + Environment.NewLine +
+            "sheet='" + sheet.Name + "', mismatchCells=" + verificationResult.MismatchCount +
+            ", sizeMismatch=" + verificationResult.HasSizeMismatch);
+    }
+
     private static string FormatSharedCellValueForLog(object value)
     {
         return FormatSharedCellValueForDiff(value)
@@ -3611,7 +3801,7 @@ public class RibbonController : ExcelRibbon
                 currentSheetValuesInfo.IgnoreColumnOffsets);
 
             LogSharedOverwriteDifferences(sheet, currentSheetValuesInfo, mergedValues);
-            currentSheetValuesInfo.Range.Value2 = mergedValues;
+            WriteAndVerifySharedSheetValues(sheet, currentSheetValuesInfo, mergedValues);
         }
         finally
         {
