@@ -1911,6 +1911,14 @@ public class RibbonController : ExcelRibbon
         return result;
     }
 
+    private static Dictionary<string, SharedSheetDocument> CollectSharedSheetDocumentsById(Excel.Workbook workbook)
+    {
+        return CollectSharedSheetDocuments(workbook)
+            .Where(x => x != null && !string.IsNullOrWhiteSpace(x.SheetId))
+            .GroupBy(x => x.SheetId, StringComparer.Ordinal)
+            .ToDictionary(x => x.Key, x => x.Last(), StringComparer.Ordinal);
+    }
+
     private static SharedProjectManifest CreateSharedProjectManifest(Excel.Workbook workbook)
     {
         List<SharedSheetDocument> sheetDocuments = CollectSharedSheetDocuments(workbook);
@@ -3950,7 +3958,9 @@ public class RibbonController : ExcelRibbon
     private async Task<SharedReceiveResult> ReceiveSharedSheetsAsync(
         Excel.Workbook workbook,
         GitLabShareInfo shareInfo,
-        Action<string> progressReporter = null)
+        Action<string> progressReporter = null,
+        IReadOnlyDictionary<string, SharedSheetDocument> localDocumentsBeforeRender = null,
+        bool forceApplySharedValues = false)
     {
         SharedReceiveResult result = new SharedReceiveResult();
 
@@ -4121,7 +4131,8 @@ public class RibbonController : ExcelRibbon
             }
 
             string baseHash = GetSharedSheetBaseHash(workbook, entry.SheetId);
-            if (!string.IsNullOrWhiteSpace(baseHash) &&
+            if (!forceApplySharedValues &&
+                !string.IsNullOrWhiteSpace(baseHash) &&
                 !string.IsNullOrWhiteSpace(entry.Hash) &&
                 string.Equals(baseHash, entry.Hash, StringComparison.OrdinalIgnoreCase))
             {
@@ -4149,7 +4160,8 @@ public class RibbonController : ExcelRibbon
                 sharedSheetDocument.Hash = ComputeSharedSheetHash(sharedSheetDocument);
             }
 
-            if (!string.IsNullOrWhiteSpace(baseHash) &&
+            if (!forceApplySharedValues &&
+                !string.IsNullOrWhiteSpace(baseHash) &&
                 string.Equals(baseHash, sharedSheetDocument.Hash, StringComparison.OrdinalIgnoreCase))
             {
                 skippedLatestCount++;
@@ -4159,9 +4171,28 @@ public class RibbonController : ExcelRibbon
 
             SharedSheetDocument localSheetDocument = CreateSharedSheetDocument(sheet);
             SharedSheetDocument baseSheetDocument = GetSharedSheetBaseDocument(workbook, entry.SheetId);
+            SharedSheetDocument mergeLocalSheetDocument = localSheetDocument;
+            SharedSheetDocument localDocumentBeforeRender = null;
+            if (localDocumentsBeforeRender != null &&
+                localDocumentsBeforeRender.TryGetValue(entry.SheetId, out localDocumentBeforeRender))
+            {
+                int suppressedRenderCellCount;
+                mergeLocalSheetDocument = SuppressRenderIntroducedSharedLocalChanges(
+                    baseSheetDocument,
+                    localSheetDocument,
+                    localDocumentBeforeRender,
+                    out suppressedRenderCellCount);
+                if (suppressedRenderCellCount > 0)
+                {
+                    progressReporter?.Invoke(
+                        "render 由来の共有セル差分を無視しました: " +
+                        sheet.Name + " (" + suppressedRenderCellCount + "セル)");
+                }
+            }
+
             SharedSheetMergeResult mergeResult = TryMergeSharedSheetDocumentForReceive(
                 baseSheetDocument,
-                localSheetDocument,
+                mergeLocalSheetDocument,
                 sharedSheetDocument);
 
             if (mergeResult == null || mergeResult.MergedDocument == null)
@@ -4873,6 +4904,158 @@ public class RibbonController : ExcelRibbon
         };
         result.Conflicts.AddRange(conflicts);
         return result;
+    }
+
+    private static bool HasSharedSheetCellValue(object[] row, int columnIndex)
+    {
+        return row != null && columnIndex >= 0 && columnIndex < row.Length;
+    }
+
+    private static SharedRangeInfo CloneSharedRangeInfo(SharedRangeInfo rangeInfo)
+    {
+        if (rangeInfo == null)
+        {
+            return null;
+        }
+
+        return new SharedRangeInfo
+        {
+            IdColumnOffset = rangeInfo.IdColumnOffset,
+            IgnoreColumnOffsets = rangeInfo.IgnoreColumnOffsets == null
+                ? new HashSet<int>()
+                : new HashSet<int>(rangeInfo.IgnoreColumnOffsets)
+        };
+    }
+
+    private static SharedSheetDocument CloneSharedSheetDocumentWithValues(
+        SharedSheetDocument source,
+        object[][] values)
+    {
+        if (source == null)
+        {
+            return null;
+        }
+
+        var document = new SharedSheetDocument
+        {
+            Project = source.Project,
+            SheetId = source.SheetId,
+            SheetName = source.SheetName,
+            RangeAddress = source.RangeAddress,
+            RangeInfo = CloneSharedRangeInfo(source.RangeInfo),
+            RowIds = source.RowIds == null ? new object[0] : source.RowIds.ToArray(),
+            Values = values ?? new object[0][]
+        };
+        document.Hash = ComputeSharedSheetHash(document);
+        return document;
+    }
+
+    private static SharedSheetDocument SuppressRenderIntroducedSharedLocalChanges(
+        SharedSheetDocument baseDocument,
+        SharedSheetDocument localDocument,
+        SharedSheetDocument localDocumentBeforeRender,
+        out int suppressedCellCount)
+    {
+        suppressedCellCount = 0;
+
+        if (!CanMergeSharedSheetByRowIds(baseDocument) ||
+            !CanMergeSharedSheetByRowIds(localDocument) ||
+            !CanMergeSharedSheetByRowIds(localDocumentBeforeRender))
+        {
+            return localDocument;
+        }
+
+        Dictionary<string, object[]> baseRows = CreateSharedSheetRowMap(baseDocument);
+        Dictionary<string, object[]> beforeRenderRows = CreateSharedSheetRowMap(localDocumentBeforeRender);
+        var ignoreColumnOffsets = localDocument.RangeInfo == null || localDocument.RangeInfo.IgnoreColumnOffsets == null
+            ? new HashSet<int>()
+            : new HashSet<int>(localDocument.RangeInfo.IgnoreColumnOffsets);
+        Dictionary<string, int> displayRows = CreateSharedSheetDisplayRowMap(localDocument);
+        int? startColumn = TryGetSharedSheetStartColumn(localDocument.RangeAddress);
+
+        object[][] adjustedValues = localDocument.Values
+            .Select(row => row == null ? new object[0] : row.ToArray())
+            .ToArray();
+
+        for (int row = 0; row < localDocument.RowIds.Length && row < adjustedValues.Length; row++)
+        {
+            string rowId = NormalizeSharedRowId(localDocument.RowIds[row]);
+            if (string.IsNullOrWhiteSpace(rowId))
+            {
+                continue;
+            }
+
+            object[] baseRow;
+            object[] beforeRenderRow;
+            if (!baseRows.TryGetValue(rowId, out baseRow) ||
+                !beforeRenderRows.TryGetValue(rowId, out beforeRenderRow))
+            {
+                continue;
+            }
+
+            object[] currentRow = adjustedValues[row];
+            for (int col = 0; col < currentRow.Length; col++)
+            {
+                if (ignoreColumnOffsets.Contains(col) ||
+                    !HasSharedSheetCellValue(baseRow, col) ||
+                    !HasSharedSheetCellValue(beforeRenderRow, col))
+                {
+                    continue;
+                }
+
+                object baseValue = GetSharedSheetCellValue(baseRow, col);
+                object beforeRenderValue = GetSharedSheetCellValue(beforeRenderRow, col);
+                object currentValue = GetSharedSheetCellValue(currentRow, col);
+
+                if (!AreSharedCellValuesEqual(beforeRenderValue, baseValue) ||
+                    AreSharedCellValuesEqual(currentValue, baseValue))
+                {
+                    continue;
+                }
+
+                currentRow[col] = NormalizeSharedCellValue(baseValue);
+                suppressedCellCount++;
+
+                if (suppressedCellCount <= sharedSheetWriteVerificationLogLimit)
+                {
+                    int displayRow;
+                    string cellAddress = displayRows.TryGetValue(rowId, out displayRow) && startColumn.HasValue
+                        ? GetExcelColumnLetter(startColumn.Value + col) + displayRow
+                        : "?";
+                    FileLogger.Info(
+                        "[SharedReceiveRenderLocalChangeIgnoredCell] " +
+                        "sheetId=" + (localDocument.SheetId ?? "") +
+                        " sheetName=" + (localDocument.SheetName ?? "") +
+                        " rowId=" + rowId +
+                        " cell=" + cellAddress +
+                        " base=" + FormatSharedCellValueForLog(baseValue) +
+                        " beforeRender=" + FormatSharedCellValueForLog(beforeRenderValue) +
+                        " renderLocal=" + FormatSharedCellValueForLog(currentValue));
+                }
+            }
+        }
+
+        if (suppressedCellCount == 0)
+        {
+            return localDocument;
+        }
+
+        FileLogger.Info(
+            "[SharedReceiveRenderLocalChangeIgnored] " +
+            "sheetId=" + (localDocument.SheetId ?? "") +
+            " sheetName=" + (localDocument.SheetName ?? "") +
+            " ignoredCells=" + suppressedCellCount);
+
+        if (suppressedCellCount > sharedSheetWriteVerificationLogLimit)
+        {
+            FileLogger.Info(
+                "[SharedReceiveRenderLocalChangeIgnoredOmitted] " +
+                "sheetId=" + (localDocument.SheetId ?? "") +
+                " sheetName=" + (localDocument.SheetName ?? "") +
+                " omitted=" + (suppressedCellCount - sharedSheetWriteVerificationLogLimit));
+        }
+
+        return CloneSharedSheetDocumentWithValues(localDocument, adjustedValues);
     }
 
     private static string GetRemoteSharedHash(SharedProjectManifest manifest, string sheetId)
@@ -9258,6 +9441,10 @@ public class RibbonController : ExcelRibbon
             {
                 progressForm.ShowContinueButton("Excel 更新開始", "ダウンロード完了");
                 await progressForm.WaitForContinueAsync();
+                Dictionary<string, SharedSheetDocument> localDocumentsBeforeRender =
+                    shareInfo == null
+                        ? null
+                        : CollectSharedSheetDocumentsById(activeWorkbook);
                 await UpdateAllSheets(
                     activeWorkbook,
                     pullResult.EntryLocalPath,
@@ -9266,7 +9453,12 @@ public class RibbonController : ExcelRibbon
                 if (shareInfo != null)
                 {
                     progressForm.AppendLine("共有値を反映しています");
-                    SharedReceiveResult sharedReceiveResult = await ReceiveSharedSheetsAsync(activeWorkbook, shareInfo, progressForm.AppendLine);
+                    SharedReceiveResult sharedReceiveResult = await ReceiveSharedSheetsAsync(
+                        activeWorkbook,
+                        shareInfo,
+                        progressForm.AppendLine,
+                        localDocumentsBeforeRender,
+                        forceApplySharedValues: true);
                     ShowSharedReceiveConflictDialogIfNeeded(sharedReceiveResult);
                 }
             }
