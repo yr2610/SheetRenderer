@@ -4171,6 +4171,23 @@ public class RibbonController : ExcelRibbon
 
             SharedSheetDocument localSheetDocument = CreateSharedSheetDocument(sheet);
             SharedSheetDocument baseSheetDocument = GetSharedSheetBaseDocument(workbook, entry.SheetId);
+            int omittedRemoteRowCount;
+            SharedSheetDocument baseDocumentToSave = CreateSharedReceiveBaseDocument(
+                sharedSheetDocument,
+                localSheetDocument,
+                out omittedRemoteRowCount);
+            if (omittedRemoteRowCount > 0)
+            {
+                FileLogger.Info(
+                    "[SharedReceiveBaseRemoteRowsDeferred] " +
+                    "sheetId=" + entry.SheetId +
+                    " sheetName=" + sheet.Name +
+                    " deferredRows=" + omittedRemoteRowCount);
+                progressReporter?.Invoke(
+                    "ローカル未作成の共有行は base 更新を保留しました: " +
+                    sheet.Name + " (" + omittedRemoteRowCount + "行)");
+            }
+
             SharedSheetDocument mergeLocalSheetDocument = localSheetDocument;
             SharedSheetDocument localDocumentBeforeRender = null;
             if (localDocumentsBeforeRender != null &&
@@ -4217,6 +4234,7 @@ public class RibbonController : ExcelRibbon
                 SheetId = entry.SheetId,
                 Sheet = sheet,
                 RemoteDocument = sharedSheetDocument,
+                BaseDocumentToSave = baseDocumentToSave,
                 MergeResult = mergeResult
             });
             progressReporter?.Invoke("共有値の更新候補を準備しました: " + sheet.Name);
@@ -4253,14 +4271,14 @@ public class RibbonController : ExcelRibbon
             if (uiSuspendScope == null)
             {
                 ApplySharedSheetDocumentToWorksheet(pendingReceive.Sheet, pendingReceive.MergeResult.MergedDocument);
-                SaveSharedSheetBaseDocument(workbook, pendingReceive.RemoteDocument);
+                SaveSharedSheetBaseDocument(workbook, pendingReceive.BaseDocumentToSave);
             }
             else
             {
                 using (uiSuspendScope)
                 {
                     ApplySharedSheetDocumentToWorksheet(pendingReceive.Sheet, pendingReceive.MergeResult.MergedDocument);
-                    SaveSharedSheetBaseDocument(workbook, pendingReceive.RemoteDocument);
+                    SaveSharedSheetBaseDocument(workbook, pendingReceive.BaseDocumentToSave);
                 }
             }
             FileLogger.Info("[SharedReceive] applied sheetId=" + pendingReceive.SheetId + " hash=" + pendingReceive.RemoteDocument.Hash);
@@ -4533,6 +4551,7 @@ public class RibbonController : ExcelRibbon
         public string SheetId { get; set; }
         public Excel.Worksheet Sheet { get; set; }
         public SharedSheetDocument RemoteDocument { get; set; }
+        public SharedSheetDocument BaseDocumentToSave { get; set; }
         public SharedSheetMergeResult MergeResult { get; set; }
     }
 
@@ -4946,6 +4965,66 @@ public class RibbonController : ExcelRibbon
             RowIds = source.RowIds == null ? new object[0] : source.RowIds.ToArray(),
             Values = values ?? new object[0][]
         };
+        document.Hash = ComputeSharedSheetHash(document);
+        return document;
+    }
+
+    private static SharedSheetDocument CreateSharedReceiveBaseDocument(
+        SharedSheetDocument remoteDocument,
+        SharedSheetDocument localDocument,
+        out int omittedRemoteRowCount)
+    {
+        omittedRemoteRowCount = 0;
+
+        if (!CanMergeSharedSheetByRowIds(remoteDocument) ||
+            !CanMergeSharedSheetByRowIds(localDocument))
+        {
+            return remoteDocument;
+        }
+
+        var localRowIds = new HashSet<string>(StringComparer.Ordinal);
+        foreach (object rowIdValue in localDocument.RowIds)
+        {
+            string rowId = NormalizeSharedRowId(rowIdValue);
+            if (!string.IsNullOrWhiteSpace(rowId))
+            {
+                localRowIds.Add(rowId);
+            }
+        }
+
+        if (localRowIds.Count == 0)
+        {
+            omittedRemoteRowCount = remoteDocument.RowIds.Length;
+            var emptyDocument = CloneSharedSheetDocumentWithValues(remoteDocument, new object[0][]);
+            emptyDocument.RowIds = new object[0];
+            emptyDocument.Hash = ComputeSharedSheetHash(emptyDocument);
+            return emptyDocument;
+        }
+
+        var rowIds = new List<object>();
+        var rows = new List<object[]>();
+        for (int i = 0; i < remoteDocument.RowIds.Length; i++)
+        {
+            string rowId = NormalizeSharedRowId(remoteDocument.RowIds[i]);
+            if (string.IsNullOrWhiteSpace(rowId) || !localRowIds.Contains(rowId))
+            {
+                omittedRemoteRowCount++;
+                continue;
+            }
+
+            rowIds.Add(remoteDocument.RowIds[i]);
+            rows.Add(i < remoteDocument.Values.Length && remoteDocument.Values[i] != null
+                ? remoteDocument.Values[i].ToArray()
+                : new object[0]);
+        }
+
+        if (omittedRemoteRowCount == 0)
+        {
+            return remoteDocument;
+        }
+
+        var document = CloneSharedSheetDocumentWithValues(remoteDocument, rows.ToArray());
+        document.RowIds = rowIds.ToArray();
         document.Hash = ComputeSharedSheetHash(document);
         return document;
     }
