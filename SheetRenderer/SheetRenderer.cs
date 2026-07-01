@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Globalization;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -1682,6 +1683,23 @@ public class RibbonController : ExcelRibbon
 
     }
 
+    // Match Excel-visible numeric precision so last-bit double noise does not create shared conflicts.
+    private const int SharedNumberSignificantDigits = 15;
+
+    private static double NormalizeSharedNumber(double value)
+    {
+        if (value == 0d || double.IsNaN(value) || double.IsInfinity(value))
+        {
+            return value;
+        }
+
+        string text = value.ToString("G" + SharedNumberSignificantDigits, CultureInfo.InvariantCulture);
+        double normalizedValue;
+        return double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out normalizedValue)
+            ? normalizedValue
+            : value;
+    }
+
     private static object NormalizeSharedCellValue(object value)
     {
         if (value == null || value == DBNull.Value)
@@ -1689,14 +1707,80 @@ public class RibbonController : ExcelRibbon
             return null;
         }
 
-        if (value is string || value is bool || value is double || value is float ||
-            value is decimal || value is int || value is long || value is short ||
+        if (value is double doubleValue)
+        {
+            return NormalizeSharedNumber(doubleValue);
+        }
+
+        if (value is float floatValue)
+        {
+            return NormalizeSharedNumber(floatValue);
+        }
+
+        if (value is decimal decimalValue)
+        {
+            return NormalizeSharedNumber((double)decimalValue);
+        }
+
+        if (value is string || value is bool || value is int || value is long || value is short ||
             value is byte || value is DateTime)
         {
             return value;
         }
 
         return value.ToString();
+    }
+
+    private static object[] NormalizeSharedCellValues(IEnumerable<object> values)
+    {
+        return values == null
+            ? new object[0]
+            : values.Select(NormalizeSharedCellValue).ToArray();
+    }
+
+    private static object[][] NormalizeSharedSheetValues(object[][] values)
+    {
+        if (values == null)
+        {
+            return new object[0][];
+        }
+
+        return values
+            .Select(row => row == null ? new object[0] : NormalizeSharedCellValues(row))
+            .ToArray();
+    }
+
+    private static SharedSheetDocument NormalizeSharedSheetDocument(SharedSheetDocument source, bool recomputeHash)
+    {
+        if (source == null)
+        {
+            return null;
+        }
+
+        var document = new SharedSheetDocument
+        {
+            Project = source.Project,
+            SheetId = source.SheetId,
+            SheetName = source.SheetName,
+            RangeAddress = source.RangeAddress,
+            RangeInfo = source.RangeInfo == null ? null : new SharedRangeInfo
+            {
+                IdColumnOffset = source.RangeInfo.IdColumnOffset,
+                IgnoreColumnOffsets = source.RangeInfo.IgnoreColumnOffsets == null
+                    ? new HashSet<int>()
+                    : new HashSet<int>(source.RangeInfo.IgnoreColumnOffsets)
+            },
+            RowIds = NormalizeSharedCellValues(source.RowIds),
+            Values = NormalizeSharedSheetValues(source.Values),
+            Hash = source.Hash
+        };
+
+        if (recomputeHash)
+        {
+            document.Hash = ComputeSharedSheetHash(document);
+        }
+
+        return document;
     }
 
     private static object[][] ConvertSheetValuesToJaggedArray(object[,] values)
@@ -1759,7 +1843,10 @@ public class RibbonController : ExcelRibbon
                     }
                     else
                     {
-                        rowArray.Add(JsonValue.Create(value));
+                        object normalizedValue = NormalizeSharedCellValue(value);
+                        rowArray.Add(normalizedValue == null
+                            ? (JsonNode)null
+                            : JsonValue.Create(normalizedValue));
                     }
                 }
             }
@@ -2445,10 +2532,11 @@ public class RibbonController : ExcelRibbon
             return;
         }
 
-        string jsonText = CreateSharedSheetJsonText(sharedSheetDocument);
+        SharedSheetDocument documentToSave = NormalizeSharedSheetDocument(sharedSheetDocument, recomputeHash: true);
+        string jsonText = CreateSharedSheetJsonText(documentToSave);
         List<string> chunks = SplitSharedSheetBaseJson(jsonText);
         Excel.Worksheet worksheet = GetSharedSheetBaseStoreSheet(workbook, createIfMissing: true);
-        int row = FindSharedSheetBaseStoreRow(worksheet, sharedSheetDocument.SheetId);
+        int row = FindSharedSheetBaseStoreRow(worksheet, documentToSave.SheetId);
         if (row == 0)
         {
             row = GetNextSharedSheetBaseStoreRow(worksheet);
@@ -2463,9 +2551,9 @@ public class RibbonController : ExcelRibbon
 
         int totalColumns = Math.Max(4 + Math.Max(chunks.Count, previousChunkCount), 4);
         object[,] rowValues = (object[,])Array.CreateInstance(typeof(object), new int[] { 1, totalColumns }, new int[] { 1, 1 });
-        rowValues[1, 1] = sharedSheetDocument.SheetId;
-        rowValues[1, 2] = sharedSheetDocument.SheetName ?? string.Empty;
-        rowValues[1, 3] = sharedSheetDocument.Hash ?? string.Empty;
+        rowValues[1, 1] = documentToSave.SheetId;
+        rowValues[1, 2] = documentToSave.SheetName ?? string.Empty;
+        rowValues[1, 3] = documentToSave.Hash ?? string.Empty;
         rowValues[1, 4] = chunks.Count;
 
         for (int i = 0; i < chunks.Count; i++)
@@ -2788,7 +2876,7 @@ public class RibbonController : ExcelRibbon
                 case JsonValueKind.False:
                     return element.GetBoolean();
                 case JsonValueKind.Number:
-                    return element.GetDouble();
+                    return NormalizeSharedNumber(element.GetDouble());
             }
         }
 
@@ -2799,9 +2887,9 @@ public class RibbonController : ExcelRibbon
         }
 
         double numberValue;
-        if (double.TryParse(rawText, out numberValue))
+        if (double.TryParse(rawText, NumberStyles.Float, CultureInfo.InvariantCulture, out numberValue))
         {
-            return numberValue;
+            return NormalizeSharedNumber(numberValue);
         }
 
         bool boolValue;
@@ -3048,7 +3136,7 @@ public class RibbonController : ExcelRibbon
         double rightNumber;
         if (TryConvertToDouble(left, out leftNumber) && TryConvertToDouble(right, out rightNumber))
         {
-            return leftNumber.Equals(rightNumber);
+            return NormalizeSharedNumber(leftNumber).Equals(NormalizeSharedNumber(rightNumber));
         }
 
         return string.Equals(left.ToString(), right.ToString(), StringComparison.Ordinal);
@@ -3104,7 +3192,9 @@ public class RibbonController : ExcelRibbon
             return true;
         }
 
-        return double.TryParse(value.ToString(), out result);
+        string text = value.ToString();
+        return double.TryParse(text, NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out result) ||
+            double.TryParse(text, out result);
     }
 
     private static string FormatSharedCellValueForDiff(object value)
@@ -4155,14 +4245,16 @@ public class RibbonController : ExcelRibbon
                 continue;
             }
 
+            string sharedSheetNormalizedHash = ComputeSharedSheetHash(sharedSheetDocument);
             if (string.IsNullOrWhiteSpace(sharedSheetDocument.Hash))
             {
-                sharedSheetDocument.Hash = ComputeSharedSheetHash(sharedSheetDocument);
+                sharedSheetDocument.Hash = sharedSheetNormalizedHash;
             }
 
             if (!forceApplySharedValues &&
                 !string.IsNullOrWhiteSpace(baseHash) &&
-                string.Equals(baseHash, sharedSheetDocument.Hash, StringComparison.OrdinalIgnoreCase))
+                (string.Equals(baseHash, sharedSheetDocument.Hash, StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(baseHash, sharedSheetNormalizedHash, StringComparison.OrdinalIgnoreCase)))
             {
                 skippedLatestCount++;
                 progressReporter?.Invoke("共有値は最新です: " + sheet.Name);
@@ -4353,7 +4445,8 @@ public class RibbonController : ExcelRibbon
 
     private static string CreateSharedSheetJsonText(SharedSheetDocument sharedSheetDocument)
     {
-        JsonNode jsonNode = CreateSharedSheetJsonNode(sharedSheetDocument, includeHash: true);
+        SharedSheetDocument normalizedDocument = NormalizeSharedSheetDocument(sharedSheetDocument, recomputeHash: true);
+        JsonNode jsonNode = CreateSharedSheetJsonNode(normalizedDocument, includeHash: true);
         return jsonNode == null
             ? "{}"
             : jsonNode.ToJsonString();
@@ -4361,8 +4454,12 @@ public class RibbonController : ExcelRibbon
 
     private static string CreateSharedSheetUploadJsonText(SharedSheetDocument sharedSheetDocument)
     {
-        return JsonSerializer.Serialize(
+        SharedSheetDocument normalizedDocument = NormalizeSharedSheetDocument(
             sharedSheetDocument ?? new SharedSheetDocument(),
+            recomputeHash: true);
+
+        return JsonSerializer.Serialize(
+            normalizedDocument ?? new SharedSheetDocument(),
             new JsonSerializerOptions
             {
                 WriteIndented = true,
@@ -5177,6 +5274,13 @@ public class RibbonController : ExcelRibbon
                 continue;
             }
 
+            string normalizedBaseHash = ComputeSharedSheetHash(baseDocument);
+            if (!string.IsNullOrWhiteSpace(normalizedBaseHash) &&
+                string.Equals(commitDocument.Hash, normalizedBaseHash, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
             if (string.IsNullOrWhiteSpace(remoteHash) &&
                 string.IsNullOrWhiteSpace(baseHash) &&
                 IsSharedSheetEmpty(commitDocument))
@@ -5403,6 +5507,11 @@ public class RibbonController : ExcelRibbon
         if (items.Count == 0)
         {
             return;
+        }
+
+        foreach (SharedSheetSelectionItem item in items)
+        {
+            item.Document = NormalizeSharedSheetDocument(item.Document, recomputeHash: true);
         }
 
         string projectId = workbook.GetCustomProperty(ssProjectIdCustomPropertyName);
