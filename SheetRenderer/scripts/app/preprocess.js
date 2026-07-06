@@ -570,13 +570,43 @@ function getEntryConfigFileName(entryFilePath) {
     return confFileName;
 }
 
+function readConfigRootDirectoryOnly(confFilePath) {
+    if (!FileSystem.FileExists(confFilePath)) {
+        return null;
+    }
+
+    function readConfigPart(filePath) {
+        return CL.withActiveReadFile(filePath, function() {
+            var data = CL.readYAMLFile(filePath, filePath) || {};
+            var baseDirectory = FileSystem.GetParentFolderName(filePath);
+            var rootDirectory = null;
+
+            if (!_.isUndefined(data.$rootDirectory)) {
+                rootDirectory = FileSystem.BuildPath(baseDirectory, data.$rootDirectory);
+            }
+
+            if (!_.isUndefined(data.$include)) {
+                _.forEach(data.$include, function(value) {
+                    if (rootDirectory) {
+                        return;
+                    }
+
+                    var includeFilePath = FileSystem.BuildPath(baseDirectory, value);
+                    rootDirectory = readConfigPart(includeFilePath);
+                });
+            }
+
+            return rootDirectory;
+        });
+    }
+
+    return readConfigPart(confFilePath);
+}
+
 function getScaffoldRootDirectory(entryFilePath) {
     var entryProject = FileSystem.GetParentFolderName(entryFilePath);
     var confFilePath = FileSystem.BuildPath(entryProject, getEntryConfigFileName(entryFilePath));
-    var localConf = readConfigFile(confFilePath);
-    var rootDirectory = localConf && localConf.$rootDirectory
-        ? localConf.$rootDirectory
-        : entryProject;
+    var rootDirectory = readConfigRootDirectoryOnly(confFilePath) || entryProject;
     return FileSystem.GetAbsolutePathName(rootDirectory);
 }
 
