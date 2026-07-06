@@ -672,8 +672,8 @@ public class RibbonController : ExcelRibbon
                             <button id='button2b' label='再生成' onAction='OnRegenerateWorkbookPressed' getEnabled='GetRenderCommandEnabled'/>
                             </menu>
                         </splitButton>
-                        <button id='buttonCreateMissingIncludes' label='include作成' screentip='未作成の include ファイルを _template.txt から作成します' imageMso='FileNew' onAction='OnCreateMissingIncludeFilesButtonPressed' getEnabled='GetRenderCommandEnabled'/>
                         <button id='button3' label='シート更新' screentip='表示中のシートのみ更新します' size='large' imageMso='TableSharePointListsRefreshList' onAction='OnUpdateCurrentSheetButtonPressed' getEnabled='GetUpdateCurrentSheetButtonEnabled'/>
+                        <button id='buttonCreateMissingIncludes' label='下書き作成' screentip='コメント付き include から未作成ファイルを作成します' size='large' imageMso='FileNew' onAction='OnCreateMissingIncludeFilesButtonPressed' getEnabled='GetRenderCommandEnabled'/>
                         </group>
                         <group id='groupSync' label='同期'>
                         <splitButton id='splitButtonPull' size='large'>
@@ -7315,7 +7315,7 @@ public class RibbonController : ExcelRibbon
     public void OnCreateMissingIncludeFilesButtonPressed(IRibbonControl control)
     {
         Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
-        const string dialogTitle = "include作成";
+        const string dialogTitle = "下書き作成";
 
         if (!TryBeginRenderCommand("SheetRenderer: include ファイルを作成しています..."))
         {
