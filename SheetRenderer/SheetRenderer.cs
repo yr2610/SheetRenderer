@@ -658,12 +658,11 @@ public class RibbonController : ExcelRibbon
             return string.Empty;
         }
 
-        string projectName = Assembly.GetExecutingAssembly().GetName().Name;
         return $@"
                 <customUI xmlns='http://schemas.microsoft.com/office/2006/01/customui' onLoad='OnLoad'>
                 <ribbon>
                     <tabs>
-                    <tab id='tab1' label='{projectName}'>
+                    <tab id='tabRender' label='シート生成'>
                         <group id='group1' label='生成'>
                         <splitButton id='splitButton1' size='large'>
                             <button id='button2' label='更新' screentip='ファイル内の全シートを更新します' imageMso='TableDrawTable' onAction='OnRenderButtonPressed' getEnabled='GetRenderCommandEnabled'/>
@@ -675,6 +674,13 @@ public class RibbonController : ExcelRibbon
                         <button id='button3' label='シート更新' screentip='表示中のシートのみ更新します' size='large' imageMso='TableSharePointListsRefreshList' onAction='OnUpdateCurrentSheetButtonPressed' getEnabled='GetUpdateCurrentSheetButtonEnabled'/>
                         <button id='buttonCreateMissingIncludes' label='下書き作成' screentip='コメント付き include から未作成ファイルを作成します' size='large' imageMso='FileNew' onAction='OnCreateMissingIncludeFilesButtonPressed' getEnabled='GetRenderCommandEnabled'/>
                         </group>
+                        <group id='groupDebug' label='DevTools'>
+                        <button id='buttonDebugParse' label='Parse' screentip='Parseのみ（開発用）' imageMso='ControlToolboxOutlook' onAction='OnDebugParseButtonPressed'/>
+                        <button id='buttonDebugNestedLazyRead' label='NestedRead' screentip='lazy-read の入れ子相対解決確認（開発用）' imageMso='ControlToolboxOutlook' onAction='OnDebugValidateNestedLazyReadButtonPressed'/>
+                        <button id='buttonDebugRender' label='Render' screentip='Renderのみ（開発用）' imageMso='ControlToolboxOutlook' onAction='OnRenderOnlyDebugButtonPressed'/>
+                        </group>
+                    </tab>
+                    <tab id='tabSync' label='シート同期'>
                         <group id='groupSync' label='同期'>
                         <splitButton id='splitButtonPull' size='large'>
                             <button id='buttonPull'
@@ -731,11 +737,6 @@ public class RibbonController : ExcelRibbon
                                 size='large'
                                 imageMso='AdpDiagramKeys'
                                 onAction='OnTokenManagerButtonPressed'/>
-                        </group>
-                        <group id='groupDebug' label='DevTools'>
-                        <button id='buttonDebugParse' label='Parse' screentip='Parseのみ（開発用）' imageMso='ControlToolboxOutlook' onAction='OnDebugParseButtonPressed'/>
-                        <button id='buttonDebugNestedLazyRead' label='NestedRead' screentip='lazy-read の入れ子相対解決確認（開発用）' imageMso='ControlToolboxOutlook' onAction='OnDebugValidateNestedLazyReadButtonPressed'/>
-                        <button id='buttonDebugRender' label='Render' screentip='Renderのみ（開発用）' imageMso='ControlToolboxOutlook' onAction='OnRenderOnlyDebugButtonPressed'/>
                         </group>
                     </tab>
                     </tabs>
