@@ -7317,7 +7317,7 @@ public class RibbonController : ExcelRibbon
         Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
         const string dialogTitle = "下書き作成";
 
-        if (!TryBeginRenderCommand("SheetRenderer: include ファイルを作成しています..."))
+        if (!TryBeginRenderCommand("SheetRenderer: 下書きを作成しています..."))
         {
             return;
         }
@@ -7331,7 +7331,7 @@ public class RibbonController : ExcelRibbon
             }
 
             FileLogger.InitializeForInput(txtFilePath, timestamped: false);
-            FileLogger.Info("Create missing include files started.");
+            FileLogger.Info("下書き作成を開始しました。");
 
             object result = JsHost.Call("createMissingIncludeFilesFromEntry", txtFilePath);
             if (IsQuitResult(result))
@@ -7340,11 +7340,11 @@ public class RibbonController : ExcelRibbon
             }
 
             string message = result == null
-                ? "include ファイル作成が完了しました。"
+                ? "下書き作成が完了しました。"
                 : result.ToString();
 
             FileLogger.Info(message);
-            Notifier.Info("正常終了", "include ファイル作成が完了しました。");
+            Notifier.Info("正常終了", "下書き作成が完了しました。");
             MessageBox.Show(message, dialogTitle, MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
         catch (Microsoft.ClearScript.ScriptEngineException ex)
@@ -7354,13 +7354,13 @@ public class RibbonController : ExcelRibbon
                 : ex.ErrorDetails;
 
             FileLogger.Error(ex.ToString());
-            Notifier.Error("エラー", "include ファイル作成でエラーが発生しました。クリックでログを開きます。");
+            Notifier.Error("エラー", "下書き作成でエラーが発生しました。クリックでログを開きます。");
             MessageBox.Show(details, dialogTitle, MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
         catch (Exception ex)
         {
             ShowUserFacingError(
-                "include ファイル作成に失敗しました",
+                "下書き作成に失敗しました",
                 ex,
                 "入力ファイルと _template.txt を確認してください。");
         }

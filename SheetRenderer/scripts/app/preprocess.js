@@ -765,7 +765,7 @@ function createMissingIncludeFilesFromEntry(entryFilePath) {
 
         if (!isPathUnderOrEqual(targetPath, projectDirectoryAbs)) {
             errors.push(
-                "include ファイルの作成先がプロジェクトフォルダの外です: " + includeFileInfo.filePath
+                "下書きの作成先がプロジェクトフォルダの外です: " + includeFileInfo.filePath
                 + formatScaffoldLocation(entrySourceLocalPath, lineIndex + 1)
             );
             return;
@@ -789,7 +789,7 @@ function createMissingIncludeFilesFromEntry(entryFilePath) {
         var targetPathKey = normalizePathKey(targetPath);
         if (plannedPathKeys[targetPathKey]) {
             errors.push(
-                "同じ include ファイルを複数回作成しようとしています: " + includeFileInfo.filePath
+                "同じ下書きファイルを複数回作成しようとしています: " + includeFileInfo.filePath
                 + formatScaffoldLocation(entrySourceLocalPath, lineIndex + 1)
             );
             return;
@@ -827,13 +827,13 @@ function createMissingIncludeFilesFromEntry(entryFilePath) {
 
     if (errors.length > 0) {
         throw new Error(
-            "include ファイルは作成されませんでした。"
+            "下書きは作成されませんでした。"
             + "\n\n" + errors.join("\n\n")
         );
     }
 
     if (plans.length === 0) {
-        return "作成対象の include ファイルはありませんでした。";
+        return "作成対象の下書きはありませんでした。";
     }
 
     var createdPaths = [];
@@ -864,12 +864,12 @@ function createMissingIncludeFilesFromEntry(entryFilePath) {
             }
         });
         throw new Error(
-            "include ファイルの作成に失敗したため、作成済みファイルをロールバックしました。"
+            "下書き作成に失敗したため、作成済みファイルをロールバックしました。"
             + "\n" + e.message
         );
     }
 
-    return "include ファイルを " + createdPaths.length + " 件作成しました。"
+    return "下書きを " + createdPaths.length + " 件作成しました。"
         + "\n\n" + createdPaths.join("\n");
 }
 
