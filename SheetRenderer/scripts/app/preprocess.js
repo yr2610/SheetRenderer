@@ -542,6 +542,307 @@ function parseIncludeParameters(s, variables) {
     return params;
 }
 
+function initPreProcessPathHelpers(rootDirectory) {
+    absolutePathToSourceLocalPath = function(filePath, projectPathFromRoot) {
+        var sourceDirectoryAbs = FileSystem.BuildPath(
+            FileSystem.BuildPath(rootDirectory, projectPathFromRoot),
+            sourceDirectoryName
+        );
+        return CL.getRelativePath(sourceDirectoryAbs, filePath);
+    };
+
+    directoryLocalPathToAbsolutePath = function(filePathProjectLocal, projectPathFromRoot, directoryName) {
+        var projectPathAbs = FileSystem.BuildPath(rootDirectory, projectPathFromRoot);
+        var directoryAbs = _.isUndefined(directoryName)
+            ? projectPathAbs
+            : FileSystem.BuildPath(projectPathAbs, directoryName);
+        return FileSystem.BuildPath(directoryAbs, filePathProjectLocal);
+    };
+}
+
+function getEntryConfigFileName(entryFilePath) {
+    var confFileName = "conf.yml";
+    var baseName = Path.GetFileNameWithoutExtension(entryFilePath);
+    baseName = baseName.replace(/_index$/, "");
+    if (baseName != "index") {
+        confFileName = baseName + "_" + confFileName;
+    }
+    return confFileName;
+}
+
+function getScaffoldRootDirectory(entryFilePath) {
+    var entryProject = FileSystem.GetParentFolderName(entryFilePath);
+    var confFilePath = FileSystem.BuildPath(entryProject, getEntryConfigFileName(entryFilePath));
+    var localConf = readConfigFile(confFilePath);
+    var rootDirectory = localConf && localConf.$rootDirectory
+        ? localConf.$rootDirectory
+        : entryProject;
+    return FileSystem.GetAbsolutePathName(rootDirectory);
+}
+
+function normalizePathKey(path) {
+    return FileSystem.GetAbsolutePathName(path).replace(/\//g, "\\").toLowerCase();
+}
+
+function isPathUnderOrEqual(path, rootDirectory) {
+    var normalizedPath = normalizePathKey(path).replace(/\\+$/, "");
+    var normalizedRoot = normalizePathKey(rootDirectory).replace(/\\+$/, "");
+
+    return normalizedPath === normalizedRoot
+        || normalizedPath.indexOf(normalizedRoot + "\\") === 0;
+}
+
+function matchIncludeLine(line) {
+    return line.match(/^<<\[\s*(.+)\s*\]\s*(\((.+)?\))?$/);
+}
+
+function matchTitleCommentLine(line) {
+    return line.match(/^\s*\/\/(.*)$/);
+}
+
+function findTitleForInclude(lines, includeLineIndex) {
+    for (var i = includeLineIndex - 1; i >= 0; i--) {
+        var line = lines[i];
+
+        if (/^\s*$/.test(line)) {
+            continue;
+        }
+
+        var commentMatch = matchTitleCommentLine(line);
+        if (commentMatch) {
+            return {
+                title: commentMatch[1].trim(),
+                lineNum: i + 1
+            };
+        }
+
+        return null;
+    }
+
+    return null;
+}
+
+function getInvalidExcelSheetNameReason(sheetName) {
+    if (sheetName === "") {
+        return "空のシート名は使用できません。";
+    }
+    if (sheetName.length > 31) {
+        return "シート名は31文字以内にしてください。";
+    }
+    if (/[:\\\/\?\*\[\]]/.test(sheetName)) {
+        return "シート名に : \\ / ? * [ ] は使用できません。";
+    }
+    if (/[\x00-\x1F]/.test(sheetName)) {
+        return "シート名に制御文字は使用できません。";
+    }
+    if (sheetName.charAt(0) === "'" || sheetName.charAt(sheetName.length - 1) === "'") {
+        return "シート名の先頭または末尾に ' は使用できません。";
+    }
+
+    return null;
+}
+
+function findScaffoldTemplateFile(targetDirectory, projectDirectoryAbs) {
+    var directory = FileSystem.GetAbsolutePathName(targetDirectory);
+    var projectDirectory = FileSystem.GetAbsolutePathName(projectDirectoryAbs);
+
+    for (;;) {
+        var templatePath = FileSystem.BuildPath(directory, "_template.txt");
+        if (FileSystem.FileExists(templatePath)) {
+            return templatePath;
+        }
+
+        if (normalizePathKey(directory) === normalizePathKey(projectDirectory)) {
+            break;
+        }
+        if (!isPathUnderOrEqual(directory, projectDirectory)) {
+            break;
+        }
+
+        var parent = FileSystem.GetParentFolderName(directory);
+        if (!parent || normalizePathKey(parent) === normalizePathKey(directory)) {
+            break;
+        }
+        directory = parent;
+    }
+
+    return null;
+}
+
+function renderScaffoldTemplate(templateText, values) {
+    return templateText.replace(/\[\[\s*(title|name|path)\s*\]\]/gi, function(match, key) {
+        key = key.toLowerCase();
+        return values[key];
+    });
+}
+
+function formatScaffoldLocation(entryFilePath, lineNum) {
+    return "\nファイル:\t" + entryFilePath + "\n行:\t" + lineNum;
+}
+
+function createMissingIncludeFilesFromEntry(entryFilePath) {
+    var entryFilePathAbs = FileSystem.GetAbsolutePathName(entryFilePath);
+    var entryProject = FileSystem.GetParentFolderName(entryFilePathAbs);
+    var rootDirectory = getScaffoldRootDirectory(entryFilePathAbs);
+    var projectPathFromRoot = CL.getRelativePath(rootDirectory, entryProject);
+    var entrySourceLocalPath;
+    var entryFileText;
+    var lines;
+    var errors = [];
+    var plans = [];
+    var plannedPathKeys = {};
+
+    initPreProcessPathHelpers(rootDirectory);
+    entrySourceLocalPath = absolutePathToSourceLocalPath(entryFilePathAbs, projectPathFromRoot);
+    entryFileText = File.ReadAllText(entryFilePathAbs);
+    lines = entryFileText.replace(/\r\n|\r/g, "\n").split("\n");
+
+    _.forEach(lines, function(line, lineIndex) {
+        var includeMatch = matchIncludeLine(line);
+        if (!includeMatch) {
+            return;
+        }
+
+        var titleInfo = findTitleForInclude(lines, lineIndex);
+        if (!titleInfo) {
+            return;
+        }
+
+        var includeFileString = includeMatch[1];
+        var includeFileInfo;
+        try {
+            includeFileInfo = parseIncludeFilePath(includeFileString, projectPathFromRoot, entryFilePathAbs, {});
+        }
+        catch (e) {
+            errors.push(
+                "include パスが不正です: " + includeFileString
+                + "\n" + e.errorMessage
+                + formatScaffoldLocation(entrySourceLocalPath, lineIndex + 1)
+            );
+            return;
+        }
+
+        var targetPath = directoryLocalPathToAbsolutePath(
+            includeFileInfo.filePath,
+            includeFileInfo.projectDirectory,
+            sourceDirectoryName
+        );
+        targetPath = FileSystem.GetAbsolutePathName(targetPath);
+
+        var projectDirectoryAbs = FileSystem.GetAbsolutePathName(
+            FileSystem.BuildPath(rootDirectory, includeFileInfo.projectDirectory)
+        );
+
+        if (!isPathUnderOrEqual(targetPath, projectDirectoryAbs)) {
+            errors.push(
+                "include ファイルの作成先がプロジェクトフォルダの外です: " + includeFileInfo.filePath
+                + formatScaffoldLocation(entrySourceLocalPath, lineIndex + 1)
+            );
+            return;
+        }
+
+        if (FileSystem.FileExists(targetPath)) {
+            return;
+        }
+
+        var title = titleInfo.title;
+        var invalidSheetNameReason = getInvalidExcelSheetNameReason(title);
+        if (invalidSheetNameReason) {
+            errors.push(
+                "シート名として使用できないコメントです: " + title
+                + "\n" + invalidSheetNameReason
+                + formatScaffoldLocation(entrySourceLocalPath, titleInfo.lineNum)
+            );
+            return;
+        }
+
+        var targetPathKey = normalizePathKey(targetPath);
+        if (plannedPathKeys[targetPathKey]) {
+            errors.push(
+                "同じ include ファイルを複数回作成しようとしています: " + includeFileInfo.filePath
+                + formatScaffoldLocation(entrySourceLocalPath, lineIndex + 1)
+            );
+            return;
+        }
+
+        var targetDirectory = FileSystem.GetParentFolderName(targetPath);
+        var templatePath = findScaffoldTemplateFile(targetDirectory, projectDirectoryAbs);
+        if (!templatePath) {
+            errors.push(
+                "_template.txt が見つかりません。"
+                + "\n探索開始フォルダ: " + targetDirectory
+                + "\n探索終了フォルダ: " + projectDirectoryAbs
+                + formatScaffoldLocation(entrySourceLocalPath, lineIndex + 1)
+            );
+            return;
+        }
+
+        var templateText = File.ReadAllText(templatePath);
+        var values = {
+            title: title,
+            name: Path.GetFileNameWithoutExtension(targetPath),
+            path: includeFileInfo.filePath.replace(/\\/g, "/")
+        };
+        var outputText = renderScaffoldTemplate(templateText, values);
+
+        plannedPathKeys[targetPathKey] = true;
+        plans.push({
+            targetPath: targetPath,
+            targetPathKey: targetPathKey,
+            targetDirectory: targetDirectory,
+            templatePath: templatePath,
+            outputText: outputText
+        });
+    });
+
+    if (errors.length > 0) {
+        throw new Error(
+            "include ファイルは作成されませんでした。"
+            + "\n\n" + errors.join("\n\n")
+        );
+    }
+
+    if (plans.length === 0) {
+        return "作成対象の include ファイルはありませんでした。";
+    }
+
+    var createdPaths = [];
+    try {
+        _.forEach(plans, function(plan) {
+            if (FileSystem.FileExists(plan.targetPath)) {
+                throw new Error("作成直前にファイルが存在しました: " + plan.targetPath);
+            }
+
+            CL.createFolder(plan.targetDirectory);
+            if (File.WriteAllTextIfNotExists) {
+                File.WriteAllTextIfNotExists(plan.targetPath, plan.outputText);
+            }
+            else {
+                File.WriteAllText(plan.targetPath, plan.outputText);
+            }
+            createdPaths.push(plan.targetPath);
+        });
+    }
+    catch (e) {
+        _.forEach(createdPaths, function(path) {
+            try {
+                if (FileSystem.FileExists(path)) {
+                    FileSystem.DeleteFile(path);
+                }
+            }
+            catch (rollbackError) {
+            }
+        });
+        throw new Error(
+            "include ファイルの作成に失敗したため、作成済みファイルをロールバックしました。"
+            + "\n" + e.message
+        );
+    }
+
+    return "include ファイルを " + createdPaths.length + " 件作成しました。"
+        + "\n\n" + createdPaths.join("\n");
+}
+
 // filePaths: 含まれるすべてのファイルのパス
 function preProcess_Recurse(filePath, currentProjectDirectoryFromRoot, defines, templateVariables) {
     // 上書きする（階層が深い方を優先）

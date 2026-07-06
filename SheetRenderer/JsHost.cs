@@ -216,6 +216,21 @@ public static class JsHost
         {
             System.IO.File.WriteAllText(path, contents);
         }
+
+        public void WriteAllTextIfNotExists(string path, string contents)
+        {
+            string directoryPath = Path.GetDirectoryName(path);
+            if (!string.IsNullOrEmpty(directoryPath))
+            {
+                Directory.CreateDirectory(directoryPath);
+            }
+
+            using (var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            using (var writer = new StreamWriter(stream, new UTF8Encoding(false)))
+            {
+                writer.Write(contents ?? string.Empty);
+            }
+        }
     }
 }
 

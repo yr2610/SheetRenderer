@@ -672,6 +672,7 @@ public class RibbonController : ExcelRibbon
                             <button id='button2b' label='再生成' onAction='OnRegenerateWorkbookPressed' getEnabled='GetRenderCommandEnabled'/>
                             </menu>
                         </splitButton>
+                        <button id='buttonCreateMissingIncludes' label='include作成' screentip='未作成の include ファイルを _template.txt から作成します' imageMso='FileNew' onAction='OnCreateMissingIncludeFilesButtonPressed' getEnabled='GetRenderCommandEnabled'/>
                         <button id='button3' label='シート更新' screentip='表示中のシートのみ更新します' size='large' imageMso='TableSharePointListsRefreshList' onAction='OnUpdateCurrentSheetButtonPressed' getEnabled='GetUpdateCurrentSheetButtonEnabled'/>
                         </group>
                         <group id='groupSync' label='同期'>
@@ -7309,6 +7310,65 @@ public class RibbonController : ExcelRibbon
 
         workbook.Save();
         return true;
+    }
+
+    public void OnCreateMissingIncludeFilesButtonPressed(IRibbonControl control)
+    {
+        Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
+        const string dialogTitle = "include作成";
+
+        if (!TryBeginRenderCommand("SheetRenderer: include ファイルを作成しています..."))
+        {
+            return;
+        }
+
+        try
+        {
+            string txtFilePath = SelectSourceFileForParse(false);
+            if (txtFilePath == null)
+            {
+                return;
+            }
+
+            FileLogger.InitializeForInput(txtFilePath, timestamped: false);
+            FileLogger.Info("Create missing include files started.");
+
+            object result = JsHost.Call("createMissingIncludeFilesFromEntry", txtFilePath);
+            if (IsQuitResult(result))
+            {
+                return;
+            }
+
+            string message = result == null
+                ? "include ファイル作成が完了しました。"
+                : result.ToString();
+
+            FileLogger.Info(message);
+            Notifier.Info("正常終了", "include ファイル作成が完了しました。");
+            MessageBox.Show(message, dialogTitle, MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        catch (Microsoft.ClearScript.ScriptEngineException ex)
+        {
+            string details = string.IsNullOrWhiteSpace(ex.ErrorDetails)
+                ? ex.Message
+                : ex.ErrorDetails;
+
+            FileLogger.Error(ex.ToString());
+            Notifier.Error("エラー", "include ファイル作成でエラーが発生しました。クリックでログを開きます。");
+            MessageBox.Show(details, dialogTitle, MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+        catch (Exception ex)
+        {
+            ShowUserFacingError(
+                "include ファイル作成に失敗しました",
+                ex,
+                "入力ファイルと _template.txt を確認してください。");
+        }
+        finally
+        {
+            excelApp.StatusBar = false;
+            EndRenderCommand();
+        }
     }
 
     public async void OnCreateNewButtonPressed(IRibbonControl control)
