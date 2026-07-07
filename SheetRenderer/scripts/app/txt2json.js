@@ -2594,6 +2594,9 @@ function applyPlaceholdersEverywhere() {
                         parent.children[index] = null;
                     }
                     skipChildren = true;
+                } else if (matchAnonymousTemplateCallText(node.text) || matchNamedTemplateCallText(node.text)) {
+                    // {{...}} ガードでテンプレート呼び出しになった行の子は、展開時のスコープで評価する。
+                    skipChildren = true;
                 }
             }
 
@@ -3605,6 +3608,12 @@ function evaluateInScope(expr, scope) {
                     if (n.parent && n.parent.children) {
                         n.parent.children[i] = null;
                     }
+                    tplStack.pop();
+                    return true;
+                }
+
+                if (p !== null && (matchAnonymousTemplateCallText(n.text) || matchNamedTemplateCallText(n.text))) {
+                    // {{...}} ガードでテンプレート呼び出しになった行の子は、展開時のスコープで評価する。
                     tplStack.pop();
                     return true;
                 }
