@@ -25,7 +25,8 @@ source/final-check.txt
 ```
 
 作成する内容は、include 先のフォルダから上位フォルダへ向かって最初に見つかった
-`_template.txt` を元にします。プロジェクトルートまで探しても `_template.txt` が
+`_template.txt` を元にします。`conf.yml` の `$rootDirectory` で決まるルートフォルダ
+まで探しても `_template.txt` が
 見つからない場合はエラーになり、ファイルは作成されません。
 
 ## コメントの扱い

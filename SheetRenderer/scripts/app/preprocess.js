@@ -672,9 +672,9 @@ function getInvalidExcelSheetNameReason(sheetName) {
     return null;
 }
 
-function findScaffoldTemplateFile(targetDirectory, projectDirectoryAbs) {
+function findScaffoldTemplateFile(targetDirectory, rootDirectoryAbs) {
     var directory = FileSystem.GetAbsolutePathName(targetDirectory);
-    var projectDirectory = FileSystem.GetAbsolutePathName(projectDirectoryAbs);
+    var rootDirectory = FileSystem.GetAbsolutePathName(rootDirectoryAbs);
 
     for (;;) {
         var templatePath = FileSystem.BuildPath(directory, "_template.txt");
@@ -682,10 +682,10 @@ function findScaffoldTemplateFile(targetDirectory, projectDirectoryAbs) {
             return templatePath;
         }
 
-        if (normalizePathKey(directory) === normalizePathKey(projectDirectory)) {
+        if (normalizePathKey(directory) === normalizePathKey(rootDirectory)) {
             break;
         }
-        if (!isPathUnderOrEqual(directory, projectDirectory)) {
+        if (!isPathUnderOrEqual(directory, rootDirectory)) {
             break;
         }
 
@@ -796,12 +796,12 @@ function createMissingIncludeFilesFromEntry(entryFilePath) {
         }
 
         var targetDirectory = FileSystem.GetParentFolderName(targetPath);
-        var templatePath = findScaffoldTemplateFile(targetDirectory, projectDirectoryAbs);
+        var templatePath = findScaffoldTemplateFile(targetDirectory, rootDirectory);
         if (!templatePath) {
             errors.push(
                 "_template.txt が見つかりません。"
                 + "\n探索開始フォルダ: " + targetDirectory
-                + "\n探索終了フォルダ: " + projectDirectoryAbs
+                + "\n探索終了フォルダ: " + rootDirectory
                 + formatScaffoldLocation(entrySourceLocalPath, lineIndex + 1)
             );
             return;
