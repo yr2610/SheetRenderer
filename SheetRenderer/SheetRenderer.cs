@@ -748,6 +748,14 @@ public class RibbonController : ExcelRibbon
     {
         public string SourceFilePath { get; set; }
         public string User { get; set; }
+        public string LastAutoOutputFileName { get; set; }
+    }
+
+    class AutoOutputFileNameProposal
+    {
+        public string CurrentFileName { get; set; }
+        public string ProposedFileName { get; set; }
+        public string ProposedPath { get; set; }
     }
 
     static string GetFilePathWithoutExtension(string path)
@@ -1144,6 +1152,7 @@ public class RibbonController : ExcelRibbon
     const string sheetImageHashCustomPropertyName = "SheetImageHash";
     const string confHashCustomPropertyName = "ConfHash";
     const string indexSheetTemplateCellsCustomPropertyName = "SheetImageHash";
+    const string outputFilenameConfName = "outputFilename";
     const string gitLabPullInfoCustomPropertyName = "GitLabPullInfo";
     const string gitLabPullCommitIdCustomPropertyName = "GitLabPullCommitId";
     const string gitLabShareInfoCustomPropertyName = "GitLabShareInfo";
@@ -5890,6 +5899,7 @@ public class RibbonController : ExcelRibbon
         string jsonString = File.ReadAllText(jsonFilePath);
         JsonNode jsonObject = JsonNode.Parse(jsonString);
         var confData = GetPropertiesFromJsonNode(jsonObject, "variables");
+        string desiredAutoOutputFileName = GetOutputWorkbookFileName(confData, jsonFilePath);
 
         if (confData["project"] != projectId)
         {
@@ -6050,13 +6060,11 @@ public class RibbonController : ExcelRibbon
                 }, null);
             }
 
-            // TODO: RenderLog 書き出す処理を共通化
-            RenderLog renderLog = new RenderLog
-            {
-                SourceFilePath = txtFilePath,
-                User = Environment.UserName
-            };
-            workbook.SetCustomProperty("RenderLog", renderLog);
+            UpdateWorkbookRenderLogAndOfferAutoOutputFileNameSave(
+                workbook,
+                txtFilePath,
+                workbookInfo.LastRenderLog,
+                desiredAutoOutputFileName);
         }
         finally
         {
@@ -6562,6 +6570,7 @@ public class RibbonController : ExcelRibbon
         string jsonString = File.ReadAllText(jsonFilePath);
         JsonNode jsonObject = JsonNode.Parse(jsonString);
         var confData = GetPropertiesFromJsonNode(jsonObject, "variables");
+        string desiredAutoOutputFileName = GetOutputWorkbookFileName(confData, jsonFilePath);
 
         if (confData["project"] != projectId)
         {
@@ -6919,13 +6928,11 @@ public class RibbonController : ExcelRibbon
             }, null);
         }
 
-        // RenderLog を更新して次回以降に今回選択したソースを利用できるようにする
-        RenderLog renderLog = new RenderLog
-        {
-            SourceFilePath = txtFilePath,
-            User = Environment.UserName
-        };
-        workbook.SetCustomProperty("RenderLog", renderLog);
+        UpdateWorkbookRenderLogAndOfferAutoOutputFileNameSave(
+            workbook,
+            txtFilePath,
+            workbookInfo.LastRenderLog,
+            desiredAutoOutputFileName);
         }
         finally
         {
@@ -7181,6 +7188,7 @@ public class RibbonController : ExcelRibbon
         string jsonString = File.ReadAllText(jsonFilePath);
         JsonNode jsonObject = JsonNode.Parse(jsonString);
         var confData = GetPropertiesFromJsonNode(jsonObject, "variables");
+        string desiredAutoOutputFileName = GetOutputWorkbookFileName(confData, jsonFilePath);
 
         if (confData["project"] != workbookInfo.ProjectId)
         {
@@ -7207,13 +7215,22 @@ public class RibbonController : ExcelRibbon
 
             var missingImagePaths = await RenderWorkbook(newWorkbook, jsonObject, confData, jsonFilePath, sheetValuesById);
 
-            // RenderLog は TXT を保存
-            RenderLog renderLog = new RenderLog
-            {
-                SourceFilePath = txtFilePath,   // TXT を保存
-                User = Environment.UserName
-            };
-            newWorkbook.SetCustomProperty("RenderLog", renderLog);
+            string previousAutoOutputFileName = NormalizeStoredAutoOutputFileName(workbookInfo.LastRenderLog?.LastAutoOutputFileName);
+            AutoOutputFileNameProposal autoOutputFileNameProposal = CreateAutoOutputFileNameProposal(
+                originalWorkbook,
+                previousAutoOutputFileName,
+                desiredAutoOutputFileName);
+            bool useProposedAutoOutputFileName = TryConfirmAutoOutputFileNameProposal(
+                originalWorkbook,
+                autoOutputFileNameProposal);
+            string renderLogAutoOutputFileName = autoOutputFileNameProposal == null || useProposedAutoOutputFileName
+                ? desiredAutoOutputFileName
+                : previousAutoOutputFileName;
+            string finalPath = useProposedAutoOutputFileName
+                ? autoOutputFileNameProposal.ProposedPath
+                : originalPath;
+
+            SetWorkbookRenderLog(newWorkbook, txtFilePath, renderLogAutoOutputFileName);
 
             string projectId = confData["project"];
             newWorkbook.SetCustomProperty(ssProjectIdCustomPropertyName, projectId);
@@ -7230,7 +7247,7 @@ public class RibbonController : ExcelRibbon
 
             try
             {
-                File.Move(tempPath, originalPath);
+                File.Move(tempPath, finalPath);
             }
             catch
             {
@@ -7238,7 +7255,7 @@ public class RibbonController : ExcelRibbon
                 throw;
             }
 
-            Excel.Workbook reopenedWorkbook = excelApp.Workbooks.Open(originalPath);
+            Excel.Workbook reopenedWorkbook = excelApp.Workbooks.Open(finalPath);
             reopenedWorkbook.Activate();
 
             if (missingImagePaths.Any())
@@ -7371,17 +7388,273 @@ public class RibbonController : ExcelRibbon
         return safeFileNameWithoutExtension + Path.GetExtension(templateFileName);
     }
 
+    private static string NormalizeStoredAutoOutputFileName(string fileName)
+    {
+        return string.IsNullOrWhiteSpace(fileName)
+            ? null
+            : NormalizeWorkbookOutputFileName(fileName);
+    }
+
+    private static string GetOutputWorkbookFileName(Dictionary<string, string> confData, string jsonFilePath)
+    {
+        string rawFileName = confData != null && confData.ContainsKey(outputFilenameConfName)
+            ? confData[outputFilenameConfName]
+            : Path.GetFileNameWithoutExtension(jsonFilePath);
+        return NormalizeWorkbookOutputFileName(rawFileName);
+    }
+
     private static string GetOutputWorkbookFileNameFromJson(string jsonFilePath)
     {
         string jsonString = File.ReadAllText(jsonFilePath);
         JsonNode jsonObject = JsonNode.Parse(jsonString);
         var confData = GetPropertiesFromJsonNode(jsonObject, "variables");
 
-        const string outputFilenameConfName = "outputFilename";
-        string rawFileName = confData.ContainsKey(outputFilenameConfName)
-            ? confData[outputFilenameConfName]
-            : Path.GetFileNameWithoutExtension(jsonFilePath);
-        return NormalizeWorkbookOutputFileName(rawFileName);
+        return GetOutputWorkbookFileName(confData, jsonFilePath);
+    }
+
+    private static RenderLog CreateRenderLog(string txtFilePath, string lastAutoOutputFileName)
+    {
+        return new RenderLog
+        {
+            SourceFilePath = txtFilePath,
+            User = Environment.UserName,
+            LastAutoOutputFileName = NormalizeStoredAutoOutputFileName(lastAutoOutputFileName)
+        };
+    }
+
+    private static void SetWorkbookRenderLog(Excel.Workbook workbook, string txtFilePath, string lastAutoOutputFileName)
+    {
+        workbook.SetCustomProperty("RenderLog", CreateRenderLog(txtFilePath, lastAutoOutputFileName));
+    }
+
+    private static string ReplaceFirstIgnoreCase(string text, string oldValue, string newValue)
+    {
+        if (string.IsNullOrEmpty(text) || string.IsNullOrEmpty(oldValue))
+        {
+            return text;
+        }
+
+        int index = text.IndexOf(oldValue, StringComparison.OrdinalIgnoreCase);
+        if (index < 0)
+        {
+            return text;
+        }
+
+        return text.Substring(0, index) + newValue + text.Substring(index + oldValue.Length);
+    }
+
+    private static string CreateProposedAutoOutputFileName(
+        string currentFileName,
+        string lastAutoOutputFileName,
+        string desiredAutoOutputFileName)
+    {
+        string currentStem = Path.GetFileNameWithoutExtension(currentFileName);
+        string currentExtension = Path.GetExtension(currentFileName);
+        string desiredStem = Path.GetFileNameWithoutExtension(desiredAutoOutputFileName);
+        string desiredExtension = Path.GetExtension(desiredAutoOutputFileName);
+        string normalizedLastAutoOutputFileName = NormalizeStoredAutoOutputFileName(lastAutoOutputFileName);
+
+        if (string.IsNullOrWhiteSpace(currentExtension))
+        {
+            currentExtension = desiredExtension;
+        }
+
+        if (!string.IsNullOrWhiteSpace(normalizedLastAutoOutputFileName))
+        {
+            if (currentFileName.IndexOf(normalizedLastAutoOutputFileName, StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                string proposedFileName = ReplaceFirstIgnoreCase(
+                    currentFileName,
+                    normalizedLastAutoOutputFileName,
+                    desiredAutoOutputFileName);
+                return NormalizeWorkbookOutputFileName(proposedFileName);
+            }
+
+            string lastAutoStem = Path.GetFileNameWithoutExtension(normalizedLastAutoOutputFileName);
+            int lastAutoStemIndex = currentStem.IndexOf(lastAutoStem, StringComparison.OrdinalIgnoreCase);
+            if (lastAutoStemIndex >= 0)
+            {
+                string proposedStem = ReplaceFirstIgnoreCase(currentStem, lastAutoStem, desiredStem);
+                return NormalizeWorkbookOutputFileName(proposedStem + currentExtension);
+            }
+        }
+
+        return desiredAutoOutputFileName;
+    }
+
+    private static bool AreSameWorkbookPath(string path1, string path2)
+    {
+        if (string.IsNullOrWhiteSpace(path1) || string.IsNullOrWhiteSpace(path2))
+        {
+            return false;
+        }
+
+        try
+        {
+            return string.Equals(Path.GetFullPath(path1), Path.GetFullPath(path2), StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return string.Equals(path1, path2, StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    private static AutoOutputFileNameProposal CreateAutoOutputFileNameProposal(
+        Excel.Workbook workbook,
+        string lastAutoOutputFileName,
+        string desiredAutoOutputFileName)
+    {
+        desiredAutoOutputFileName = NormalizeStoredAutoOutputFileName(desiredAutoOutputFileName);
+        if (workbook == null || string.IsNullOrWhiteSpace(desiredAutoOutputFileName))
+        {
+            return null;
+        }
+
+        string currentPath = workbook.FullName;
+        string currentFileName = Path.GetFileName(currentPath);
+        if (string.IsNullOrWhiteSpace(currentFileName))
+        {
+            return null;
+        }
+
+        if (string.Equals(currentFileName, desiredAutoOutputFileName, StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        string directory = Path.GetDirectoryName(currentPath);
+        if (string.IsNullOrWhiteSpace(directory))
+        {
+            return null;
+        }
+
+        string proposedFileName = CreateProposedAutoOutputFileName(
+            currentFileName,
+            lastAutoOutputFileName,
+            desiredAutoOutputFileName);
+        string proposedPath = Path.Combine(directory, proposedFileName);
+        if (string.Equals(currentFileName, proposedFileName, StringComparison.OrdinalIgnoreCase)
+            || AreSameWorkbookPath(currentPath, proposedPath))
+        {
+            return null;
+        }
+
+        return new AutoOutputFileNameProposal
+        {
+            CurrentFileName = currentFileName,
+            ProposedFileName = proposedFileName,
+            ProposedPath = proposedPath
+        };
+    }
+
+    private static bool TryConfirmAutoOutputFileNameProposal(
+        Excel.Workbook workbook,
+        AutoOutputFileNameProposal proposal)
+    {
+        if (workbook == null || proposal == null)
+        {
+            return false;
+        }
+
+        DialogResult result = MessageBox.Show(
+            "出力ファイル名が変わっています。\n\n" +
+            "現在:\n" + proposal.CurrentFileName + "\n\n" +
+            "変更後:\n" + proposal.ProposedFileName + "\n\n" +
+            "ファイル名を変更して保存しますか？",
+            "ファイル名の変更",
+            MessageBoxButtons.YesNo,
+            MessageBoxIcon.Question);
+
+        if (result != DialogResult.Yes)
+        {
+            return false;
+        }
+
+        string currentPath = workbook.FullName;
+        if (File.Exists(proposal.ProposedPath) && !AreSameWorkbookPath(currentPath, proposal.ProposedPath))
+        {
+            MessageBox.Show(
+                "変更後のファイル名と同名のファイルが既に存在します。\n" +
+                "ファイル名は変更しませんでした。\n\n" +
+                proposal.ProposedPath,
+                "ファイル名の変更",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+            return false;
+        }
+
+        if (IsSameNameWorkbookOpen(proposal.ProposedFileName)
+            && !string.Equals(Path.GetFileName(currentPath), proposal.ProposedFileName, StringComparison.OrdinalIgnoreCase))
+        {
+            string fileNameWithoutExtension = Path.GetFileNameWithoutExtension(proposal.ProposedFileName);
+            MessageBox.Show(
+                $"'{fileNameWithoutExtension}'と同じ名前のファイルが既に開かれています。\n" +
+                "ファイル名は変更しませんでした。",
+                "ファイル名の変更",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool TrySaveWorkbookAsAutoOutputFileName(
+        Excel.Workbook workbook,
+        AutoOutputFileNameProposal proposal)
+    {
+        try
+        {
+            workbook.SaveAs(proposal.ProposedPath, Excel.XlFileFormat.xlOpenXMLWorkbookMacroEnabled);
+            FileLogger.Info("[AutoOutputFileName] renamed workbook: " + proposal.ProposedPath);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            FileLogger.Error("[AutoOutputFileName] SaveAs failed: " + ex);
+            MessageBox.Show(
+                "ファイル名の変更に失敗しました。\n" +
+                "ブックは保存していません。\n\n" +
+                ex.Message,
+                "ファイル名の変更",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Error);
+            return false;
+        }
+    }
+
+    private static void UpdateWorkbookRenderLogAndOfferAutoOutputFileNameSave(
+        Excel.Workbook workbook,
+        string txtFilePath,
+        RenderLog previousRenderLog,
+        string desiredAutoOutputFileName)
+    {
+        string normalizedDesiredAutoOutputFileName = NormalizeStoredAutoOutputFileName(desiredAutoOutputFileName);
+        string previousAutoOutputFileName = previousRenderLog == null
+            ? null
+            : NormalizeStoredAutoOutputFileName(previousRenderLog.LastAutoOutputFileName);
+        AutoOutputFileNameProposal proposal = CreateAutoOutputFileNameProposal(
+            workbook,
+            previousAutoOutputFileName,
+            normalizedDesiredAutoOutputFileName);
+
+        if (proposal == null)
+        {
+            SetWorkbookRenderLog(workbook, txtFilePath, normalizedDesiredAutoOutputFileName ?? previousAutoOutputFileName);
+            return;
+        }
+
+        if (!TryConfirmAutoOutputFileNameProposal(workbook, proposal))
+        {
+            SetWorkbookRenderLog(workbook, txtFilePath, previousAutoOutputFileName);
+            return;
+        }
+
+        SetWorkbookRenderLog(workbook, txtFilePath, normalizedDesiredAutoOutputFileName);
+        if (!TrySaveWorkbookAsAutoOutputFileName(workbook, proposal))
+        {
+            SetWorkbookRenderLog(workbook, txtFilePath, previousAutoOutputFileName);
+        }
     }
 
     private static async Task<string> TryGetProjectFolderNameAsync(
@@ -7550,13 +7823,7 @@ public class RibbonController : ExcelRibbon
             ShowMissingImageFilesDialog(missingImagePaths);
         }
 
-        // RenderLog は TXT を保存
-        RenderLog renderLog = new RenderLog
-        {
-            SourceFilePath = txtFilePath,   // TXT を保存
-            User = Environment.UserName
-        };
-        workbook.SetCustomProperty("RenderLog", renderLog);
+        SetWorkbookRenderLog(workbook, txtFilePath, newFileName);
 
         //var lastRenderLog = workbook.GetCustomProperty<RenderLog>("RenderLog");
 
