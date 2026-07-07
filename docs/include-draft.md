@@ -24,6 +24,10 @@ source/application.txt
 source/final-check.txt
 ```
 
+作成前に確認ダイアログが表示されます。シート名とファイル名を確認し、作成したい
+下書きだけにチェックを付けて `OK` を押してください。`キャンセル` を押すと何も
+作成しません。
+
 作成する内容は、include 先のフォルダから上位フォルダへ向かって最初に見つかった
 `_template.txt` を元にします。`conf.yml` の `$rootDirectory` で決まるルートフォルダ
 まで探しても `_template.txt` が

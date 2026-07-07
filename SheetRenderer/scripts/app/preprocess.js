@@ -710,7 +710,7 @@ function formatScaffoldLocation(entryFilePath, lineNum) {
     return "\nファイル:\t" + entryFilePath + "\n行:\t" + lineNum;
 }
 
-function createMissingIncludeFilesFromEntry(entryFilePath) {
+function collectMissingIncludeDraftPlans(entryFilePath) {
     var entryFilePathAbs = FileSystem.GetAbsolutePathName(entryFilePath);
     var entryProject = FileSystem.GetParentFolderName(entryFilePathAbs);
     var rootDirectory = getScaffoldRootDirectory(entryFilePathAbs);
@@ -817,6 +817,8 @@ function createMissingIncludeFilesFromEntry(entryFilePath) {
 
         plannedPathKeys[targetPathKey] = true;
         plans.push({
+            title: title,
+            fileName: Path.GetFileName(targetPath),
             targetPath: targetPath,
             targetPathKey: targetPathKey,
             targetDirectory: targetDirectory,
@@ -832,11 +834,20 @@ function createMissingIncludeFilesFromEntry(entryFilePath) {
         );
     }
 
+    return {
+        rootDirectory: rootDirectory,
+        sourceDirectoryPath: FileSystem.BuildPath(rootDirectory, sourceDirectoryName),
+        plans: plans
+    };
+}
+
+function createMissingIncludeDraftPlans(plans) {
     if (plans.length === 0) {
         return "作成対象の下書きはありませんでした。";
     }
 
     var createdPaths = [];
+    var createdFileNames = [];
     try {
         _.forEach(plans, function(plan) {
             if (FileSystem.FileExists(plan.targetPath)) {
@@ -851,6 +862,7 @@ function createMissingIncludeFilesFromEntry(entryFilePath) {
                 File.WriteAllText(plan.targetPath, plan.outputText);
             }
             createdPaths.push(plan.targetPath);
+            createdFileNames.push(plan.fileName);
         });
     }
     catch (e) {
@@ -870,7 +882,41 @@ function createMissingIncludeFilesFromEntry(entryFilePath) {
     }
 
     return "下書きを " + createdPaths.length + " 件作成しました。"
-        + "\n\n" + createdPaths.join("\n");
+        + "\n\n" + createdFileNames.join("\n");
+}
+
+function buildMissingIncludeDraftPlan(entryFilePath) {
+    var result = collectMissingIncludeDraftPlans(entryFilePath);
+    return JSON.stringify({
+        sourceDirectoryPath: result.sourceDirectoryPath,
+        plans: _.map(result.plans, function(plan) {
+            return {
+                title: plan.title,
+                fileName: plan.fileName,
+                targetPathKey: plan.targetPathKey
+            };
+        })
+    });
+}
+
+function createMissingIncludeDraftsFromSelection(entryFilePath, selectedTargetPathKeysJson) {
+    var selectedTargetPathKeys = JSON.parse(selectedTargetPathKeysJson || "[]");
+    var selected = {};
+    _.forEach(selectedTargetPathKeys, function(key) {
+        selected[key] = true;
+    });
+
+    var result = collectMissingIncludeDraftPlans(entryFilePath);
+    var plans = _.filter(result.plans, function(plan) {
+        return selected[plan.targetPathKey];
+    });
+
+    return createMissingIncludeDraftPlans(plans);
+}
+
+function createMissingIncludeFilesFromEntry(entryFilePath) {
+    var result = collectMissingIncludeDraftPlans(entryFilePath);
+    return createMissingIncludeDraftPlans(result.plans);
 }
 
 // filePaths: 含まれるすべてのファイルのパス

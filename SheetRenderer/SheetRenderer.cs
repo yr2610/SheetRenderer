@@ -1541,6 +1541,118 @@ public class RibbonController : ExcelRibbon
         return value is bool b && b;
     }
 
+    class DraftCreationPlan
+    {
+        public string SourceDirectoryPath { get; set; }
+        public List<DraftCreationPlanItem> Plans { get; set; } = new List<DraftCreationPlanItem>();
+    }
+
+    class DraftCreationPlanItem
+    {
+        public string Title { get; set; }
+        public string FileName { get; set; }
+        public string TargetPathKey { get; set; }
+    }
+
+    class DraftCreationListItem
+    {
+        public DraftCreationPlanItem Plan { get; set; }
+
+        public override string ToString()
+        {
+            string title = string.IsNullOrWhiteSpace(Plan?.Title) ? "(シート名なし)" : Plan.Title;
+            string fileName = string.IsNullOrWhiteSpace(Plan?.FileName) ? "(ファイル名なし)" : Plan.FileName;
+            return title + "    " + fileName;
+        }
+    }
+
+    static List<DraftCreationPlanItem> ShowDraftCreationConfirmDialog(DraftCreationPlan plan)
+    {
+        if (plan == null || plan.Plans == null || plan.Plans.Count == 0)
+        {
+            return new List<DraftCreationPlanItem>();
+        }
+
+        using (var form = new Form())
+        using (var layout = new TableLayoutPanel())
+        using (var messageLabel = new Label())
+        using (var checkedList = new CheckedListBox())
+        using (var buttonPanel = new FlowLayoutPanel())
+        using (var okButton = new Button())
+        using (var cancelButton = new Button())
+        {
+            form.Text = "下書き作成";
+            form.StartPosition = FormStartPosition.CenterScreen;
+            form.MinimizeBox = false;
+            form.MaximizeBox = false;
+            form.ShowIcon = false;
+            form.Width = 560;
+            form.Height = 420;
+
+            layout.Dock = DockStyle.Fill;
+            layout.Padding = new Padding(12);
+            layout.RowCount = 3;
+            layout.ColumnCount = 1;
+            layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+
+            messageLabel.AutoSize = true;
+            messageLabel.MaximumSize = new Size(520, 0);
+            messageLabel.Margin = new Padding(0, 0, 0, 8);
+            messageLabel.Text = "source 以下に次の下書きを作成します。";
+
+            checkedList.Dock = DockStyle.Fill;
+            checkedList.CheckOnClick = true;
+            checkedList.HorizontalScrollbar = true;
+            checkedList.Margin = new Padding(0, 0, 0, 12);
+
+            foreach (var item in plan.Plans)
+            {
+                checkedList.Items.Add(new DraftCreationListItem { Plan = item }, true);
+            }
+
+            buttonPanel.Dock = DockStyle.Fill;
+            buttonPanel.FlowDirection = FlowDirection.RightToLeft;
+            buttonPanel.AutoSize = true;
+            buttonPanel.WrapContents = false;
+
+            okButton.Text = "OK";
+            okButton.Width = 88;
+            okButton.DialogResult = DialogResult.OK;
+
+            cancelButton.Text = "キャンセル";
+            cancelButton.Width = 88;
+            cancelButton.DialogResult = DialogResult.Cancel;
+
+            buttonPanel.Controls.Add(cancelButton);
+            buttonPanel.Controls.Add(okButton);
+
+            layout.Controls.Add(messageLabel, 0, 0);
+            layout.Controls.Add(checkedList, 0, 1);
+            layout.Controls.Add(buttonPanel, 0, 2);
+            form.Controls.Add(layout);
+            form.AcceptButton = okButton;
+            form.CancelButton = cancelButton;
+
+            if (form.ShowDialog() != DialogResult.OK)
+            {
+                return null;
+            }
+
+            var selected = new List<DraftCreationPlanItem>();
+            foreach (DraftCreationListItem item in checkedList.CheckedItems)
+            {
+                if (item?.Plan != null)
+                {
+                    selected.Add(item.Plan);
+                }
+            }
+
+            return selected;
+        }
+    }
+
     class WorkbookInfo
     {
         public string ProjectId { get; set; }
@@ -7334,15 +7446,55 @@ public class RibbonController : ExcelRibbon
             FileLogger.InitializeForInput(txtFilePath, timestamped: false);
             FileLogger.Info("下書き作成を開始しました。");
 
-            object result = JsHost.Call("createMissingIncludeFilesFromEntry", txtFilePath);
+            object planResult = JsHost.Call("buildMissingIncludeDraftPlan", txtFilePath);
+            if (IsQuitResult(planResult))
+            {
+                return;
+            }
+
+            var jsonOptions = new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true
+            };
+            var plan = JsonSerializer.Deserialize<DraftCreationPlan>(planResult?.ToString() ?? "{}", jsonOptions);
+            if (plan == null || plan.Plans == null || plan.Plans.Count == 0)
+            {
+                string noTargetMessage = "作成対象の下書きはありませんでした。";
+                FileLogger.Info(noTargetMessage);
+                MessageBox.Show(noTargetMessage, dialogTitle, MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            List<DraftCreationPlanItem> selectedPlans = ShowDraftCreationConfirmDialog(plan);
+            if (selectedPlans == null)
+            {
+                FileLogger.Info("下書き作成をキャンセルしました。");
+                return;
+            }
+            if (selectedPlans.Count == 0)
+            {
+                string noSelectionMessage = "作成する下書きが選択されていません。";
+                FileLogger.Info(noSelectionMessage);
+                MessageBox.Show(noSelectionMessage, dialogTitle, MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            var selectedTargetPathKeys = selectedPlans
+                .Select(item => item.TargetPathKey)
+                .Where(key => !string.IsNullOrWhiteSpace(key))
+                .ToList();
+            string selectedTargetPathKeysJson = JsonSerializer.Serialize(selectedTargetPathKeys);
+
+            object result = JsHost.Call(
+                "createMissingIncludeDraftsFromSelection",
+                txtFilePath,
+                selectedTargetPathKeysJson);
             if (IsQuitResult(result))
             {
                 return;
             }
 
-            string message = result == null
-                ? "下書き作成が完了しました。"
-                : result.ToString();
+            string message = result == null ? "下書き作成が完了しました。" : result.ToString();
 
             FileLogger.Info(message);
             Notifier.Info("正常終了", "下書き作成が完了しました。");
