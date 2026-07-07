@@ -721,6 +721,7 @@ function collectMissingIncludeDraftPlans(entryFilePath) {
     var errors = [];
     var plans = [];
     var plannedPathKeys = {};
+    var plannedSheetNameKeys = {};
 
     initPreProcessPathHelpers(rootDirectory);
     entrySourceLocalPath = absolutePathToSourceLocalPath(entryFilePathAbs, projectPathFromRoot);
@@ -786,6 +787,17 @@ function collectMissingIncludeDraftPlans(entryFilePath) {
             return;
         }
 
+        var sheetNameKey = title.toLowerCase();
+        if (plannedSheetNameKeys[sheetNameKey]) {
+            errors.push(
+                "同じシート名の下書きを複数作成しようとしています: " + title
+                + "\n既存候補: " + plannedSheetNameKeys[sheetNameKey]
+                + "\n重複候補: " + includeFileInfo.filePath
+                + formatScaffoldLocation(entrySourceLocalPath, titleInfo.lineNum)
+            );
+            return;
+        }
+
         var targetPathKey = normalizePathKey(targetPath);
         if (plannedPathKeys[targetPathKey]) {
             errors.push(
@@ -816,6 +828,7 @@ function collectMissingIncludeDraftPlans(entryFilePath) {
         var outputText = renderScaffoldTemplate(templateText, values);
 
         plannedPathKeys[targetPathKey] = true;
+        plannedSheetNameKeys[sheetNameKey] = includeFileInfo.filePath;
         plans.push({
             title: title,
             fileName: Path.GetFileName(targetPath),

@@ -1566,6 +1566,101 @@ public class RibbonController : ExcelRibbon
         }
     }
 
+    static Excel.Workbook TryGetActiveWorkbook(Excel.Application excelApp)
+    {
+        if (excelApp == null)
+        {
+            return null;
+        }
+
+        try
+        {
+            return excelApp.ActiveWorkbook as Excel.Workbook;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    static HashSet<string> CollectWorksheetNames(Excel.Workbook workbook)
+    {
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (workbook == null)
+        {
+            return names;
+        }
+
+        Excel.Sheets worksheets = null;
+        try
+        {
+            worksheets = workbook.Worksheets;
+            int worksheetCount = worksheets.Count;
+            for (int i = 1; i <= worksheetCount; i++)
+            {
+                Excel.Worksheet worksheet = null;
+                try
+                {
+                    worksheet = worksheets[i] as Excel.Worksheet;
+                    if (!string.IsNullOrWhiteSpace(worksheet?.Name))
+                    {
+                        names.Add(worksheet.Name);
+                    }
+                }
+                finally
+                {
+                    ReleaseExcelComObject(worksheet);
+                }
+            }
+        }
+        finally
+        {
+            ReleaseExcelComObject(worksheets);
+        }
+
+        return names;
+    }
+
+    static string BuildExistingWorksheetDuplicateMessage(DraftCreationPlan plan, Excel.Application excelApp)
+    {
+        Excel.Workbook workbook = TryGetActiveWorkbook(excelApp);
+        if (workbook == null || plan?.Plans == null || plan.Plans.Count == 0)
+        {
+            return null;
+        }
+
+        var existingWorksheetNames = CollectWorksheetNames(workbook);
+        if (existingWorksheetNames.Count == 0)
+        {
+            return null;
+        }
+
+        var duplicateTitles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var lines = new List<string>();
+        foreach (var item in plan.Plans)
+        {
+            if (item == null
+                || string.IsNullOrWhiteSpace(item.Title)
+                || !existingWorksheetNames.Contains(item.Title)
+                || !duplicateTitles.Add(item.Title))
+            {
+                continue;
+            }
+
+            string fileName = string.IsNullOrWhiteSpace(item.FileName) ? "(ファイル名なし)" : item.FileName;
+            lines.Add(item.Title + "    " + fileName);
+        }
+
+        if (lines.Count == 0)
+        {
+            return null;
+        }
+
+        return "既存のシート名と重複する下書きがあります。"
+            + "\n下書きは作成されませんでした。"
+            + "\n\n" + string.Join("\n", lines);
+    }
+
     static List<DraftCreationPlanItem> ShowDraftCreationConfirmDialog(DraftCreationPlan plan)
     {
         if (plan == null || plan.Plans == null || plan.Plans.Count == 0)
@@ -7462,6 +7557,14 @@ public class RibbonController : ExcelRibbon
                 string noTargetMessage = "作成対象の下書きはありませんでした。";
                 FileLogger.Info(noTargetMessage);
                 MessageBox.Show(noTargetMessage, dialogTitle, MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            string duplicateSheetNameMessage = BuildExistingWorksheetDuplicateMessage(plan, excelApp);
+            if (!string.IsNullOrWhiteSpace(duplicateSheetNameMessage))
+            {
+                FileLogger.Warn(duplicateSheetNameMessage);
+                MessageBox.Show(duplicateSheetNameMessage, dialogTitle, MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return;
             }
 
