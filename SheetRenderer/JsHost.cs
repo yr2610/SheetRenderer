@@ -217,6 +217,55 @@ public static class JsHost
             System.IO.File.WriteAllText(path, contents);
         }
 
+        public void WriteAllTextAtomically(string path, string contents)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                throw new ArgumentException("path is empty.", nameof(path));
+            }
+
+            string fullPath = Path.GetFullPath(path);
+            string directoryPath = Path.GetDirectoryName(fullPath);
+            if (!string.IsNullOrEmpty(directoryPath))
+            {
+                Directory.CreateDirectory(directoryPath);
+            }
+
+            string tempPath = Path.Combine(
+                directoryPath ?? "",
+                $"{Path.GetFileName(fullPath)}.{Guid.NewGuid():N}.tmp"
+            );
+
+            try
+            {
+                System.IO.File.WriteAllText(tempPath, contents);
+
+                if (System.IO.File.Exists(fullPath))
+                {
+                    System.IO.File.Replace(tempPath, fullPath, null);
+                }
+                else
+                {
+                    System.IO.File.Move(tempPath, fullPath);
+                }
+            }
+            catch
+            {
+                try
+                {
+                    if (System.IO.File.Exists(tempPath))
+                    {
+                        System.IO.File.Delete(tempPath);
+                    }
+                }
+                catch
+                {
+                }
+
+                throw;
+            }
+        }
+
         public void WriteAllTextIfNotExists(string path, string contents)
         {
             string directoryPath = Path.GetDirectoryName(path);

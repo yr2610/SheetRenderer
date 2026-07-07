@@ -436,9 +436,6 @@ if (typeof(global) === 'undefined') {
 var outFilename = Path.GetFileNameWithoutExtension(filePath) + ".json";
 var outfilePath = FileSystem.BuildPath(FileSystem.GetParentFolderName(filePath), outFilename);
 
-// バックアップ置き場
-const backupDirectoryName = "bak";
-
 // 中間生成ファイル置き場
 const intermediateDirectoryName = "intermediate";
 
@@ -4330,45 +4327,19 @@ function absolutePathToSourceLocalPath_(filePath, projectPathFromRoot) {
     return absolutePathToDirectoryLocalPath(filePath, projectPathFromRoot, sourceDirectoryName);
 }
 
-function getAbsoluteBackupDirectory(projectPathFromRoot) {
-    var projectPathAbs = getAbsoluteProjectPath(projectPathFromRoot);
-
-    return FileSystem.BuildPath(projectPathAbs, backupDirectoryName);
-}
-function getAbsoluteBackupPath(filePathProjectLocal, projectPathFromRoot) {
-    var backupDirectoryAbs = getAbsoluteBackupDirectory(projectPathFromRoot);
-
-    return FileSystem.BuildPath(backupDirectoryAbs, filePathProjectLocal);
-}
-
 (function(){
 
-// 先に別名でコピーして、それを読みながら、元ファイルを上書きするように
-// 元ファイルをリネームだとエディターで開いてる元ファイルが閉じてしまうので
+// ID 付与後のソーステキストを元ファイルへ反映する。
+// 書き込みは C# 側で一時ファイル経由の置換にして、途中失敗時に元ファイルを残す。
 for (var key in srcTextsToRewrite) {
     var noIdLineData = srcTextsToRewrite[key];
     var filePath = noIdLineData.filePath;
     var projectDirectory = noIdLineData.projectDirectory;
     var filePathAbs = sourceLocalPathToAbsolutePath(filePath, projectDirectory);
-    var entryFileFolderName = FileSystem.GetParentFolderName(rootFilePath);
-    var folderName = FileSystem.GetParentFolderName(filePath);
-    var backupFolderName = getAbsoluteBackupDirectory(projectDirectory);
-    backupFolderName = FileSystem.BuildPath(backupFolderName, "txt");
 
-    var fileDirectoryAbs = FileSystem.GetParentFolderName(filePathAbs);
-    var fileDirectoryFromSource = absolutePathToSourceLocalPath(fileDirectoryAbs, projectDirectory);
-    backupFolderName = FileSystem.BuildPath(backupFolderName, fileDirectoryFromSource);
-    CL.createFolder(backupFolderName);
-
-    var backupFileName = CL.makeBackupFileName(filePathAbs);
-    var backupFilePath = FileSystem.BuildPath(backupFolderName, backupFileName);
-
-    FileSystem.CopyFile(filePathAbs, backupFilePath);
-
-    // バックアップファイルを読んで、元ファイルを直接上書き更新
     var s = CL.readTextFile(filePathAbs);
 
-    // バックアップファイルを１行ずつ読んで、srcTextsToRewriteに行番号が存在すればそちらを、なければそのまま書き出し
+    // 元ファイルを１行ずつ読んで、srcTextsToRewriteに行番号が存在すればそちらを、なければそのまま書き出し
     // XXX: あらかじめ改行でjoinして１回で書き込んだ場合との速度差はどの程度か？
     s = s.split(/\r\n|\n|\r/);
     _.forEach(noIdLineData.newTexts, function(newSrcText, lineNum) {
@@ -4376,7 +4347,7 @@ for (var key in srcTextsToRewrite) {
     });
     s = s.join("\n");
 
-    File.WriteAllText(filePathAbs, s);
+    File.WriteAllTextAtomically(filePathAbs, s);
 
     srcTextsToRewrite[key] = null;
 }
