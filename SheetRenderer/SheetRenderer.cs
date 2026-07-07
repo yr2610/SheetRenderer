@@ -6587,26 +6587,6 @@ public class RibbonController : ExcelRibbon
             return;
         }
 
-        // ファイルが変更されて保存されてない場合
-        if (!skipSaveConfirmation && workbook.Saved == false)
-        {
-            // 保存確認ダイアログを表示
-            DialogResult yesNoCancel = MessageBox.Show($"シートを更新する前にファイルの変更内容を保存しますか？", "確認", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Exclamation);
-
-            switch (yesNoCancel)
-            {
-                case DialogResult.Yes:
-                    workbook.Save();
-                    break;
-                case DialogResult.No:
-                    // 保存せずに続行
-                    break;
-                case DialogResult.Cancel:
-                    // キャンセルされた場合、処理を中止
-                    return;
-            }
-        }
-
         // await の前にWindowsFormsSynchronizationContextを設定
         if (SynchronizationContext.Current == null)
         {
@@ -6627,9 +6607,34 @@ public class RibbonController : ExcelRibbon
 
         if (currentSheetCount == 1 && newSheetCount > 1)
         {
+            if (!ConfirmRegenerateForSingleSheetExpansion(newSheetCount, workbook.Saved == false))
+            {
+                return;
+            }
+
             FileLogger.Info($"Auto-switch to regeneration: 1 -> {newSheetCount}");
             await RegenerateWorkbook(workbook, workbookInfo, txtFilePath, jsonFilePath);
             return;
+        }
+
+        // ファイルが変更されて保存されてない場合
+        if (!skipSaveConfirmation && workbook.Saved == false)
+        {
+            // 保存確認ダイアログを表示
+            DialogResult yesNoCancel = MessageBox.Show($"シートを更新する前にファイルの変更内容を保存しますか？", "確認", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Exclamation);
+
+            switch (yesNoCancel)
+            {
+                case DialogResult.Yes:
+                    workbook.Save();
+                    break;
+                case DialogResult.No:
+                    // 保存せずに続行
+                    break;
+                case DialogResult.Cancel:
+                    // キャンセルされた場合、処理を中止
+                    return;
+            }
         }
 
         excelApp.DisplayAlerts = false;
@@ -7106,6 +7111,44 @@ public class RibbonController : ExcelRibbon
         return Path.Combine(directory, $"{fileNameWithoutExtension}.__regen__{extension}");
     }
 
+    static bool ConfirmCreateSingleSheetWorkbook()
+    {
+        DialogResult result = MessageBox.Show(
+            "このブックは1シート構成で作成されます。\n\n" +
+            "1シートだけで使い続ける場合は問題ありません。\n" +
+            "あとからシートを増やす場合は、通常の更新ではなくブック全体の再生成が必要になります。\n\n" +
+            "将来シートを増やす可能性がある場合は、予備シートを含めて2シート以上で作成することをおすすめします。\n\n" +
+            "このまま作成しますか？",
+            "1シート構成の確認",
+            MessageBoxButtons.YesNo,
+            MessageBoxIcon.Exclamation);
+
+        return result == DialogResult.Yes;
+    }
+
+    static bool ConfirmRegenerateForSingleSheetExpansion(int newSheetCount, bool hasUnsavedChanges)
+    {
+        string message =
+            $"シート数が1件から{newSheetCount}件に増えています。\n\n" +
+            "この変更では通常の更新ではなく、ブック全体を再生成します。\n" +
+            "再生成では現在のブックを保存し、バックアップを作成したうえで新しいブックに置き換えます。";
+
+        if (hasUnsavedChanges)
+        {
+            message += "\n未保存の変更も保存されます。";
+        }
+
+        message += "\n\n続行しますか？";
+
+        DialogResult result = MessageBox.Show(
+            message,
+            "再生成の確認",
+            MessageBoxButtons.YesNo,
+            MessageBoxIcon.Warning);
+
+        return result == DialogResult.Yes;
+    }
+
     static Dictionary<string, SheetValuesInfo> SnapshotSheetValuesById(Excel.Workbook workbook)
     {
         var result = new Dictionary<string, SheetValuesInfo>();
@@ -7428,7 +7471,13 @@ public class RibbonController : ExcelRibbon
         string jsonString = File.ReadAllText(jsonFilePath);
         JsonNode jsonObject = JsonNode.Parse(jsonString);
         var confData = GetPropertiesFromJsonNode(jsonObject, "variables");
+        JsonArray sheetNodes = jsonObject["children"].AsArray();
         string newFileName = GetOutputWorkbookFileNameFromJson(jsonFilePath);
+
+        if (sheetNodes.Count == 1 && !ConfirmCreateSingleSheetWorkbook())
+        {
+            return false;
+        }
 
         if (IsSameNameWorkbookOpen(newFileName))
         {
