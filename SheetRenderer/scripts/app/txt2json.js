@@ -24,6 +24,8 @@ var DROP_KEYS_LIST = [
     "$get",
     "$set",
     "$defaults",
+    "$default",
+    "$isUndefined",
 
     "$index1",
     "$count",
@@ -95,14 +97,39 @@ function $templateObject(object, data) {
 function ArrayReader(array) { this.__a = array; this.index = 0; this.atEnd = false; }
 ArrayReader.prototype.read = function(o) { if (this.atEnd) return null; if (this.index + 1 >= this.__a.length) this.atEnd = true; return this.__a[this.index++]; }
 
+function formatParseErrorMessage(errorMessage, lineObj) {
+    var message = errorMessage;
+    if (lineObj !== null && !_.isUndefined(lineObj)) {
+        var filePath = lineObj.filePath;
+        if (typeof rootFilePath !== "undefined" && rootFilePath) {
+            var relativeFilePath = getRelativePath(filePath, rootFilePath);
+            if (relativeFilePath) {
+                filePath = relativeFilePath;
+            }
+        }
+        message += "\n" + makeLineinfoString(filePath, lineObj.lineNum);
+    }
+    return message;
+}
+
 var ParseError = function(errorMessage, lineObj) {
+    this.name = "ParseError";
+    this.message = formatParseErrorMessage(errorMessage, lineObj);
     this.errorMessage = errorMessage;
     this.lineObj = lineObj;
+    if (typeof Error.captureStackTrace === "function") {
+        Error.captureStackTrace(this, ParseError);
+    }
+};
+ParseError.prototype = Object.create(Error.prototype);
+ParseError.prototype.constructor = ParseError;
+ParseError.prototype.toString = function() {
+    return this.name + ": " + this.message;
 };
 
 // ParseError が引数
 function parseError(e) {
-    if (_.isUndefined(e.lineObj)) {
+    if (e.lineObj === null || _.isUndefined(e.lineObj)) {
         MyError(e.errorMessage);
     }
     else {
@@ -2308,6 +2335,7 @@ function extendScope(parentScope, layer) {
     if (layer) {
         _.assign(child, layer); // 近いもの勝ち（シャドーイング）
     }
+    installPlaceholderHelpers(child);
     return child;
 }
 
@@ -2339,6 +2367,32 @@ function getInheritedScopeLayer(node) {
         return node.params;
     }
     return null;
+}
+
+function getScopePathValue(scope, path) {
+    if (typeof path !== "string") {
+        return path;
+    }
+    return _.get(scope, path, void 0);
+}
+
+function defineScopeHelper(scope, name, fn) {
+    Object.defineProperty(scope, name, {
+        value: fn,
+        writable: true,
+        configurable: true,
+        enumerable: false
+    });
+}
+
+function installPlaceholderHelpers(scope) {
+    defineScopeHelper(scope, "$default", function(path, fallback) {
+        var val = getScopePathValue(scope, path);
+        return val === void 0 ? fallback : val;
+    });
+    defineScopeHelper(scope, "$isUndefined", function(path) {
+        return getScopePathValue(scope, path) === void 0;
+    });
 }
 
 // キャッシュ付き evaluator（プロトタイプ継承を素直に使える）
