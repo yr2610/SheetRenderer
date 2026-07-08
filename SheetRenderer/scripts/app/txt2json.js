@@ -26,6 +26,7 @@ var DROP_KEYS_LIST = [
     "$defaults",
     "$default",
     "$isUndefined",
+    "$bool",
 
     "$index1",
     "$count",
@@ -2392,6 +2393,9 @@ function installPlaceholderHelpers(scope) {
     });
     defineScopeHelper(scope, "$isUndefined", function(path) {
         return getScopePathValue(scope, path) === void 0;
+    });
+    defineScopeHelper(scope, "$bool", function(path) {
+        return !!getScopePathValue(scope, path);
     });
 }
 

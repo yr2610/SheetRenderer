@@ -77,6 +77,14 @@ SheetRenderer のテキストパーサーでは、見出しと箇条書きで Ex
 * 備考: {{$isUndefined("memo") ? "なし" : memo}}
 ```
 
+必要な場合だけ定義する boolean フラグは `$bool("name")` で参照できます。
+未定義、`false`、`null` は `false` として扱われます。
+
+```text
+* 公開用項目 {{?!$bool("is_secret")}}
+* 秘密項目 {{?$bool("is_secret")}}
+```
+
 ### 応用: 未定義を意図して省略する
 
 `{{? expr}}` は、`false`、`null`、`undefined` の場合に項目全体を削除します。
