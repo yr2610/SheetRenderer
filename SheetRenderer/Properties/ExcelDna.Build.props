@@ -43,7 +43,7 @@
       Enable/Disable automatic generation of platform-specific versions of .dna files
     -->
     <ExcelDnaCreate32BitAddIn Condition="'$(ExcelDnaCreate32BitAddIn)' == ''">true</ExcelDnaCreate32BitAddIn>
-    <ExcelDnaCreate64BitAddIn Condition="'$(ExcelDnaCreate64BitAddIn)' == ''">true</ExcelDnaCreate64BitAddIn>
+    <ExcelDnaCreate64BitAddIn Condition="'$(ExcelDnaCreate64BitAddIn)' == ''">false</ExcelDnaCreate64BitAddIn>
 
     <!--
       Define the suffix used for each platform-specific file e.g. MyAddIn64.dna

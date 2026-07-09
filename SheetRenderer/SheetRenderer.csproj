@@ -17,6 +17,7 @@
     <Deterministic>true</Deterministic>
     <NuGetPackageImportStamp>
     </NuGetPackageImportStamp>
+    <SheetRendererDistDir Condition="'$(SheetRendererDistDir)' == ''">$(MSBuildProjectDirectory)\..\dist\</SheetRendererDistDir>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
     <DebugSymbols>true</DebugSymbols>
@@ -168,7 +169,9 @@
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="ShellBridge.cs" />
     <Compile Include="SharedSheetConflictResolutionDialog.cs" />
-    <Compile Include="SharedSheetDiffDialog.cs" />
+    <Compile Include="SharedSheetDiffDialog.cs">
+      <SubType>Form</SubType>
+    </Compile>
     <Compile Include="SharedSheetModels.cs" />
     <Compile Include="SharedSheetSelectionDialog.cs" />
     <Compile Include="TimeAssigner.cs" />
@@ -208,4 +211,13 @@
   <Import Project="..\packages\ExcelDna.Interop.15.0.1\build\ExcelDna.Interop.targets" Condition="Exists('..\packages\ExcelDna.Interop.15.0.1\build\ExcelDna.Interop.targets')" />
   <Import Project="..\packages\System.ValueTuple.4.6.2\build\net471\System.ValueTuple.targets" Condition="Exists('..\packages\System.ValueTuple.4.6.2\build\net471\System.ValueTuple.targets')" />
   <Import Project="..\packages\ExcelDna.AddIn.1.10.0-preview4\build\ExcelDna.AddIn.targets" Condition="Exists('..\packages\ExcelDna.AddIn.1.10.0-preview4\build\ExcelDna.AddIn.targets')" />
+  <Target Name="CreateDistributionFolder" AfterTargets="Build" Condition="'$(Configuration)' == 'Release'">
+    <RemoveDir Directories="$(SheetRendererDistDir)" Condition="Exists('$(SheetRendererDistDir)')" />
+    <MakeDir Directories="$(SheetRendererDistDir)" />
+    <ItemGroup>
+      <SheetRendererDistFiles Include="$(OutDir)**\*" Exclude="$(OutDir)**\*.xml;$(OutDir)**\*.pdb;$(OutDir)**\*64*;$(OutDir)**\*.dna;$(OutDir)**\*-AddIn.xll;$(OutDir)**\*-AddIn.xll.config" />
+    </ItemGroup>
+    <Copy SourceFiles="@(SheetRendererDistFiles)" DestinationFiles="@(SheetRendererDistFiles->'$(SheetRendererDistDir)%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="false" />
+    <Message Text="SheetRenderer distribution folder: $(SheetRendererDistDir)" Importance="High" />
+  </Target>
 </Project>
