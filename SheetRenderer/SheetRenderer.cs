@@ -9837,7 +9837,7 @@ public class RibbonController : ExcelRibbon
                 ProjectId = storedInput.ProjectId,
                 RefName = storedInput.RefName,
                 FilePath = storedInput.FilePath,
-                PullEnabled = workbookInfo == null ? true : false
+                PullEnabled = true
             };
         }
 
