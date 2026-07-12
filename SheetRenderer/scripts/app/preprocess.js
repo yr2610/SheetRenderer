@@ -23,6 +23,84 @@
     return lines;
 }
 
+// include 呼び出し行へ自動付与するインスタンス ID の書き戻し予約。
+// txt2json.js 側の通常 ID 書き戻しと最後にまとめて反映する。
+var includeCallSourceRewrites = {};
+var includeInstanceLocations = {};
+
+function resetParameterizedIncludeState() {
+    includeCallSourceRewrites = {};
+    includeInstanceLocations = {};
+}
+
+function getParameterizedIncludeSourceRewrites() {
+    return includeCallSourceRewrites;
+}
+
+function buildParameterizedIncludeRewriteKey(lineObj) {
+    return String(lineObj.projectDirectory || "") + ":" + String(lineObj.filePath || "");
+}
+
+function addParameterizedIncludeSourceRewrite(lineObj, newText) {
+    var key = buildParameterizedIncludeRewriteKey(lineObj);
+    var entry = includeCallSourceRewrites[key];
+    if (!entry) {
+        entry = {
+            filePath: lineObj.filePath,
+            projectDirectory: lineObj.projectDirectory,
+            newTexts: {}
+        };
+        includeCallSourceRewrites[key] = entry;
+    }
+
+    if (!_.isUndefined(lineObj.comment)) {
+        newText += lineObj.comment;
+    }
+    entry.newTexts[lineObj.lineNum - 1] = newText;
+}
+
+function createParameterizedIncludeId() {
+    var firstChars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    var restChars = firstChars + "0123456789";
+    var id = firstChars.charAt(Math.floor(Math.random() * firstChars.length));
+    for (var i = 1; i < 8; i++) {
+        id += restChars.charAt(Math.floor(Math.random() * restChars.length));
+    }
+    return id;
+}
+
+function registerParameterizedIncludeInstance(parentPath, requestedId, lineObj) {
+    var id = requestedId;
+    var fullPath;
+    var key;
+
+    do {
+        if (!id) {
+            id = createParameterizedIncludeId();
+        }
+        fullPath = (parentPath || []).concat([id]);
+        key = JSON.stringify(fullPath);
+        if (requestedId || !includeInstanceLocations[key]) {
+            break;
+        }
+        id = null;
+    } while (true);
+
+    if (includeInstanceLocations[key]) {
+        var first = includeInstanceLocations[key];
+        var errorMessage = "include インスタンス ID '[#" + id + "]' が重複しています";
+        errorMessage += "\n" + first.filePath + ":" + first.lineNum;
+        errorMessage += "\n" + lineObj.filePath + ":" + lineObj.lineNum;
+        throw new ParseError(errorMessage, lineObj);
+    }
+
+    includeInstanceLocations[key] = lineObj;
+    return {
+        id: id,
+        path: fullPath
+    };
+}
+
 // それぞれ行頭、行末に書かれた <!-- と --> のみ対応
 // 入れ子に対応
 // C style コメントについてはごくごく簡易的なもの
@@ -87,7 +165,7 @@ function parseMultilineComment(srcLines) {
 // コメント削除が適用済みのを渡す
 // objs: 定義済みマクロ変数
 // TODO: 最後の3個の引数（include の parse で使うやつ）を整理する
-function preProcessConditionalCompile(lines, defines, currentProjectDirectoryFromRoot, filePathAbs, templateVariables) {
+function preProcessConditionalCompile(lines, defines, currentProjectDirectoryFromRoot, filePathAbs, templateVariables, includeScope, includeInstancePath, parameterBaseScope) {
     var srcLines = new ArrayReader(lines);
     var dstLines = [];
     var objs = defines;
@@ -352,14 +430,17 @@ function preProcessConditionalCompile(lines, defines, currentProjectDirectoryFro
         return lineObj;
     }
     function parseInclude(lineObj) {
-        var includeMatch = lineObj.line.match(/^<<\[\s*(.+)\s*\]\s*(\((.+)?\))?$/);
+        var includeMatch = lineObj.line.match(/^(<<\[\s*(.*?)\s*\])\s*(?:\[#([\w\-]+)\])?\s*(\((.*)?\))?$/);
 
         if (!includeMatch) {
             return null;
         }
 
-        var includeFileString = includeMatch[1];
-        var includeOptionString = includeMatch[3];
+        var includePathText = includeMatch[1];
+        var includeFileString = includeMatch[2];
+        var includeInstanceId = includeMatch[3];
+        var includeOptionText = includeMatch[4];
+        var includeOptionString = includeMatch[5];
 
         try {
             var includeFileInfo = parseIncludeFilePath(includeFileString, currentProjectDirectoryFromRoot, filePathAbs, templateVariables);
@@ -369,18 +450,49 @@ function preProcessConditionalCompile(lines, defines, currentProjectDirectoryFro
         }
 
         try {
-            var includeParam = parseIncludeParameters(includeOptionString, templateVariables);
+            var includeParam = parseIncludeParameters(
+                includeOptionString,
+                templateVariables,
+                includeScope,
+                parameterBaseScope,
+                filePathAbs
+            );
         }
         catch(e) {
             var errorMessage = "include パラメータが不正です。";
+            if (e && e.message) {
+                errorMessage += "\n" + e.message;
+            }
             throw new ParseError(errorMessage, lineObj);
         }
 
-        // include ファイルに渡す用
-        // 上書きする（階層が深い方を優先）
-        var localTemplateVariables = _.assign(templateVariables, includeParam);
+        // 従来の {{=name}} / 入れ子 include 用変数。呼び出し元へ漏らさない。
+        var localTemplateVariables = _.assign({}, templateVariables, includeParam);
 
         localTemplateVariables.$currentProjectDirectory = currentProjectDirectoryFromRoot;
+
+        // 通常の {{name}} プレースホルダーへ渡す呼び出し専用スコープ。
+        // 引数なし include では空のままなので、従来動作へ影響しない。
+        var localIncludeScope = _.assign({}, includeScope || {}, _.cloneDeep(includeParam));
+        var localIncludeInstancePath = (includeInstancePath || []).slice();
+
+        // 明示 ID がある、または引数付きの include だけをインスタンス境界にする。
+        if (includeInstanceId || includeOptionText !== undefined) {
+            var instance = registerParameterizedIncludeInstance(
+                localIncludeInstancePath,
+                includeInstanceId,
+                lineObj
+            );
+            localIncludeInstancePath = instance.path;
+
+            // 引数付き include は、初回成功時に呼び出し元へ安定 ID を書き戻す。
+            if (!includeInstanceId) {
+                addParameterizedIncludeSourceRewrite(
+                    lineObj,
+                    includePathText + " [#" + instance.id + "]" + (includeOptionText || "")
+                );
+            }
+        }
 
         var includeProjectDirectoryFromRoot = includeFileInfo.projectDirectory;
 
@@ -398,7 +510,15 @@ function preProcessConditionalCompile(lines, defines, currentProjectDirectoryFro
             throw new ParseError(errorMessage, lineObj);
         }
 
-        return preProcess_Recurse(path, includeProjectDirectoryFromRoot, defines, localTemplateVariables);
+        return preProcess_Recurse(
+            path,
+            includeProjectDirectoryFromRoot,
+            defines,
+            localTemplateVariables,
+            localIncludeScope,
+            localIncludeInstancePath,
+            parameterBaseScope
+        );
     }
 
     try {
@@ -521,25 +641,53 @@ function parseIncludeFilePath(s, currentProjectPathFromRoot, currentFilePathAbs,
     return result;
 }
 
-// パラメータは文字列のみの想定
-// 文字列以外を渡された場合の動作は不定
-// variables は include 元で定義済みの変数
-function parseIncludeParameters(s, variables) {
+// variables は従来の include 元プリプロセッサ変数。
+// includeScope / parameterBaseScope は通常プレースホルダー用の呼び出しスコープ。
+function parseIncludeParameters(s, variables, includeScope, parameterBaseScope, currentFilePathAbs) {
     if (s === undefined) {
         return {};
     }
 
-    // object を返すには丸括弧が必要らしい
-    var params = eval("({" + s + "})");
+    function loadYaml(path) {
+        if (!_.isString(path) || _.trim(path) === "") {
+            throw new Error("$yaml() には YAML ファイルのパスを指定してください。");
+        }
 
-    // 各パラメータを template 処理
+        var baseDirectory = FileSystem.GetParentFolderName(currentFilePathAbs);
+        var yamlFilePath = FileSystem.BuildPath(baseDirectory, path);
+        if (File.ResolveAndEnsureLocalPath) {
+            yamlFilePath = File.ResolveAndEnsureLocalPath(yamlFilePath, currentFilePathAbs);
+        }
+        if (!FileSystem.FileExists(yamlFilePath)) {
+            throw new Error("YAML ファイルが存在しません: " + path);
+        }
+
+        return CL.withActiveReadFile(yamlFilePath, function() {
+            var data = CL.readYAMLFile(yamlFilePath, currentFilePathAbs);
+            return _.cloneDeep(data == null ? {} : data);
+        });
+    }
+
+    var evalScope = _.assign({}, parameterBaseScope || {}, includeScope || {}, variables || {});
+    var evaluator = new Function(
+        "$yaml",
+        "scope",
+        "with(scope){ return ({" + s + "}); }"
+    );
+    var params = evaluator(loadYaml, evalScope);
+
+    if (!params || typeof params !== "object" || _.isArray(params)) {
+        throw new Error("include パラメータは名前付きオブジェクトで指定してください。");
+    }
+
+    // 従来互換: 直下の文字列値だけ {{=name}} を置換する。
     _.forEach(params, function(value, name) {
-        params[name] = replaceText(value, variables);
-        // TODO: システム変数（$currentProject）の処理
-        // TODO: $currentProject は root から現在の stack top への相対
+        if (_.isString(value)) {
+            params[name] = replaceText(value, variables);
+        }
     });
 
-    return params;
+    return _.cloneDeep(params);
 }
 
 function initPreProcessPathHelpers(rootDirectory) {
@@ -623,7 +771,7 @@ function isPathUnderOrEqual(path, rootDirectory) {
 }
 
 function matchIncludeLine(line) {
-    return line.match(/^<<\[\s*(.+)\s*\]\s*(\((.+)?\))?$/);
+    return line.match(/^<<\[\s*(.*?)\s*\]\s*(?:\[#[\w\-]+\])?\s*(\((.*)?\))?$/);
 }
 
 function matchTitleCommentLine(line) {
@@ -933,14 +1081,17 @@ function createMissingIncludeFilesFromEntry(entryFilePath) {
 }
 
 // filePaths: 含まれるすべてのファイルのパス
-function preProcess_Recurse(filePath, currentProjectDirectoryFromRoot, defines, templateVariables) {
+function preProcess_Recurse(filePath, currentProjectDirectoryFromRoot, defines, templateVariables, includeScope, includeInstancePath, parameterBaseScope) {
     // 上書きする（階層が深い方を優先）
-    templateVariables = _.assign(templateVariables, { $currentProjectDirectory: currentProjectDirectoryFromRoot });
+    templateVariables = _.assign({}, templateVariables, { $currentProjectDirectory: currentProjectDirectoryFromRoot });
+    includeScope = includeScope || {};
+    includeInstancePath = includeInstancePath || [];
 
     var filePathAbs = directoryLocalPathToAbsolutePath(filePath, currentProjectDirectoryFromRoot, sourceDirectoryName);
 
     return CL.withActiveReadFile(filePathAbs, function() {
         var allLines = CL.readTextFile(filePathAbs, filePathAbs);
+        var includeScopeHashSource = _.isEmpty(includeScope) ? null : JSON.stringify(includeScope);
 
         // 空要素も結果に含めたいのでsplitには正規表現を使わないように
         var lineArray = allLines.replace(/\r\n|\r/g, "\n").split("\n");
@@ -958,12 +1109,29 @@ function preProcess_Recurse(filePath, currentProjectDirectoryFromRoot, defines, 
                 filePath: filePath,
                 projectDirectory: currentProjectDirectoryFromRoot
             };
+            if (includeScopeHashSource !== null) {
+                // 呼び出し単位の読み取り専用スコープを全行で共有し、大きな YAML を行ごとに複製しない。
+                lineObj.includeScope = includeScope;
+                lineObj.includeScopeHashSource = includeScopeHashSource;
+            }
+            if (includeInstancePath.length > 0) {
+                lineObj.includeInstancePath = includeInstancePath.slice();
+            }
             lines.push(lineObj);
         });
 
         lines = parseOneLineComment(lines);
         lines = parseMultilineComment(lines);
-        lines = preProcessConditionalCompile(lines, defines, currentProjectDirectoryFromRoot, filePathAbs, templateVariables);
+        lines = preProcessConditionalCompile(
+            lines,
+            defines,
+            currentProjectDirectoryFromRoot,
+            filePathAbs,
+            templateVariables,
+            includeScope,
+            includeInstancePath,
+            parameterBaseScope
+        );
 
         return lines;
     });
@@ -972,8 +1140,9 @@ function preProcess_Recurse(filePath, currentProjectDirectoryFromRoot, defines, 
 // preprocess
 // include とかコメント削除とか
 // 入れ子の include にも対応
-function preProcess(filePathAbs, rootDirectory) {
+function preProcess(filePathAbs, rootDirectory, parameterBaseScope) {
     var defines = {};
+    resetParameterizedIncludeState();
 
     // メインソースファイルのフォルダを現在のプロジェクトフォルダとする
     var entryProject = FileSystem.GetParentFolderName(filePathAbs);
@@ -984,7 +1153,7 @@ function preProcess(filePathAbs, rootDirectory) {
     var templateVariables = { };
 
     try {
-        return preProcess_Recurse(filePath, projectPathFromRoot, defines, templateVariables);
+        return preProcess_Recurse(filePath, projectPathFromRoot, defines, templateVariables, {}, [], parameterBaseScope || {});
     }
     catch (e) {
         if (_.isUndefined(e.lineObj) || _.isUndefined(e.errorMessage)){

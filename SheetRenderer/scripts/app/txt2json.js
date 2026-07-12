@@ -36,6 +36,7 @@ var DROP_KEYS_LIST = [
     "$isEven",
 
     "_initScopeLayer",
+    "_includeScopeLayer",
 
     "marker"    // 削除済みだけど一応
 ];
@@ -568,7 +569,7 @@ $abspath = function (path) {
 var allFilePaths = [];
 
 rootFilePath = filePath;
-var srcLines = preProcess(filePath, conf.$rootDirectory);
+var srcLines = preProcess(filePath, conf.$rootDirectory, globalScope);
 srcLines = new ArrayReader(srcLines);
 
 var stack = new Stack();
@@ -785,6 +786,64 @@ function parseComment(text, lineObj) {
     };
 }
 
+function getIncludeInstancePrefix(lineObj) {
+    if (!lineObj || !lineObj.includeInstancePath || lineObj.includeInstancePath.length === 0) {
+        return "";
+    }
+    return lineObj.includeInstancePath.join("_");
+}
+
+function buildEffectiveNodeId(localId, lineObj) {
+    if (!localId) {
+        return localId;
+    }
+    var prefix = getIncludeInstancePrefix(lineObj);
+    return prefix ? prefix + "_" + localId : localId;
+}
+
+// H1 は通常のプレースホルダー処理より先に名前・重複検証されるため、
+// include 引数を持つ見出しだけここで先行展開する。
+function resolveIncludeHeadingPlaceholders(text, lineObj) {
+    if (!lineObj || !lineObj.includeScope || _.isEmpty(lineObj.includeScope)) {
+        return text;
+    }
+
+    var scope = Object.create(globalScope || {});
+    _.assign(scope, lineObj.includeScope);
+    var expressionPattern = /\{\{\s*([^\}]+)\s*\}\}/g;
+    var current = text;
+
+    for (var depth = 0; depth < 20; depth++) {
+        var changed = false;
+        var next = current.replace(expressionPattern, function(match, expression) {
+            var expr = _.trim(expression);
+            var value;
+            try {
+                if (/^[\w$]+(?:\.[\w$]+|\[\d+\])*$/.test(expr)) {
+                    value = _.get(scope, expr, void 0);
+                } else {
+                    value = new Function("scope", "with(scope){ return (" + expr + "); }")(scope);
+                }
+            } catch (e) {
+                value = void 0;
+            }
+
+            if (_.isUndefined(value)) {
+                throw new ParseError("未定義プレースホルダー: " + expr, lineObj);
+            }
+            changed = true;
+            return value == null ? "" : String(value);
+        });
+
+        if (!changed || next === current) {
+            return next;
+        }
+        current = next;
+    }
+
+    throw new ParseError("シート名のプレースホルダー展開が20回を超えました。", lineObj);
+}
+
 function parseHeading(lineObj) {
     var line = lineObj.line;
     var h = line.match(/^(#+)\s+(.*)$/);
@@ -794,7 +853,7 @@ function parseHeading(lineObj) {
     }
 
     var level = h[1].length;
-    var text = h[2];
+    var text = resolveIncludeHeadingPlaceholders(h[2], lineObj);
 
     while (stack.peek().kind != kindH || stack.peek().level >= level) {
         stack.pop();
@@ -810,7 +869,7 @@ function parseHeading(lineObj) {
             uidMatch = null;
         }
         if (uidMatch) {
-            uid = uidMatch[1];
+            uid = buildEffectiveNodeId(uidMatch[1], lineObj);
             text = uidMatch[2];
 
             var uidListH1 = FindUidList(stack.peek());
@@ -897,6 +956,9 @@ function parseHeading(lineObj) {
         uidList: uidList,
         lineObj: lineObj
     };
+    if (lineObj.includeScope && !_.isEmpty(lineObj.includeScope)) {
+        item._includeScopeLayer = lineObj.includeScope;
+    }
     AddChildNode(stack.peek(), item);
     stack.push(item);
 
@@ -983,7 +1045,7 @@ function parseUnorderedList(lineObj, line) {
     var uidMatch = text.match(/^\[#([\w\-]+)\]\s+(.+)$/);
     var uid = undefined;
     if (uidMatch) {
-        uid = uidMatch[1];
+        uid = buildEffectiveNodeId(uidMatch[1], lineObj);
         text = uidMatch[2];
         {(function() {
             var uidList = FindUidList(stack.peek());
@@ -1174,6 +1236,9 @@ function parseUnorderedList(lineObj, line) {
         // 以下はJSON出力前に削除する
         lineObj: lineObj
     };
+    if (lineObj.includeScope && !_.isEmpty(lineObj.includeScope)) {
+        item._includeScopeLayer = lineObj.includeScope;
+    }
 
     AddChildNode(stack.peek(), item);
     stack.push(item);
@@ -1736,19 +1801,26 @@ _.forEach(noIdNodes, function(infos) {
         var uidList = FindUidList(node.parent);
         var locationKey = buildLocationKey(info.lineObj);
         var uid = uidByLocation[locationKey];
+        var effectiveUid;
 
         if (_.isUndefined(uid)) {
-            // 行単位で未割り当てなら新しい ID を生成
-            uid = createUid(8, uidList || {});
+            // 行単位で未割り当てなら、呼び出し名前空間込みで重複しないローカル ID を生成
+            do {
+                uid = createUid(8, {});
+                effectiveUid = buildEffectiveNodeId(uid, info.lineObj);
+            } while (uidList && effectiveUid in uidList);
             uidByLocation[locationKey] = uid;
+        }
+        else {
+            effectiveUid = buildEffectiveNodeId(uid, info.lineObj);
         }
 
         if (uidList) {
             // このシート内での重複チェック用リストにも登録しておく
-            uidList[uid] = info.lineObj;
+            uidList[effectiveUid] = info.lineObj;
         }
 
-        node.id = uid;
+        node.id = effectiveUid;
 
         // ID 挿入して書き換え
         // "{{foo}}" みたいな文法を作ろうとしたら {} に置換されてしまうので、汎用 format ではなく "{uid}" 専用の replace 処理に
@@ -1809,8 +1881,20 @@ var srcTexts;   // XXX: root.id 用に保存しておく…
         var start = src.indexOf(children[i].lineObj);
         var end = (i + 1 < children.length) ? src.indexOf(children[i + 1].lineObj) : src.length;
         var lines = [];
+        var includeMetadataSeen = {};
         for (var j = start; j < end; j++) {
             lines.push(src[j].line);
+            var includeMetadata = "";
+            if (src[j].includeScopeHashSource) {
+                includeMetadata += "scope=" + src[j].includeScopeHashSource;
+            }
+            if (src[j].includeInstancePath && src[j].includeInstancePath.length > 0) {
+                includeMetadata += "|instance=" + JSON.stringify(src[j].includeInstancePath);
+            }
+            if (includeMetadata && !includeMetadataSeen[includeMetadata]) {
+                includeMetadataSeen[includeMetadata] = true;
+                lines.push("\u0000@include:" + includeMetadata);
+            }
         }
         result[children[i].id] = lines.join("\n");
     }
@@ -2355,17 +2439,17 @@ function getInheritedScopeLayer(node) {
     if (!node) {
         return null;
     }
+    var hasIncludeScope = !!node._includeScopeLayer;
     var hasParams = !!node.params;
     var hasInitLayer = !!node._initScopeLayer;
 
-    if (hasParams && hasInitLayer) {
-        return _.assign({}, node.params, node._initScopeLayer);
-    }
-    if (hasInitLayer) {
-        return node._initScopeLayer;
-    }
-    if (hasParams) {
-        return node.params;
+    if (hasIncludeScope || hasParams || hasInitLayer) {
+        return _.assign(
+            {},
+            hasIncludeScope ? node._includeScopeLayer : {},
+            hasParams ? node.params : {},
+            hasInitLayer ? node._initScopeLayer : {}
+        );
     }
     return null;
 }
@@ -4386,6 +4470,20 @@ function absolutePathToSourceLocalPath_(filePath, projectPathFromRoot) {
 }
 
 (function(){
+
+// パラメーター付き include に自動付与したインスタンス ID も、通常 ID と同じ
+// 原子的なソース書き戻しへ合流させる。
+var includeRewrites = getParameterizedIncludeSourceRewrites();
+_.forEach(includeRewrites, function(includeRewrite, key) {
+    var target = ensureMapEntry(srcTextsToRewrite, key, function() {
+        return {
+            filePath: includeRewrite.filePath,
+            projectDirectory: includeRewrite.projectDirectory,
+            newTexts: {}
+        };
+    });
+    _.assign(target.newTexts, includeRewrite.newTexts);
+});
 
 // ID 付与後のソーステキストを元ファイルへ反映する。
 // 書き込みは C# 側で一時ファイル経由の置換にして、途中失敗時に元ファイルを残す。

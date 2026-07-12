@@ -202,6 +202,46 @@ YAML ブロックの値は、そのシート内から参照できます。
 シート内の YAML を使い、複数シートで共有する必要があるものだけを
 `vars.yml` に置いてください。
 
+## 引数付き include
+
+同じシート構造を別のシート名・データで複数回使用する場合は、include に
+呼び出しごとの引数を渡せます。
+
+```text
+<<[common/log.txt](sheetName: "A", data: $yaml("./data/log-a.yml"))
+<<[common/log.txt](sheetName: "B", data: $yaml("./data/log-b.yml"))
+```
+
+include 先では、通常のプレースホルダーとして参照します。
+
+```text
+# {{sheetName}}
+
+* foo: {{data.foo}}
+* bar: {{data.bar}}
+```
+
+`$yaml("path")` は、include 呼び出しを書いたファイルからの相対パスで YAML を
+読み込みます。読み込んだ値はその include 呼び出しだけに渡され、`vars.yml` や
+別の include 呼び出しへは追加されません。
+
+引数付き include には、初回の正常な解析時にインスタンス ID が自動付与されます。
+
+```text
+<<[common/log.txt] [#aB3xP91q](sheetName: "A", data: $yaml("./data/log-a.yml"))
+```
+
+この ID は、同じテンプレートファイル内の ID を呼び出しごとに分離するために
+使用します。読みやすい固定 ID を最初から記述することもできます。
+
+```text
+<<[common/log.txt] [#operation-log](sheetName: "操作ログ", data: $yaml("./data/operation-log.yml"))
+```
+
+引数もインスタンス ID も持たない従来の `<<[file.txt]` は、これまでどおり単純な
+include として処理されます。YAML ブロックも従来どおり H1 のシート内に記述します。
+H1 より前のルート位置に YAML ブロックを置くことはできません。
+
 ## 名前付きテンプレート
 
 `&name()` でテンプレートを宣言し、`*name(...)` で呼び出します。
