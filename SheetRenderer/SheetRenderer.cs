@@ -10926,7 +10926,7 @@ public class RibbonController : ExcelRibbon
 
         string entryLocalPath = BuildLocalPathInWorkRoot(workRoot, normalizedEntryPath);
         progressReporter?.Invoke("parse を実行しています");
-        bool parseSucceeded = RunParsePipeline(entryLocalPath, false);
+        bool parseSucceeded = RunParsePipeline(entryLocalPath, true);
         if (!parseSucceeded)
         {
             throw new InvalidOperationException("Pull dependency discovery failed during parse.");
