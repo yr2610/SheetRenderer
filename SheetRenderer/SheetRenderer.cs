@@ -2901,6 +2901,13 @@ public class RibbonController : ExcelRibbon
         return GitLabPathResolver.NormalizeGitLabRelativePath(projectId + "/_manifest.json");
     }
 
+    private static bool IsSharedProjectIdMismatch(string expectedProjectId, string actualProjectId)
+    {
+        return !string.IsNullOrWhiteSpace(expectedProjectId) &&
+               !string.IsNullOrWhiteSpace(actualProjectId) &&
+               !string.Equals(expectedProjectId, actualProjectId, StringComparison.Ordinal);
+    }
+
     private static string GetNormalizedShareRefName(GitLabShareInfo shareInfo)
     {
         if (shareInfo == null || string.IsNullOrWhiteSpace(shareInfo.RefName))
@@ -3040,7 +3047,10 @@ public class RibbonController : ExcelRibbon
         }
 
         SharedProjectManifest manifest = ParseSharedProjectManifest(Encoding.UTF8.GetString(manifestBytes));
-        if (manifest == null || manifest.Sheets == null || manifest.Sheets.Count == 0)
+        if (manifest == null ||
+            IsSharedProjectIdMismatch(projectId, manifest.Project) ||
+            manifest.Sheets == null ||
+            manifest.Sheets.Count == 0)
         {
             return false;
         }
@@ -4365,6 +4375,19 @@ public class RibbonController : ExcelRibbon
         progressReporter?.Invoke("共有マニフェスト取得サイズ: " + manifestBytes.Length + " bytes");
         SharedProjectManifest manifest = ParseSharedProjectManifest(Encoding.UTF8.GetString(manifestBytes));
 
+        if (manifest != null && IsSharedProjectIdMismatch(projectId, manifest.Project))
+        {
+            FileLogger.Warn(
+                "[SharedReceiveProjectMismatch] manifest project=" + (manifest.Project ?? "") +
+                " workbookProject=" + projectId +
+                " path=" + manifestPath +
+                " ref=" + refName +
+                " shareRepo=" + shareInfo.ProjectId);
+            progressReporter?.Invoke(
+                "共有マニフェストの Project ID がブックと異なるため、共有値を取得しませんでした");
+            return result;
+        }
+
         if (manifest == null || manifest.Sheets == null || manifest.Sheets.Count == 0)
         {
             FileLogger.Info("[SharedReceive] shared manifest not found or empty. project=" + projectId + " path=" + manifestPath + " ref=" + refName + " shareRepo=" + shareInfo.ProjectId);
@@ -4401,6 +4424,7 @@ public class RibbonController : ExcelRibbon
         int skippedLatestCount = 0;
         int missingLocalSheetCount = 0;
         int missingSharedDocumentCount = 0;
+        int projectMismatchSharedDocumentCount = 0;
         int fallbackMatchedCount = 0;
         int conflictAppliedCount = 0;
         var pendingReceives = new List<PendingSharedSheetReceive>();
@@ -4460,6 +4484,18 @@ public class RibbonController : ExcelRibbon
             {
                 missingSharedDocumentCount++;
                 progressReporter?.Invoke("共有JSONが見つかりません: " + entry.SheetId);
+                continue;
+            }
+
+            if (IsSharedProjectIdMismatch(projectId, sharedSheetDocument.Project))
+            {
+                projectMismatchSharedDocumentCount++;
+                FileLogger.Warn(
+                    "[SharedReceiveProjectMismatch] sheetId=" + entry.SheetId +
+                    " documentProject=" + (sharedSheetDocument.Project ?? "") +
+                    " workbookProject=" + projectId);
+                progressReporter?.Invoke(
+                    "共有JSONの Project ID がブックと異なるため取得しませんでした: " + sheet.Name);
                 continue;
             }
 
@@ -4611,6 +4647,7 @@ public class RibbonController : ExcelRibbon
                 + ", upToDate=" + skippedLatestCount
                 + ", localMissing=" + missingLocalSheetCount
                 + ", jsonMissing=" + missingSharedDocumentCount
+                + ", projectMismatch=" + projectMismatchSharedDocumentCount
                 + ", fallbackMatched=" + fallbackMatchedCount
                 + ")");
         }
@@ -6509,7 +6546,7 @@ public class RibbonController : ExcelRibbon
         return variablesNode.ComputeSha256();
     }
 
-    async Task UpdateAllSheets(
+    async Task<bool> UpdateAllSheets(
         Excel.Workbook workbook,
         string txtFilePathOverride = null,
         string jsonFilePathOverride = null,
@@ -6523,7 +6560,7 @@ public class RibbonController : ExcelRibbon
         {
             string projectName = Assembly.GetExecutingAssembly().GetName().Name;
             MessageBox.Show($"{projectName} で生成されたブックではありません。");
-            return;
+            return false;
         }
 
         string projectId = workbookInfo.ProjectId;
@@ -6551,13 +6588,13 @@ public class RibbonController : ExcelRibbon
 
                 if (fileSelectionResult != DialogResult.OK)
                 {
-                    return;
+                    return false;
                 }
 
                 txtFilePath = OpenSourceFile();
                 if (txtFilePath == null)
                 {
-                    return;
+                    return false;
                 }
             }
             else
@@ -6575,7 +6612,7 @@ public class RibbonController : ExcelRibbon
         if (confData["project"] != projectId)
         {
             MessageBox.Show($"Project ID({projectId})が異なります。");
-            return;
+            return false;
         }
 
         string newConfHash = ComputeConfHash(jsonObject);
@@ -6588,12 +6625,12 @@ public class RibbonController : ExcelRibbon
         if (indexSheetName == null)
         {
             MessageBox.Show($"カスタムプロパティに {indexSheetNameCustomPropertyName} が設定されていません。");
-            return;
+            return false;
         }
         if (templateSheetName == null)
         {
             MessageBox.Show($"カスタムプロパティに {templateSheetNameCustomPropertyName} が設定されていません。");
-            return;
+            return false;
         }
 
         // await の前にWindowsFormsSynchronizationContextを設定
@@ -6618,12 +6655,12 @@ public class RibbonController : ExcelRibbon
         {
             if (!ConfirmRegenerateForSingleSheetExpansion(newSheetCount, workbook.Saved == false))
             {
-                return;
+                return false;
             }
 
             FileLogger.Info($"Auto-switch to regeneration: 1 -> {newSheetCount}");
             await RegenerateWorkbook(workbook, workbookInfo, txtFilePath, jsonFilePath);
-            return;
+            return false;
         }
 
         // ファイルが変更されて保存されてない場合
@@ -6642,7 +6679,7 @@ public class RibbonController : ExcelRibbon
                     break;
                 case DialogResult.Cancel:
                     // キャンセルされた場合、処理を中止
-                    return;
+                    return false;
             }
         }
 
@@ -6941,6 +6978,8 @@ public class RibbonController : ExcelRibbon
             progressBarForm = null;
             RestoreExcelAppAfterRender(excelApp);
         }
+
+        return true;
     }
 
     static bool IsSameNameWorkbookOpen(string fileName)
@@ -10265,11 +10304,17 @@ public class RibbonController : ExcelRibbon
                     shareInfo == null
                         ? null
                         : CollectSharedSheetDocumentsById(activeWorkbook);
-                await UpdateAllSheets(
+                bool workbookUpdated = await UpdateAllSheets(
                     activeWorkbook,
                     pullResult.EntryLocalPath,
                     pullResult.JsonFilePath,
                     skipSaveConfirmation: true);
+                if (!workbookUpdated)
+                {
+                    progressForm.AppendLine("Excel 更新を中止したため、共有値の取得をスキップしました");
+                    return;
+                }
+
                 if (shareInfo != null)
                 {
                     progressForm.AppendLine("共有値を反映しています");
