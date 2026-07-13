@@ -17,7 +17,11 @@
     <Deterministic>true</Deterministic>
     <NuGetPackageImportStamp>
     </NuGetPackageImportStamp>
-    <SheetRendererDistDir Condition="'$(SheetRendererDistDir)' == ''">$(MSBuildProjectDirectory)\..\dist\</SheetRendererDistDir>
+    <SheetRendererDistRootDir Condition="'$(SheetRendererDistRootDir)' == ''">$(MSBuildProjectDirectory)\..\dist\</SheetRendererDistRootDir>
+    <SheetRendererDistDir Condition="'$(SheetRendererDistDir)' == ''">$(SheetRendererDistRootDir)SheetRenderer\</SheetRendererDistDir>
+    <SheetRendererDistZipPath Condition="'$(SheetRendererDistZipPath)' == ''">$(SheetRendererDistRootDir)SheetRenderer.zip</SheetRendererDistZipPath>
+    <SheetRendererZipStageDir Condition="'$(SheetRendererZipStageDir)' == ''">$(MSBuildProjectDirectory)\obj\$(Configuration)\SheetRendererDistZip\</SheetRendererZipStageDir>
+    <SheetRendererZipStagePayloadDir Condition="'$(SheetRendererZipStagePayloadDir)' == ''">$(SheetRendererZipStageDir)SheetRenderer\</SheetRendererZipStagePayloadDir>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
     <DebugSymbols>true</DebugSymbols>
@@ -212,12 +216,21 @@
   <Import Project="..\packages\System.ValueTuple.4.6.2\build\net471\System.ValueTuple.targets" Condition="Exists('..\packages\System.ValueTuple.4.6.2\build\net471\System.ValueTuple.targets')" />
   <Import Project="..\packages\ExcelDna.AddIn.1.10.0-preview4\build\ExcelDna.AddIn.targets" Condition="Exists('..\packages\ExcelDna.AddIn.1.10.0-preview4\build\ExcelDna.AddIn.targets')" />
   <Target Name="CreateDistributionFolder" AfterTargets="Build" Condition="'$(Configuration)' == 'Release'">
-    <RemoveDir Directories="$(SheetRendererDistDir)" Condition="Exists('$(SheetRendererDistDir)')" />
-    <MakeDir Directories="$(SheetRendererDistDir)" />
+    <RemoveDir Directories="$(SheetRendererDistRootDir)" Condition="Exists('$(SheetRendererDistRootDir)')" />
+    <RemoveDir Directories="$(SheetRendererZipStageDir)" Condition="Exists('$(SheetRendererZipStageDir)')" />
+    <MakeDir Directories="$(SheetRendererDistDir);$(SheetRendererZipStagePayloadDir)" />
     <ItemGroup>
-      <SheetRendererDistFiles Include="$(OutDir)**\*" Exclude="$(OutDir)**\*.xml;$(OutDir)**\*.pdb;$(OutDir)**\*64*;$(OutDir)**\*.dna;$(OutDir)**\*-AddIn.xll;$(OutDir)**\*-AddIn.xll.config" />
+      <SheetRendererDistFiles Include="$(OutDir)**\*" Exclude="$(OutDir)**\*.xml;$(OutDir)**\*.pdb;$(OutDir)**\*64*;$(OutDir)**\*.dna;$(OutDir)**\*-AddIn*.xll;$(OutDir)**\*-AddIn*.xll.config" />
     </ItemGroup>
     <Copy SourceFiles="@(SheetRendererDistFiles)" DestinationFiles="@(SheetRendererDistFiles->'$(SheetRendererDistDir)%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="false" />
+    <Copy SourceFiles="@(SheetRendererDistFiles)" DestinationFiles="@(SheetRendererDistFiles->'$(SheetRendererZipStagePayloadDir)%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="false" />
+    <Copy SourceFiles="$(OutDir)SheetRenderer-AddIn-packed.xll" DestinationFiles="$(SheetRendererDistDir)SheetRenderer-AddIn.xll" />
+    <Copy SourceFiles="$(OutDir)SheetRenderer-AddIn-packed.xll.config" DestinationFiles="$(SheetRendererDistDir)SheetRenderer-AddIn.xll.config" />
+    <Copy SourceFiles="$(OutDir)SheetRenderer-AddIn-packed.xll" DestinationFiles="$(SheetRendererZipStagePayloadDir)SheetRenderer-AddIn.xll" />
+    <Copy SourceFiles="$(OutDir)SheetRenderer-AddIn-packed.xll.config" DestinationFiles="$(SheetRendererZipStagePayloadDir)SheetRenderer-AddIn.xll.config" />
+    <ZipDirectory SourceDirectory="$(SheetRendererZipStageDir)" DestinationFile="$(SheetRendererDistZipPath)" Overwrite="true" />
+    <RemoveDir Directories="$(SheetRendererZipStageDir)" />
     <Message Text="SheetRenderer distribution folder: $(SheetRendererDistDir)" Importance="High" />
+    <Message Text="SheetRenderer distribution zip: $(SheetRendererDistZipPath)" Importance="High" />
   </Target>
 </Project>
