@@ -10929,7 +10929,7 @@ public class RibbonController : ExcelRibbon
         bool parseSucceeded = RunParsePipeline(entryLocalPath, true);
         if (!parseSucceeded)
         {
-            throw new InvalidOperationException("Pull dependency discovery failed during parse.");
+            throw new InvalidOperationException("最新版取得の parse または後処理に失敗しました。");
         }
 
         progressReporter?.Invoke("画像依存を確認しています");
