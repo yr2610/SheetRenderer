@@ -12005,6 +12005,7 @@ public class AddIn : IExcelAddIn
         JsHost.LoadModule(@"app\utilities.js");
         JsHost.LoadModule(@"app\constants.js");
         JsHost.LoadModule(@"app\CLCommon.js");
+        JsHost.LoadModule(@"app\varsinclude.js");
         JsHost.LoadModule(@"app\preprocess.js");
         JsHost.LoadModule(@"app\readconf.js");
         try

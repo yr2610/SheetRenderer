@@ -485,30 +485,36 @@ function readVarsFile(varsFileName) {
                 return;
             }
 
-            if (_.isUndefined(target.$include)) {
-                return;
+            var includeFiles = target.$include;
+            if (!_.isUndefined(includeFiles)) {
+                delete target.$include;
+
+                var baseDirectory = FileSystem.GetParentFolderName(baseFile);
+                _.forEach(includeFiles, function(value) {
+                    var includeSpec = VarsInclude.parseEntry(value);
+                    var includePath = includeSpec.path;
+                    var includeFilePath;
+                    if (includePath.charAt(0) === "/") {
+                        var rootDirectory = conf && conf.$rootDirectory;
+                        if (!rootDirectory) {
+                            rootDirectory = baseDirectory;
+                        }
+                        includeFilePath = FileSystem.BuildPath(rootDirectory, includePath.slice(1));
+                    } else {
+                        includeFilePath = FileSystem.BuildPath(baseDirectory, includePath);
+                    }
+
+                    var includeData = CL.readYAMLFile(includeFilePath, includeFilePath) || {};
+                    processIncludeFiles(includeData, includeFilePath);
+                    if (includeSpec.merge === "deep") {
+                        VarsInclude.applyDeepDefaults(target, includeData);
+                    } else {
+                        _.defaults(target, includeData);
+                    }
+                });
             }
 
-            var includeFiles = target.$include;
-            delete target.$include;
-
-            var baseDirectory = FileSystem.GetParentFolderName(baseFile);
-            _.forEach(includeFiles, function(value) {
-                var includeFilePath;
-                if (typeof value === "string" && value.charAt(0) === "/") {
-                    var rootDirectory = conf && conf.$rootDirectory;
-                    if (!rootDirectory) {
-                        rootDirectory = baseDirectory;
-                    }
-                    includeFilePath = FileSystem.BuildPath(rootDirectory, value.slice(1));
-                } else {
-                    includeFilePath = FileSystem.BuildPath(baseDirectory, value);
-                }
-
-                var includeData = CL.readYAMLFile(includeFilePath, includeFilePath) || {};
-                processIncludeFiles(includeData, includeFilePath);
-                _.defaults(target, includeData);
-            });
+            VarsInclude.stripReplaceDirectives(target);
         });
     }
 

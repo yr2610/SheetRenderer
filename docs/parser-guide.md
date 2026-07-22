@@ -202,6 +202,84 @@ YAML ブロックの値は、そのシート内から参照できます。
 シート内の YAML を使い、複数シートで共有する必要があるものだけを
 `vars.yml` に置いてください。
 
+#### `vars.yml` の include
+
+`vars.yml` の `$include` で、別の YAML ファイルから共通値を取り込めます。
+現在のファイルにある値が優先され、存在しない値だけが include 先から補われます。
+
+従来のパス文字列による指定は、トップレベルのプロパティだけを補う浅いマージです。
+
+```yaml
+$include:
+  - common-vars.yml
+```
+
+名前空間の中にある一部の値だけを変更したい場合は、`path` と `merge: deep` を
+指定します。
+
+`common-vars.yml`:
+
+```yaml
+FOO:
+  foo: hoge
+  bar: piyo
+  nested:
+    a: 1
+    b: 2
+```
+
+`vars.yml`:
+
+```yaml
+$include:
+  - path: common-vars.yml
+    merge: deep
+
+FOO:
+  foo: fuga
+  nested:
+    b: 20
+```
+
+この場合、実際に使用される値は次の内容になります。
+
+```yaml
+FOO:
+  foo: fuga
+  bar: piyo
+  nested:
+    a: 1
+    b: 20
+```
+
+deepマージでは、両方の値がオブジェクトの場合だけプロパティを再帰的に補います。
+配列とスカラー値は分割せず、現在のファイルに値があればその値を丸ごと使用します。
+`false`、`0`、空文字列、`null` も明示された値として扱われ、include 先の値では
+置き換えられません。型が異なる場合も現在のファイルの値が優先されます。
+
+複数のファイルをincludeした場合の優先順位は、現在のファイル、先に書いたinclude、
+後に書いたincludeの順です。include 先のファイルにある `$include` も同じ規則で
+処理されます。
+
+deepマージを使用しながら、特定のオブジェクトだけを丸ごと置き換えたい場合は
+`$replace: true` を指定します。`$replace` はマージ後の変数には残りません。
+
+```yaml
+$include:
+  - path: common-vars.yml
+    merge: deep
+
+FOO:
+  $replace: true
+  foo: fuga
+```
+
+この例の `FOO` は `{ foo: fuga }` となり、`bar` や `nested` は取り込まれません。
+`FOO: { $replace: true }` と記述すると空のオブジェクトに置き換えられます。
+
+includeパスはincludeを記述したファイルからの相対パスです。先頭を `/` にすると、
+プロジェクトのルートディレクトリからのパスとして解決されます。
+
 ## 引数付き include
 
 同じシート構造を別のシート名・データで複数回使用する場合は、include に
