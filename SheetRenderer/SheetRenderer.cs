@@ -418,7 +418,6 @@ public class RibbonController : ExcelRibbon
     private bool syncCommandInProgress;
     private static readonly List<Form> openMissingImageFileDialogs = new List<Form>();
     private static PullSessionContext currentPullSession;
-    private static PullSessionContext lastSuccessfulPullSession;
     [ThreadStatic]
     private static string currentGitLabBaseFileRelativePath;
     [ThreadStatic]
@@ -673,11 +672,6 @@ public class RibbonController : ExcelRibbon
                         </splitButton>
                         <button id='button3' label='シート更新' screentip='表示中のシートのみ更新します' size='large' imageMso='TableSharePointListsRefreshList' onAction='OnUpdateCurrentSheetButtonPressed' getEnabled='GetUpdateCurrentSheetButtonEnabled'/>
                         <button id='buttonCreateMissingIncludes' label='下書き作成' screentip='コメント付き include から未作成ファイルを作成します' size='large' imageMso='FileNew' onAction='OnCreateMissingIncludeFilesButtonPressed' getEnabled='GetRenderCommandEnabled'/>
-                        </group>
-                        <group id='groupDebug' label='DevTools'>
-                        <button id='buttonDebugParse' label='Parse' screentip='Parseのみ（開発用）' imageMso='ControlToolboxOutlook' onAction='OnDebugParseButtonPressed'/>
-                        <button id='buttonDebugNestedLazyRead' label='NestedRead' screentip='lazy-read の入れ子相対解決確認（開発用）' imageMso='ControlToolboxOutlook' onAction='OnDebugValidateNestedLazyReadButtonPressed'/>
-                        <button id='buttonDebugRender' label='Render' screentip='Renderのみ（開発用）' imageMso='ControlToolboxOutlook' onAction='OnRenderOnlyDebugButtonPressed'/>
                         </group>
                     </tab>
                     <tab id='tabSync' label='シート同期'>
@@ -9690,140 +9684,6 @@ public class RibbonController : ExcelRibbon
         return ToGitLabRelativePath(normalizedWorkRoot, fullTxtPath);
     }
 
-    public void OnDebugParseButtonPressed(IRibbonControl control)
-    {
-        Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
-        string txtPath2 = OpenSourceFile();
-        if (txtPath2 == null)
-        {
-            return;
-        }
-        FileLogger.InitializeForInput(txtPath2, timestamped: false);
-        RunParsePipeline(txtPath2, false);
-    }
-
-    public void OnDebugValidateNestedLazyReadButtonPressed(IRibbonControl control)
-    {
-        Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
-        PullSessionContext debugSession = lastSuccessfulPullSession;
-        if (debugSession == null ||
-            string.IsNullOrEmpty(debugSession.WorkRoot) ||
-            string.IsNullOrEmpty(debugSession.EntryGitLabRelativePath))
-        {
-            MessageBox.Show("先に最新版取得を実行してください。", "NestedRead");
-            return;
-        }
-
-        string entryGitLabRelativePath = debugSession.EntryGitLabRelativePath;
-        string entryLocalPath = BuildLocalPathInWorkRoot(debugSession.WorkRoot, entryGitLabRelativePath);
-
-        FileLogger.InitializeForSession(debugSession.WorkRoot, "nested-lazy-read", timestamped: false);
-        AddFileReadTrace("[validate-setup] entry=" + entryGitLabRelativePath);
-
-        try
-        {
-            currentGitLabBaseFileRelativePath = ResolveInitialGitLabBaseFileRelativePath(entryLocalPath);
-            JsHost.SetFilePathResolveHook((requestedPath, baseFilePath) => ResolveAndEnsureLocalFilePathForJs(requestedPath, baseFilePath));
-            JsHost.SetFileReadTraceHook(message => AddFileReadTrace(message));
-
-            JsHost.Call(
-                "debugValidateNestedLazyReadChain",
-                entryLocalPath,
-                "../common/a.txt",
-                "./b.txt");
-
-            MessageBox.Show("Nested lazy-read validation completed. ログを確認してください。", "NestedRead");
-        }
-        catch (Exception ex)
-        {
-            FileLogger.Error(ex.ToString());
-            MessageBox.Show(ex.ToString(), "NestedRead failed");
-        }
-        finally
-        {
-            JsHost.ClearFileReadTraceHook();
-            JsHost.ClearFilePathResolveHook();
-            currentGitLabBaseFileRelativePath = null;
-        }
-    }
-
-    static string SelectInputFileForRenderOnly()
-    {
-        using (OpenFileDialog openFileDialog = new OpenFileDialog())
-        {
-            openFileDialog.Filter = "JSON ファイル (*.json)|*.json";
-            openFileDialog.Title = "レンダーに使用するファイルを選択してください";
-
-            return (openFileDialog.ShowDialog() == DialogResult.OK)
-                ? openFileDialog.FileName
-                : null;
-        }
-    }
-
-    public async void OnRenderOnlyDebugButtonPressed(IRibbonControl control)
-    {
-        Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
-        string selectedPath = SelectInputFileForRenderOnly();
-        if (selectedPath == null)
-        {
-            return;
-        }
-
-        string txtFilePath = selectedPath;
-        string jsonFilePath = selectedPath;
-
-        if (string.Equals(Path.GetExtension(selectedPath), ".json", StringComparison.OrdinalIgnoreCase))
-        {
-            txtFilePath = NormalizeSourceFilePath(selectedPath);
-        }
-        else
-        {
-            jsonFilePath = TxtToJsonPath(txtFilePath);
-        }
-
-        var sheet = excelApp.ActiveSheet as Excel.Worksheet;
-        bool isNewWorkbook = sheet == null;
-        Excel.Workbook workbook = isNewWorkbook ? null : sheet.Parent as Excel.Workbook;
-
-        if (!isNewWorkbook)
-        {
-            WorkbookInfo workbookInfo = WorkbookInfo.CreateFromWorkbook(workbook);
-            if (workbookInfo == null)
-            {
-                string projectName = Assembly.GetExecutingAssembly().GetName().Name;
-                MessageBox.Show($"{projectName} で生成されたブックではありません。");
-                return;
-            }
-        }
-
-        try
-        {
-            excelApp.StatusBar = "Rendering...";
-            FileLogger.InitializeForInput(txtFilePath, timestamped: false);
-
-            Stopwatch renderStopwatch = Stopwatch.StartNew();
-            FileLogger.Info("Render started.");
-
-            if (isNewWorkbook)
-            {
-                await CreateNewWorkbook(txtFilePath, jsonFilePath);
-            }
-            else
-            {
-                await UpdateAllSheets(workbook, txtFilePath, jsonFilePath);
-            }
-
-            renderStopwatch.Stop();
-            FileLogger.Info($"Render finished ({renderStopwatch.ElapsedMilliseconds} ms).");
-        }
-        finally
-        {
-            excelApp.StatusBar = false;
-        }
-        return;
-
-    }
-
     private static bool HasPullSourceSettings(GitLabLastInput input)
     {
         return input != null &&
@@ -10366,7 +10226,6 @@ public class RibbonController : ExcelRibbon
 
             SavePullStateToWorkbook(activeWorkbook, input, pullResult.RefCommitId, shareInfo);
             // MessageBox.Show(currentPullSession.SessionLog.BuildSummaryText(30), "Pull Result");
-            lastSuccessfulPullSession = currentPullSession;
         }
         catch (Exception ex)
         {
@@ -10469,7 +10328,6 @@ public class RibbonController : ExcelRibbon
             FileLogger.Info("[PullManifest] written: " + manifestPath);
 
             // MessageBox.Show(currentPullSession.SessionLog.BuildSummaryText(30), "Pull Result");
-            lastSuccessfulPullSession = currentPullSession;
         }
         catch (Exception ex)
         {

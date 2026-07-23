@@ -106,31 +106,6 @@ CL.withActiveReadFile = function (filePath, action) {
   }
 };
 
-// lazy-read の入れ子解決確認用の一時フック
-CL.debugValidateNestedLazyReadChain = function (entryBaseFilePath, firstRequestedPath, secondRequestedPath) {
-  if (File.TraceFileRead) {
-    File.TraceFileRead("[validate-start] entryBase=" + String(entryBaseFilePath));
-  }
-
-  CL.readTextFile(firstRequestedPath, entryBaseFilePath);
-  var nestedBaseFilePath = CL.lastResolvedReadLocalPath;
-
-  if (File.TraceFileRead) {
-    File.TraceFileRead("[validate-nested-base] base=" + String(nestedBaseFilePath));
-  }
-
-  CL.readTextFile(secondRequestedPath, nestedBaseFilePath);
-  CL.readTextFile(secondRequestedPath, nestedBaseFilePath);
-
-  if (File.TraceFileRead) {
-    File.TraceFileRead("[validate-done] secondRequested=" + String(secondRequestedPath));
-  }
-};
-
-function debugValidateNestedLazyReadChain(entryBaseFilePath, firstRequestedPath, secondRequestedPath) {
-  CL.debugValidateNestedLazyReadChain(entryBaseFilePath, firstRequestedPath, secondRequestedPath);
-}
-
 // 圧縮されてれば展開
 CL.decompressJSON = function (json) {
   var o = JSON.parse(json);
