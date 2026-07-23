@@ -19,9 +19,14 @@
     </NuGetPackageImportStamp>
     <SheetRendererDistRootDir Condition="'$(SheetRendererDistRootDir)' == ''">$(MSBuildProjectDirectory)\..\dist\</SheetRendererDistRootDir>
     <SheetRendererDistDir Condition="'$(SheetRendererDistDir)' == ''">$(SheetRendererDistRootDir)SheetRenderer\</SheetRendererDistDir>
+    <SheetSyncDistDir Condition="'$(SheetSyncDistDir)' == ''">$(SheetRendererDistRootDir)SheetSync\</SheetSyncDistDir>
     <SheetRendererDistZipPath Condition="'$(SheetRendererDistZipPath)' == ''">$(SheetRendererDistRootDir)SheetRenderer.zip</SheetRendererDistZipPath>
-    <SheetRendererZipStageDir Condition="'$(SheetRendererZipStageDir)' == ''">$(MSBuildProjectDirectory)\obj\$(Configuration)\SheetRendererDistZip\</SheetRendererZipStageDir>
+    <SheetSyncDistZipPath Condition="'$(SheetSyncDistZipPath)' == ''">$(SheetRendererDistRootDir)SheetSync.zip</SheetSyncDistZipPath>
+    <SheetRendererZipStageRootDir Condition="'$(SheetRendererZipStageRootDir)' == ''">$(MSBuildProjectDirectory)\obj\$(Configuration)\SheetRendererDistZip\</SheetRendererZipStageRootDir>
+    <SheetRendererZipStageDir Condition="'$(SheetRendererZipStageDir)' == ''">$(SheetRendererZipStageRootDir)SheetRenderer\</SheetRendererZipStageDir>
+    <SheetSyncZipStageDir Condition="'$(SheetSyncZipStageDir)' == ''">$(SheetRendererZipStageRootDir)SheetSync\</SheetSyncZipStageDir>
     <SheetRendererZipStagePayloadDir Condition="'$(SheetRendererZipStagePayloadDir)' == ''">$(SheetRendererZipStageDir)SheetRenderer\</SheetRendererZipStagePayloadDir>
+    <SheetSyncZipStagePayloadDir Condition="'$(SheetSyncZipStagePayloadDir)' == ''">$(SheetSyncZipStageDir)SheetSync\</SheetSyncZipStagePayloadDir>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
     <DebugSymbols>true</DebugSymbols>
@@ -140,6 +145,7 @@
     </Reference>
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="AddInProfile.cs" />
     <Compile Include="AuthorizationHelper.cs" />
     <Compile Include="ExcelExtensions.cs" />
     <Compile Include="ExcelSelectionHelper.cs" />
@@ -187,6 +193,10 @@
     <Compile Include="YamlBridge.cs" />
   </ItemGroup>
   <ItemGroup>
+    <Content Include="addon-profile.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <None Include="DistributionProfiles\SheetSync.addon-profile.json" />
     <None Include="app.config" />
     <None Include="Properties\ExcelDna.Build.props" />
     <None Include="SheetRenderer-AddIn.dna" />
@@ -217,20 +227,33 @@
   <Import Project="..\packages\ExcelDna.AddIn.1.10.0-preview4\build\ExcelDna.AddIn.targets" Condition="Exists('..\packages\ExcelDna.AddIn.1.10.0-preview4\build\ExcelDna.AddIn.targets')" />
   <Target Name="CreateDistributionFolder" AfterTargets="Build" Condition="'$(Configuration)' == 'Release'">
     <RemoveDir Directories="$(SheetRendererDistRootDir)" Condition="Exists('$(SheetRendererDistRootDir)')" />
-    <RemoveDir Directories="$(SheetRendererZipStageDir)" Condition="Exists('$(SheetRendererZipStageDir)')" />
-    <MakeDir Directories="$(SheetRendererDistDir);$(SheetRendererZipStagePayloadDir)" />
+    <RemoveDir Directories="$(SheetRendererZipStageRootDir)" Condition="Exists('$(SheetRendererZipStageRootDir)')" />
+    <MakeDir Directories="$(SheetRendererDistDir);$(SheetSyncDistDir);$(SheetRendererZipStagePayloadDir);$(SheetSyncZipStagePayloadDir)" />
     <ItemGroup>
-      <SheetRendererDistFiles Include="$(OutDir)**\*" Exclude="$(OutDir)**\*.xml;$(OutDir)**\*.pdb;$(OutDir)**\*64*;$(OutDir)**\*.dna;$(OutDir)**\*-AddIn*.xll;$(OutDir)**\*-AddIn*.xll.config" />
+      <SheetRendererDistFiles Include="$(OutDir)**\*" Exclude="$(OutDir)**\*.xml;$(OutDir)**\*.pdb;$(OutDir)**\*64*;$(OutDir)**\*.dna;$(OutDir)**\*-AddIn*.xll;$(OutDir)**\*-AddIn*.xll.config;$(OutDir)addon-profile.json" />
     </ItemGroup>
     <Copy SourceFiles="@(SheetRendererDistFiles)" DestinationFiles="@(SheetRendererDistFiles->'$(SheetRendererDistDir)%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="false" />
+    <Copy SourceFiles="@(SheetRendererDistFiles)" DestinationFiles="@(SheetRendererDistFiles->'$(SheetSyncDistDir)%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="false" />
     <Copy SourceFiles="@(SheetRendererDistFiles)" DestinationFiles="@(SheetRendererDistFiles->'$(SheetRendererZipStagePayloadDir)%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="false" />
+    <Copy SourceFiles="@(SheetRendererDistFiles)" DestinationFiles="@(SheetRendererDistFiles->'$(SheetSyncZipStagePayloadDir)%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="false" />
     <Copy SourceFiles="$(OutDir)SheetRenderer-AddIn-packed.xll" DestinationFiles="$(SheetRendererDistDir)SheetRenderer-AddIn.xll" />
     <Copy SourceFiles="$(OutDir)SheetRenderer-AddIn-packed.xll.config" DestinationFiles="$(SheetRendererDistDir)SheetRenderer-AddIn.xll.config" />
+    <Copy SourceFiles="$(OutDir)SheetRenderer-AddIn-packed.xll" DestinationFiles="$(SheetSyncDistDir)SheetSync-AddIn.xll" />
+    <Copy SourceFiles="$(OutDir)SheetRenderer-AddIn-packed.xll.config" DestinationFiles="$(SheetSyncDistDir)SheetSync-AddIn.xll.config" />
     <Copy SourceFiles="$(OutDir)SheetRenderer-AddIn-packed.xll" DestinationFiles="$(SheetRendererZipStagePayloadDir)SheetRenderer-AddIn.xll" />
     <Copy SourceFiles="$(OutDir)SheetRenderer-AddIn-packed.xll.config" DestinationFiles="$(SheetRendererZipStagePayloadDir)SheetRenderer-AddIn.xll.config" />
+    <Copy SourceFiles="$(OutDir)SheetRenderer-AddIn-packed.xll" DestinationFiles="$(SheetSyncZipStagePayloadDir)SheetSync-AddIn.xll" />
+    <Copy SourceFiles="$(OutDir)SheetRenderer-AddIn-packed.xll.config" DestinationFiles="$(SheetSyncZipStagePayloadDir)SheetSync-AddIn.xll.config" />
+    <Copy SourceFiles="$(MSBuildProjectDirectory)\addon-profile.json" DestinationFiles="$(SheetRendererDistDir)addon-profile.json" />
+    <Copy SourceFiles="$(MSBuildProjectDirectory)\addon-profile.json" DestinationFiles="$(SheetRendererZipStagePayloadDir)addon-profile.json" />
+    <Copy SourceFiles="$(MSBuildProjectDirectory)\DistributionProfiles\SheetSync.addon-profile.json" DestinationFiles="$(SheetSyncDistDir)addon-profile.json" />
+    <Copy SourceFiles="$(MSBuildProjectDirectory)\DistributionProfiles\SheetSync.addon-profile.json" DestinationFiles="$(SheetSyncZipStagePayloadDir)addon-profile.json" />
     <ZipDirectory SourceDirectory="$(SheetRendererZipStageDir)" DestinationFile="$(SheetRendererDistZipPath)" Overwrite="true" />
-    <RemoveDir Directories="$(SheetRendererZipStageDir)" />
+    <ZipDirectory SourceDirectory="$(SheetSyncZipStageDir)" DestinationFile="$(SheetSyncDistZipPath)" Overwrite="true" />
+    <RemoveDir Directories="$(SheetRendererZipStageRootDir)" />
     <Message Text="SheetRenderer distribution folder: $(SheetRendererDistDir)" Importance="High" />
     <Message Text="SheetRenderer distribution zip: $(SheetRendererDistZipPath)" Importance="High" />
+    <Message Text="SheetSync distribution folder: $(SheetSyncDistDir)" Importance="High" />
+    <Message Text="SheetSync distribution zip: $(SheetSyncDistZipPath)" Importance="High" />
   </Target>
 </Project>

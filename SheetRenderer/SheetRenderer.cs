@@ -634,6 +634,11 @@ public class RibbonController : ExcelRibbon
 
     public static void RegisterUpdateCurrentSheetShortcut()
     {
+        if (!AddInProfile.CanUseSheetRenderCommands)
+        {
+            return;
+        }
+
         Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
         excelApp.OnKey(UpdateCurrentSheetShortcutKey, UpdateCurrentSheetCommandName);
     }
@@ -657,10 +662,8 @@ public class RibbonController : ExcelRibbon
             return string.Empty;
         }
 
-        return $@"
-                <customUI xmlns='http://schemas.microsoft.com/office/2006/01/customui' onLoad='OnLoad'>
-                <ribbon>
-                    <tabs>
+        string renderTabXml = AddInProfile.CanUseSheetRenderCommands
+            ? @"
                     <tab id='tabRender' label='シート生成'>
                         <group id='group1' label='生成'>
                         <splitButton id='splitButton1' size='large'>
@@ -673,7 +676,14 @@ public class RibbonController : ExcelRibbon
                         <button id='button3' label='シート更新' screentip='表示中のシートのみ更新します' size='large' imageMso='TableSharePointListsRefreshList' onAction='OnUpdateCurrentSheetButtonPressed' getEnabled='GetUpdateCurrentSheetButtonEnabled'/>
                         <button id='buttonCreateMissingIncludes' label='下書き作成' screentip='コメント付き include から未作成ファイルを作成します' size='large' imageMso='FileNew' onAction='OnCreateMissingIncludeFilesButtonPressed' getEnabled='GetRenderCommandEnabled'/>
                         </group>
-                    </tab>
+                    </tab>"
+            : string.Empty;
+
+        return $@"
+                <customUI xmlns='http://schemas.microsoft.com/office/2006/01/customui' onLoad='OnLoad'>
+                <ribbon>
+                    <tabs>
+                    {renderTabXml}
                     <tab id='tabSync' label='シート同期'>
                         <group id='groupSync' label='同期'>
                         <splitButton id='splitButtonPull' size='large'>
@@ -1215,16 +1225,28 @@ public class RibbonController : ExcelRibbon
 
     public bool GetRenderCommandEnabled(IRibbonControl control)
     {
-        return !renderCommandInProgress;
+        return AddInProfile.CanUseSheetRenderCommands && !renderCommandInProgress;
     }
 
     public bool GetUpdateCurrentSheetButtonEnabled(IRibbonControl control)
     {
-        return UpdateCurrentSheetButtonEnabled && !renderCommandInProgress;
+        return AddInProfile.CanUseSheetRenderCommands &&
+            UpdateCurrentSheetButtonEnabled &&
+            !renderCommandInProgress;
     }
 
     private bool TryBeginRenderCommand(string statusText)
     {
+        if (!AddInProfile.CanUseSheetRenderCommands)
+        {
+            MessageBox.Show(
+                "この配布版ではシート生成機能を利用できません。",
+                "SheetSync",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+            return false;
+        }
+
         if (!TryEnsureNoCommandInProgress())
         {
             return false;
