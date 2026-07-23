@@ -11585,16 +11585,42 @@ public class RibbonController : ExcelRibbon
             FileLogger.Info("[pull-image] image=" + imageFilePath + " gitlabRelative=" + gitLabRelativePath);
             ReportPullProgress("画像取得: " + gitLabRelativePath);
 
-            await EnsureFileInWorkRootAsync(
-                sessionContext.BaseUrl,
-                sessionContext.ProjectId,
-                sessionContext.RefName,
-                sessionContext.Token,
-                sessionContext.WorkRoot,
-                gitLabRelativePath,
-                imageFilePath,
-                sessionContext.SessionLog);
+            try
+            {
+                await EnsureFileInWorkRootAsync(
+                    sessionContext.BaseUrl,
+                    sessionContext.ProjectId,
+                    sessionContext.RefName,
+                    sessionContext.Token,
+                    sessionContext.WorkRoot,
+                    gitLabRelativePath,
+                    imageFilePath,
+                    sessionContext.SessionLog);
+            }
+            catch (FileNotFoundException ex)
+            {
+                FileLogger.Warn(
+                    "[pull-image-missing] image=" + imageFilePath +
+                    " gitlabRelative=" + gitLabRelativePath +
+                    " error=" + ex.Message);
+                ReportPullProgress("画像なし（代替画像を使用）: " + imageFilePath);
+            }
+            catch (InvalidOperationException ex) when (IsGitLabResourceNotFoundException(ex))
+            {
+                FileLogger.Warn(
+                    "[pull-image-missing] image=" + imageFilePath +
+                    " gitlabRelative=" + gitLabRelativePath +
+                    " error=" + ex.Message);
+                ReportPullProgress("画像なし（代替画像を使用）: " + imageFilePath);
+            }
         }
+    }
+
+    private static bool IsGitLabResourceNotFoundException(InvalidOperationException ex)
+    {
+        return ex != null &&
+            !string.IsNullOrEmpty(ex.Message) &&
+            ex.Message.StartsWith("GitLab resource not found.", StringComparison.Ordinal);
     }
 
     private static string ResolvePullImageGitLabRelativePath(
