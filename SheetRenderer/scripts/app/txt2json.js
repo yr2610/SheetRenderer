@@ -4197,7 +4197,27 @@ forAllNodes_Recurse(root, null, -1, function(node, parent, index) {
 
     // エントリープロジェクトからの相対パスを求める
     function getImageFilePathFromEntryProject(imageFilePath) {
-        if (imageFilePath.charAt(0) != "/") {
+        // include と同じ「project:path」形式。path は対象プロジェクトの
+        // source 直下からの相対パスとして解決する。
+        if (/^\/?[^:]+:/.test(imageFilePath)) {
+            var externalFileInfo;
+            try {
+                externalFileInfo = parseIncludeFilePath(
+                    imageFilePath,
+                    projectDirectoryFromRoot,
+                    fileParentFolderAbs,
+                    {}
+                );
+            }
+            catch (e) {
+                throw new ParseError(e.errorMessage, lineObj);
+            }
+            imageFilePath = sourceLocalPathToAbsolutePath(
+                externalFileInfo.filePath,
+                externalFileInfo.projectDirectory
+            );
+        }
+        else if (imageFilePath.charAt(0) != "/") {
             imageFilePath = FileSystem.BuildPath(fileParentFolderAbs, imageFilePath);
         }
         else {
