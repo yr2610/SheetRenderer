@@ -1301,6 +1301,15 @@ public class RibbonController : ExcelRibbon
     private void EndSyncCommand()
     {
         syncCommandInProgress = false;
+
+        try
+        {
+            Excel.Application excelApp = (Excel.Application)ExcelDnaUtil.Application;
+            excelApp.StatusBar = false;
+        }
+        catch
+        {
+        }
     }
 
     private bool TryEnsureNoCommandInProgress()
@@ -10014,6 +10023,7 @@ public class RibbonController : ExcelRibbon
         Excel.Workbook activeWorkbook = null;
         PullProgressForm progressForm = null;
         GitLabShareInfo shareInfo = null;
+        bool pullCompleted = false;
 
         if (SynchronizationContext.Current == null)
         {
@@ -10248,6 +10258,7 @@ public class RibbonController : ExcelRibbon
 
             SavePullStateToWorkbook(activeWorkbook, input, pullResult.RefCommitId, shareInfo);
             // MessageBox.Show(currentPullSession.SessionLog.BuildSummaryText(30), "Pull Result");
+            pullCompleted = true;
         }
         catch (Exception ex)
         {
@@ -10278,6 +10289,15 @@ public class RibbonController : ExcelRibbon
                 EndSyncCommand();
             }
         }
+
+        if (pullCompleted)
+        {
+            MessageBox.Show(
+                "最新版取得が完了しました。",
+                "最新版取得",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+        }
     }
 
     public async void OnPullCreateButtonPressed(IRibbonControl control)
@@ -10293,6 +10313,7 @@ public class RibbonController : ExcelRibbon
         }
 
         PullProgressForm progressForm = null;
+        bool pullCompleted = false;
         try
         {
             progressForm = new PullProgressForm();
@@ -10350,6 +10371,7 @@ public class RibbonController : ExcelRibbon
             FileLogger.Info("[PullManifest] written: " + manifestPath);
 
             // MessageBox.Show(currentPullSession.SessionLog.BuildSummaryText(30), "Pull Result");
+            pullCompleted = true;
         }
         catch (Exception ex)
         {
@@ -10379,6 +10401,15 @@ public class RibbonController : ExcelRibbon
             {
                 EndSyncCommand();
             }
+        }
+
+        if (pullCompleted)
+        {
+            MessageBox.Show(
+                "最新版取得が完了しました。",
+                "最新版取得",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
         }
     }
 
