@@ -85,6 +85,34 @@ function stringifyPretty(obj, indent) {
     return JSON.stringify(obj, JSON_REPLACER, indent);
 }
 
+function parseItemIdPrefix(text) {
+    var match = String(text || "").match(/^\[#([\w\-]*)\](?:\s+([\s\S]+))?$/);
+    if (!match) {
+        return null;
+    }
+    return {
+        auto: match[1] === "",
+        id: match[1] || void 0,
+        text: match[2]
+    };
+}
+
+function buildItemLineWithGeneratedId(line, id) {
+    var match = String(line || "").match(/^(\s*[\*\+\-])(?:\s+\[#(?:[\w\-]+)?\])?\s+([\s\S]+)$/);
+    if (!match) {
+        return null;
+    }
+    return match[1] + " [#" + id + "] " + match[2];
+}
+
+function shouldKeepIdentifiedItemWhenChildrenDisappear(node) {
+    return !!node &&
+        node.kind === "UL" &&
+        node.id !== void 0 &&
+        node.id !== null &&
+        node.id !== "";
+}
+
 function $templateObject(object, data) {
     var json = JSON.stringify(object);
     function replacer(m, k) {
@@ -1042,17 +1070,20 @@ function parseUnorderedList(lineObj, line) {
         throw new ParseError(errorMessage, lineObj);
     }
 
-    var uidOnlyMatch = text.match(/^\[#([\w\-]+)\]\s*$/);
-    if (uidOnlyMatch) {
+    var idPrefix = parseItemIdPrefix(text);
+    if (idPrefix && _.isUndefined(idPrefix.text)) {
         var errorMessage = "テキストが指定されていません";
         throw new ParseError(errorMessage, lineObj);
     }
 
-    var uidMatch = text.match(/^\[#([\w\-]+)\]\s+(.+)$/);
+    var uidMatch = idPrefix && !idPrefix.auto ? idPrefix : null;
+    var autoUidRequested = !!(idPrefix && idPrefix.auto);
     var uid = undefined;
+    if (idPrefix) {
+        text = idPrefix.text;
+    }
     if (uidMatch) {
-        uid = buildEffectiveNodeId(uidMatch[1], lineObj);
-        text = uidMatch[2];
+        uid = buildEffectiveNodeId(uidMatch.id, lineObj);
         {(function() {
             var uidList = FindUidList(stack.peek());
             if (uid in uidList) {
@@ -1242,6 +1273,9 @@ function parseUnorderedList(lineObj, line) {
         // 以下はJSON出力前に削除する
         lineObj: lineObj
     };
+    if (autoUidRequested) {
+        item.__autoUidRequested = true;
+    }
     if (lineObj.includeScope && !_.isEmpty(lineObj.includeScope)) {
         item._includeScopeLayer = lineObj.includeScope;
     }
@@ -1252,10 +1286,10 @@ function parseUnorderedList(lineObj, line) {
     if (!uidMatch || fResetId) {
         // tree構築後にleafだったらIDをふる
         var newSrcText = lineObj.line;
-        var match = newSrcText.match(/^(\s*[\*\+\-])(?: \[#[\w\-]+\]\s+)?(.*)$/);
-
-        // ID 挿入して書き換え
-        newSrcText = match[1] + " [#{uid}]" + match[2];
+        newSrcText = buildItemLineWithGeneratedId(newSrcText, "{uid}");
+        if (newSrcText === null) {
+            throw new ParseError("IDをソースへ書き戻せませんでした", lineObj);
+        }
 
         newSrcText = appendLineComment(newSrcText, lineObj);
 
@@ -1781,6 +1815,11 @@ _.forEach(noIdNodes, function(infos) {
     infos = infos.filter(function(element, index, array) {
         // H1 ノード
         if (element.node.kind === kindH && element.node.level === 1) {
+            return true;
+        }
+
+        // [#] が指定された項目は、現在は親でも潜在的な leaf として ID を付ける。
+        if (element.node.__autoUidRequested) {
             return true;
         }
 
@@ -2878,6 +2917,13 @@ function evaluateInScope(expr, scope) {
                     return (element !== null);
                 });
                 if (validChildren.length === 0) {
+                    // ID を持つ通常項目は、それ自身が leaf になれる項目として残す。
+                    // 項目自身が直接 null にされた場合はこの処理へ来ないため、
+                    // ID があっても従来どおり削除される。
+                    if (shouldKeepIdentifiedItemWhenChildrenDisappear(node)) {
+                        node.children = [];
+                        return;
+                    }
                     if (node.kind === kindH) {
                         var errorMessage = "シート「"+ node.text +"」に有効な項目が存在しません\n※子階層がテンプレートのみとなっている可能性があります";
                         var lineObj = node.lineObj;
@@ -4425,4 +4471,12 @@ if (placeholderWarningsMessage) {
     Notifier.Warn("プレースホルダー警告", placeholderWarningsMessage);
 }
 
+}
+
+if (typeof module !== "undefined" && module.exports) {
+    module.exports = {
+        parseItemIdPrefix: parseItemIdPrefix,
+        buildItemLineWithGeneratedId: buildItemLineWithGeneratedId,
+        shouldKeepIdentifiedItemWhenChildrenDisappear: shouldKeepIdentifiedItemWhenChildrenDisappear
+    };
 }
