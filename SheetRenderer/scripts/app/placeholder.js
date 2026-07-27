@@ -48,7 +48,7 @@ var Placeholder = (function () {
         return options.evaluate(token.expression);
     }
 
-    function requiredText(token, value, options) {
+    function requiredResult(token, value, options) {
         if (value === void 0) {
             fail(
                 options,
@@ -56,22 +56,15 @@ var Placeholder = (function () {
                 "\n未定義を意図的に許可する場合は {{? " + token.expression + "}} を使用してください。"
             );
         }
-        if (value === null) {
-            fail(
-                options,
-                "必須プレースホルダー '{{" + token.expression + "}}' の値が null です。" +
-                "\nノードを省略する場合は {{? " + token.expression + "}} を使用してください。"
-            );
+        // 移行期間中は従来互換を維持する。
+        // false/null はノード削除、true はガードとして空文字にする。
+        if (value === false || value === null) {
+            return { drop: true, text: "" };
         }
-        if (typeof value === "boolean") {
-            fail(
-                options,
-                "必須プレースホルダー '{{" + token.expression + "}}' に boolean は使用できません。" +
-                "\nノードを省略する場合は {{? " + token.expression +
-                "}}、行を省略する場合は {{?- " + token.expression + "}} を使用してください。"
-            );
-        }
-        return String(value);
+        return {
+            drop: false,
+            text: value === true ? "" : String(value)
+        };
     }
 
     function replaceOptionalNodes(text, options) {
@@ -145,14 +138,25 @@ var Placeholder = (function () {
     }
 
     function replaceRequiredPlaceholders(line, options) {
+        var drop = false;
         var regex = expressionRegex();
-        return line.replace(regex, function (whole, raw) {
+        var output = line.replace(regex, function (whole, raw) {
             var token = parseToken(raw);
+            var result;
             if (token.mode !== "required") {
                 return whole;
             }
-            return requiredText(token, evaluate(token, options), options);
+            if (drop) {
+                return "";
+            }
+            result = requiredResult(token, evaluate(token, options), options);
+            if (result.drop) {
+                drop = true;
+                return "";
+            }
+            return result.text;
         });
+        return { drop: drop, text: output };
     }
 
     function replaceLines(text, options) {
@@ -175,7 +179,11 @@ var Placeholder = (function () {
                 }
                 line = line.slice(0, guard.index) + line.slice(guard.index + guard.length);
             }
-            outputLines.push(replaceRequiredPlaceholders(line, options));
+            var requiredResultForLine = replaceRequiredPlaceholders(line, options);
+            if (requiredResultForLine.drop) {
+                return { drop: true, text: void 0 };
+            }
+            outputLines.push(requiredResultForLine.text);
         }
 
         return {

@@ -37,15 +37,12 @@ function testRequiredInterpolation() {
     assert.throws(function () {
         expand("{{missing}}", {});
     }, /未定義プレースホルダー.*\{\{\? missing\}\}/s);
-    assert.throws(function () {
-        expand("{{value}}", { value: null });
-    }, /値が null.*\{\{\? value\}\}/s);
-    assert.throws(function () {
-        expand("{{value}}", { value: false });
-    }, /boolean.*\{\{\?- value\}\}/s);
-    assert.throws(function () {
-        expand("{{value}}", { value: true });
-    }, /boolean/);
+    assert.strictEqual(expand("before {{value}} after", { value: null }).drop, true);
+    assert.strictEqual(expand("before {{value}} after", { value: false }).drop, true);
+    assert.deepStrictEqual(expand("before {{value}} after", { value: true }), {
+        drop: false,
+        text: "before  after"
+    });
 }
 
 function testOptionalNodeInterpolation() {
