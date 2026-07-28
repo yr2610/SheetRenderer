@@ -2317,6 +2317,60 @@ public class RibbonController : ExcelRibbon
         return null;
     }
 
+    private static Dictionary<string, string> TryLoadSharedSheetBaseHashesForComparison(Excel.Workbook workbook)
+    {
+        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (workbook == null)
+        {
+            return result;
+        }
+
+        try
+        {
+            Excel.Worksheet worksheet = GetSharedSheetBaseStoreSheet(workbook, createIfMissing: false);
+            if (worksheet == null)
+            {
+                return result;
+            }
+
+            Excel.Range usedRange = worksheet.UsedRange;
+            int startRow = usedRange.Row;
+            int rowCount = usedRange.Rows.Count;
+            int lastRow = Math.Max(1, startRow + rowCount - 1);
+            if (lastRow < 2)
+            {
+                return result;
+            }
+
+            Excel.Range idAndHashRange = worksheet.Range[worksheet.Cells[2, 1], worksheet.Cells[lastRow, 3]];
+            object[,] values = ExcelExtensions.GetValuesAs2DArray(idAndHashRange.Value2);
+            for (int offset = 1; offset <= values.GetLength(0); offset++)
+            {
+                object sheetIdValue = values[offset, 1];
+                object baseHashValue = values[offset, 3];
+                string storedSheetId = sheetIdValue == null ? null : sheetIdValue.ToString();
+                string storedBaseHash = baseHashValue == null ? null : baseHashValue.ToString();
+                if (string.IsNullOrWhiteSpace(storedSheetId) ||
+                    string.IsNullOrWhiteSpace(storedBaseHash) ||
+                    result.ContainsKey(storedSheetId))
+                {
+                    continue;
+                }
+
+                result.Add(storedSheetId, storedBaseHash);
+            }
+        }
+        catch (Exception ex)
+        {
+            // The bulk read is only an optimization. Preserve the established per-sheet
+            // lookup as the fallback for old or partially damaged workbooks.
+            FileLogger.Warn("[SharedBaseHashBulkReadFallback] " + ex.Message);
+            result.Clear();
+        }
+
+        return result;
+    }
+
     private static void SetSharedSheetBaseHash(Excel.Workbook workbook, string sheetId, string baseHash)
     {
         if (workbook == null || string.IsNullOrWhiteSpace(sheetId))
@@ -3080,6 +3134,7 @@ public class RibbonController : ExcelRibbon
             return false;
         }
 
+        Dictionary<string, string> storedBaseHashes = TryLoadSharedSheetBaseHashesForComparison(workbook);
         foreach (SharedProjectManifestEntry entry in manifest.Sheets)
         {
             if (entry == null || string.IsNullOrWhiteSpace(entry.SheetId))
@@ -3087,7 +3142,11 @@ public class RibbonController : ExcelRibbon
                 continue;
             }
 
-            string baseHash = GetSharedSheetBaseHash(workbook, entry.SheetId);
+            string baseHash;
+            if (!storedBaseHashes.TryGetValue(entry.SheetId, out baseHash))
+            {
+                baseHash = GetSharedSheetBaseHash(workbook, entry.SheetId);
+            }
             if (!string.Equals(baseHash, entry.Hash, StringComparison.OrdinalIgnoreCase))
             {
                 return true;
