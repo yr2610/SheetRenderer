@@ -2364,11 +2364,53 @@ public class RibbonController : ExcelRibbon
         {
             // The bulk read is only an optimization. Preserve the established per-sheet
             // lookup as the fallback for old or partially damaged workbooks.
-            FileLogger.Warn("[SharedBaseHashBulkReadFallback] " + ex.Message);
+            TryLogSharedDiagnostic("[SharedBaseHashBulkReadFallback] " + ex.Message);
             result.Clear();
         }
 
         return result;
+    }
+
+    private static string GetSharedReceiveDecisionReason(
+        bool forceApplySharedValues,
+        string baseHash,
+        string manifestHash)
+    {
+        if (forceApplySharedValues)
+        {
+            return "forceApplySharedValues";
+        }
+
+        if (string.IsNullOrWhiteSpace(baseHash))
+        {
+            return "baseHashMissing";
+        }
+
+        if (string.IsNullOrWhiteSpace(manifestHash))
+        {
+            return "manifestHashMissing";
+        }
+
+        return string.Equals(baseHash, manifestHash, StringComparison.OrdinalIgnoreCase)
+            ? "hashMatch"
+            : "hashMismatch";
+    }
+
+    private static string FormatSharedHashForLog(string hash)
+    {
+        return string.IsNullOrWhiteSpace(hash) ? "(empty)" : hash;
+    }
+
+    private static void TryLogSharedDiagnostic(string message)
+    {
+        try
+        {
+            FileLogger.Info(message);
+        }
+        catch
+        {
+            // Diagnostics must never change or interrupt synchronization behavior.
+        }
     }
 
     private static void SetSharedSheetBaseHash(Excel.Workbook workbook, string sheetId, string baseHash)
@@ -3143,16 +3185,29 @@ public class RibbonController : ExcelRibbon
             }
 
             string baseHash;
-            if (!storedBaseHashes.TryGetValue(entry.SheetId, out baseHash))
+            bool usedBulkHash = storedBaseHashes.TryGetValue(entry.SheetId, out baseHash);
+            if (!usedBulkHash)
             {
                 baseHash = GetSharedSheetBaseHash(workbook, entry.SheetId);
             }
             if (!string.Equals(baseHash, entry.Hash, StringComparison.OrdinalIgnoreCase))
             {
+                TryLogSharedDiagnostic(
+                    "[SharedUpdatePrecheck] result=update " +
+                    "reason=" + GetSharedReceiveDecisionReason(false, baseHash, entry.Hash) +
+                    " sheetId=" + entry.SheetId +
+                    " sheetName=" + (entry.SheetName ?? "") +
+                    " baseHash=" + FormatSharedHashForLog(baseHash) +
+                    " manifestHash=" + FormatSharedHashForLog(entry.Hash) +
+                    " baseHashSource=" + (usedBulkHash ? "bulkStore" : "legacyFallback"));
                 return true;
             }
         }
 
+        TryLogSharedDiagnostic(
+            "[SharedUpdatePrecheck] result=latest " +
+            "manifestSheets=" + manifest.Sheets.Count +
+            " bulkBaseHashes=" + storedBaseHashes.Count);
         return false;
     }
 
@@ -4380,6 +4435,10 @@ public class RibbonController : ExcelRibbon
         }
 
         InitializeLoggerForSharedReceive(workbook);
+        TryLogSharedDiagnostic(
+            "[SharedReceiveStart] forceApplySharedValues=" + forceApplySharedValues +
+            " localDocumentsBeforeRender=" +
+            (localDocumentsBeforeRender == null ? 0 : localDocumentsBeforeRender.Count));
 
         string token = GitLabAuth.GetOrPromptToken(shareInfo.BaseUrl, shareInfo.ProjectId);
         if (string.IsNullOrWhiteSpace(token))
@@ -4547,16 +4606,32 @@ public class RibbonController : ExcelRibbon
             }
 
             string baseHash = GetSharedSheetBaseHash(workbook, entry.SheetId);
+            string receiveDecisionReason = GetSharedReceiveDecisionReason(
+                forceApplySharedValues,
+                baseHash,
+                entry.Hash);
             if (!forceApplySharedValues &&
                 !string.IsNullOrWhiteSpace(baseHash) &&
                 !string.IsNullOrWhiteSpace(entry.Hash) &&
                 string.Equals(baseHash, entry.Hash, StringComparison.OrdinalIgnoreCase))
             {
+                TryLogSharedDiagnostic(
+                    "[SharedReceiveDecision] action=skip reason=" + receiveDecisionReason +
+                    " sheetId=" + entry.SheetId +
+                    " sheetName=" + sheet.Name +
+                    " baseHash=" + FormatSharedHashForLog(baseHash) +
+                    " manifestHash=" + FormatSharedHashForLog(entry.Hash));
                 skippedLatestCount++;
                 progressReporter?.Invoke("共有値は最新です: " + sheet.Name);
                 continue;
             }
 
+            TryLogSharedDiagnostic(
+                "[SharedReceiveDecision] action=download reason=" + receiveDecisionReason +
+                " sheetId=" + entry.SheetId +
+                " sheetName=" + sheet.Name +
+                " baseHash=" + FormatSharedHashForLog(baseHash) +
+                " manifestHash=" + FormatSharedHashForLog(entry.Hash));
             progressReporter?.Invoke("共有値を取得しています: " + sheet.Name);
             SharedSheetDocument sharedSheetDocument = await TryDownloadSharedSheetDocumentAsync(
                 shareInfo,
@@ -4584,6 +4659,11 @@ public class RibbonController : ExcelRibbon
             }
 
             string sharedSheetNormalizedHash = ComputeSharedSheetHash(sharedSheetDocument);
+            TryLogSharedDiagnostic(
+                "[SharedReceiveDownloaded] sheetId=" + entry.SheetId +
+                " manifestHash=" + FormatSharedHashForLog(entry.Hash) +
+                " documentHash=" + FormatSharedHashForLog(sharedSheetDocument.Hash) +
+                " normalizedHash=" + FormatSharedHashForLog(sharedSheetNormalizedHash));
             if (string.IsNullOrWhiteSpace(sharedSheetDocument.Hash))
             {
                 sharedSheetDocument.Hash = sharedSheetNormalizedHash;
@@ -4606,6 +4686,11 @@ public class RibbonController : ExcelRibbon
                 sharedSheetDocument,
                 localSheetDocument,
                 out omittedRemoteRowCount);
+            TryLogSharedDiagnostic(
+                "[SharedReceiveBasePrepared] sheetId=" + entry.SheetId +
+                " remoteHash=" + FormatSharedHashForLog(sharedSheetDocument.Hash) +
+                " savedBaseHash=" + FormatSharedHashForLog(baseDocumentToSave == null ? null : baseDocumentToSave.Hash) +
+                " omittedRemoteRows=" + omittedRemoteRowCount);
             if (omittedRemoteRowCount > 0)
             {
                 FileLogger.Info(
@@ -10171,6 +10256,11 @@ public class RibbonController : ExcelRibbon
                         return;
                     }
 
+                    InitializeLoggerForSharedReceive(activeWorkbook);
+                    TryLogSharedDiagnostic(
+                        "[LatestFetchPullDecision] result=latest " +
+                        "storedCommitId=" + FormatSharedHashForLog(workbookInfo.PullCommitId) +
+                        " currentCommitId=" + FormatSharedHashForLog(currentCommitId));
                     bool hasSharedUpdates = await HasSharedUpdatesAsync(activeWorkbook, shareInfo, shareToken).ConfigureAwait(true);
                     if (!hasSharedUpdates)
                     {
