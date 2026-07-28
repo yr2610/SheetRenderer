@@ -4605,7 +4605,12 @@ public class RibbonController : ExcelRibbon
                 }
             }
 
-            string baseHash = GetSharedSheetBaseHash(workbook, entry.SheetId);
+            SharedSheetDocument baseSheetDocument = GetSharedSheetBaseDocument(workbook, entry.SheetId);
+            string baseHash = baseSheetDocument == null ? null : baseSheetDocument.Hash;
+            if (string.IsNullOrWhiteSpace(baseHash))
+            {
+                baseHash = GetSharedSheetBaseHash(workbook, entry.SheetId);
+            }
             string receiveDecisionReason = GetSharedReceiveDecisionReason(
                 forceApplySharedValues,
                 baseHash,
@@ -4626,18 +4631,84 @@ public class RibbonController : ExcelRibbon
                 continue;
             }
 
-            TryLogSharedDiagnostic(
-                "[SharedReceiveDecision] action=download reason=" + receiveDecisionReason +
-                " sheetId=" + entry.SheetId +
-                " sheetName=" + sheet.Name +
-                " baseHash=" + FormatSharedHashForLog(baseHash) +
-                " manifestHash=" + FormatSharedHashForLog(entry.Hash));
-            progressReporter?.Invoke("共有値を取得しています: " + sheet.Name);
-            SharedSheetDocument sharedSheetDocument = await TryDownloadSharedSheetDocumentAsync(
-                shareInfo,
-                projectId,
-                entry.SheetId,
-                token);
+            SharedSheetDocument sharedSheetDocument = null;
+            string sharedDocumentSource = "gitlab";
+            if (forceApplySharedValues &&
+                baseSheetDocument != null &&
+                !string.IsNullOrWhiteSpace(baseHash) &&
+                !string.IsNullOrWhiteSpace(entry.Hash) &&
+                string.Equals(baseHash, entry.Hash, StringComparison.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    string verifiedBaseHash = ComputeSharedSheetHash(baseSheetDocument);
+                    SharedSheetDocument cachedRemoteDocument = NormalizeSharedSheetDocument(
+                        baseSheetDocument,
+                        recomputeHash: false);
+                    string verifiedCachedRemoteHash = ComputeSharedSheetHash(cachedRemoteDocument);
+                    bool hasExpectedSheetId = string.Equals(
+                        baseSheetDocument.SheetId,
+                        entry.SheetId,
+                        StringComparison.Ordinal);
+                    bool hasExpectedProject = !IsSharedProjectIdMismatch(
+                        projectId,
+                        baseSheetDocument.Project);
+                    if (hasExpectedSheetId &&
+                        hasExpectedProject &&
+                        string.Equals(verifiedBaseHash, entry.Hash, StringComparison.OrdinalIgnoreCase) &&
+                        string.Equals(verifiedCachedRemoteHash, entry.Hash, StringComparison.OrdinalIgnoreCase))
+                    {
+                        cachedRemoteDocument.Hash = verifiedCachedRemoteHash;
+                        sharedSheetDocument = cachedRemoteDocument;
+                        sharedDocumentSource = "verifiedLocalBase";
+                        TryLogSharedDiagnostic(
+                            "[SharedReceiveDecision] action=reuseBase reason=verifiedHashMatch" +
+                            " sheetId=" + entry.SheetId +
+                            " sheetName=" + sheet.Name +
+                            " baseHash=" + FormatSharedHashForLog(baseHash) +
+                            " manifestHash=" + FormatSharedHashForLog(entry.Hash) +
+                            " verifiedBaseHash=" + FormatSharedHashForLog(verifiedBaseHash) +
+                            " verifiedCachedRemoteHash=" + FormatSharedHashForLog(verifiedCachedRemoteHash));
+                        progressReporter?.Invoke("保存済みの共有値を再利用しています: " + sheet.Name);
+                    }
+                    else
+                    {
+                        TryLogSharedDiagnostic(
+                            "[SharedReceiveBaseReuseFallback] reason=verificationFailed" +
+                            " sheetId=" + entry.SheetId +
+                            " expectedSheetId=" + hasExpectedSheetId +
+                            " expectedProject=" + hasExpectedProject +
+                            " baseHash=" + FormatSharedHashForLog(baseHash) +
+                            " manifestHash=" + FormatSharedHashForLog(entry.Hash) +
+                            " verifiedBaseHash=" + FormatSharedHashForLog(verifiedBaseHash) +
+                            " verifiedCachedRemoteHash=" + FormatSharedHashForLog(verifiedCachedRemoteHash));
+                    }
+                }
+                catch (Exception ex)
+                {
+                    TryLogSharedDiagnostic(
+                        "[SharedReceiveBaseReuseFallback] reason=verificationError" +
+                        " sheetId=" + entry.SheetId +
+                        " error=" + ex.GetType().Name +
+                        " message=" + ex.Message);
+                }
+            }
+
+            if (sharedSheetDocument == null)
+            {
+                TryLogSharedDiagnostic(
+                    "[SharedReceiveDecision] action=download reason=" + receiveDecisionReason +
+                    " sheetId=" + entry.SheetId +
+                    " sheetName=" + sheet.Name +
+                    " baseHash=" + FormatSharedHashForLog(baseHash) +
+                    " manifestHash=" + FormatSharedHashForLog(entry.Hash));
+                progressReporter?.Invoke("共有値を取得しています: " + sheet.Name);
+                sharedSheetDocument = await TryDownloadSharedSheetDocumentAsync(
+                    shareInfo,
+                    projectId,
+                    entry.SheetId,
+                    token);
+            }
 
             if (sharedSheetDocument == null)
             {
@@ -4660,7 +4731,8 @@ public class RibbonController : ExcelRibbon
 
             string sharedSheetNormalizedHash = ComputeSharedSheetHash(sharedSheetDocument);
             TryLogSharedDiagnostic(
-                "[SharedReceiveDownloaded] sheetId=" + entry.SheetId +
+                "[SharedReceiveDocument] source=" + sharedDocumentSource +
+                " sheetId=" + entry.SheetId +
                 " manifestHash=" + FormatSharedHashForLog(entry.Hash) +
                 " documentHash=" + FormatSharedHashForLog(sharedSheetDocument.Hash) +
                 " normalizedHash=" + FormatSharedHashForLog(sharedSheetNormalizedHash));
@@ -4680,7 +4752,6 @@ public class RibbonController : ExcelRibbon
             }
 
             SharedSheetDocument localSheetDocument = CreateSharedSheetDocument(sheet);
-            SharedSheetDocument baseSheetDocument = GetSharedSheetBaseDocument(workbook, entry.SheetId);
             int omittedRemoteRowCount;
             SharedSheetDocument baseDocumentToSave = CreateSharedReceiveBaseDocument(
                 sharedSheetDocument,
