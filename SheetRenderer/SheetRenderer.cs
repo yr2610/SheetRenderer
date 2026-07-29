@@ -1161,6 +1161,7 @@ public class RibbonController : ExcelRibbon
     const string gitLabPullCommitIdCustomPropertyName = "GitLabPullCommitId";
     const string gitLabShareInfoCustomPropertyName = "GitLabShareInfo";
     const string sharedSheetSyncStateCustomPropertyName = "SharedSheetSyncState";
+    const string sharedManifestSyncStateCustomPropertyName = "SharedManifestSyncState";
     const string sharedSheetBaseStoreSheetName = "SS_SYNC_STATE";
 
     const string ssSheetRangeName = "SS_SHEET";
@@ -2401,6 +2402,102 @@ public class RibbonController : ExcelRibbon
         return string.IsNullOrWhiteSpace(hash) ? "(empty)" : hash;
     }
 
+    private static string CreateSharedManifestSyncStateValue(
+        GitLabShareInfo shareInfo,
+        string workbookProjectId,
+        string refName,
+        SharedProjectManifest manifest)
+    {
+        if (shareInfo == null ||
+            string.IsNullOrWhiteSpace(workbookProjectId) ||
+            string.IsNullOrWhiteSpace(refName) ||
+            manifest == null)
+        {
+            return null;
+        }
+
+        string normalizedBaseUrl = (shareInfo.BaseUrl ?? string.Empty).Trim().TrimEnd('/');
+        string scopeText =
+            normalizedBaseUrl + "\n" +
+            (shareInfo.ProjectId ?? string.Empty).Trim() + "\n" +
+            refName.Trim() + "\n" +
+            workbookProjectId.Trim();
+        string scopeHash = HashHelper.Sha256(scopeText);
+        string manifestHash = HashHelper.Sha256(CreateSharedProjectManifestJsonText(manifest));
+        return "v1:" + scopeHash + ":" + manifestHash;
+    }
+
+    private static bool IsSharedManifestSyncStateCurrent(
+        Excel.Workbook workbook,
+        GitLabShareInfo shareInfo,
+        string workbookProjectId,
+        string refName,
+        SharedProjectManifest manifest)
+    {
+        if (workbook == null)
+        {
+            return false;
+        }
+
+        try
+        {
+            string expectedState = CreateSharedManifestSyncStateValue(
+                shareInfo,
+                workbookProjectId,
+                refName,
+                manifest);
+            string storedState = workbook.GetCustomProperty(sharedManifestSyncStateCustomPropertyName);
+            return !string.IsNullOrWhiteSpace(expectedState) &&
+                   string.Equals(storedState, expectedState, StringComparison.Ordinal);
+        }
+        catch (Exception ex)
+        {
+            TryLogSharedDiagnostic(
+                "[SharedManifestState] action=fallback reason=readError" +
+                " error=" + ex.GetType().Name +
+                " message=" + ex.Message);
+            return false;
+        }
+    }
+
+    private static void TrySaveSharedManifestSyncState(
+        Excel.Workbook workbook,
+        GitLabShareInfo shareInfo,
+        string workbookProjectId,
+        string refName,
+        SharedProjectManifest manifest)
+    {
+        if (workbook == null)
+        {
+            return;
+        }
+
+        try
+        {
+            string stateValue = CreateSharedManifestSyncStateValue(
+                shareInfo,
+                workbookProjectId,
+                refName,
+                manifest);
+            if (string.IsNullOrWhiteSpace(stateValue))
+            {
+                return;
+            }
+
+            workbook.SetCustomProperty(sharedManifestSyncStateCustomPropertyName, stateValue);
+            TryLogSharedDiagnostic("[SharedManifestState] action=save result=success");
+        }
+        catch (Exception ex)
+        {
+            // This state is only a fast-path marker. A write failure must preserve the
+            // established per-sheet comparison on the next receive.
+            TryLogSharedDiagnostic(
+                "[SharedManifestState] action=save result=fallback" +
+                " error=" + ex.GetType().Name +
+                " message=" + ex.Message);
+        }
+    }
+
     private static void TryLogSharedDiagnostic(string message)
     {
         try
@@ -3173,6 +3270,19 @@ public class RibbonController : ExcelRibbon
             manifest.Sheets == null ||
             manifest.Sheets.Count == 0)
         {
+            return false;
+        }
+
+        if (IsSharedManifestSyncStateCurrent(
+            workbook,
+            shareInfo,
+            projectId,
+            refName,
+            manifest))
+        {
+            TryLogSharedDiagnostic(
+                "[SharedUpdatePrecheck] result=latest reason=manifestHashMatch" +
+                " manifestSheets=" + manifest.Sheets.Count);
             return false;
         }
 
@@ -4898,6 +5008,22 @@ public class RibbonController : ExcelRibbon
 
         result.AppliedCount = appliedCount;
         result.ConflictAppliedSheetCount = conflictAppliedCount;
+        if (missingSharedDocumentCount == 0 && projectMismatchSharedDocumentCount == 0)
+        {
+            TrySaveSharedManifestSyncState(
+                workbook,
+                shareInfo,
+                projectId,
+                refName,
+                manifest);
+        }
+        else
+        {
+            TryLogSharedDiagnostic(
+                "[SharedManifestState] action=save result=skipped" +
+                " missingSharedDocuments=" + missingSharedDocumentCount +
+                " projectMismatchDocuments=" + projectMismatchSharedDocumentCount);
+        }
         return result;
     }
 
@@ -6090,6 +6216,13 @@ public class RibbonController : ExcelRibbon
                 }
             }
         }
+
+        TrySaveSharedManifestSyncState(
+            workbook,
+            shareInfo,
+            projectId,
+            refName,
+            updatedManifest);
 
         foreach (SharedSheetSelectionItem item in items)
         {
