@@ -2372,6 +2372,124 @@ public class RibbonController : ExcelRibbon
         return result;
     }
 
+    private static Dictionary<string, SharedSheetDocument> TryLoadSharedSheetBaseDocumentsInBulk(
+        Excel.Workbook workbook)
+    {
+        var result = new Dictionary<string, SharedSheetDocument>(StringComparer.Ordinal);
+        if (workbook == null)
+        {
+            return result;
+        }
+
+        try
+        {
+            Excel.Worksheet worksheet = GetSharedSheetBaseStoreSheet(workbook, createIfMissing: false);
+            if (worksheet == null)
+            {
+                return result;
+            }
+
+            Excel.Range usedRange = worksheet.UsedRange;
+            int startRow = usedRange.Row;
+            int rowCount = usedRange.Rows.Count;
+            int lastRow = Math.Max(1, startRow + rowCount - 1);
+            int startColumn = usedRange.Column;
+            int columnCount = usedRange.Columns.Count;
+            int lastUsedColumn = Math.Max(4, startColumn + columnCount - 1);
+            if (lastRow < 2 || lastUsedColumn < 5)
+            {
+                return result;
+            }
+
+            // Read the metadata and every JSON chunk with two COM calls total.
+            Excel.Range metadataRange = worksheet.Range[worksheet.Cells[2, 1], worksheet.Cells[lastRow, 4]];
+            object[,] metadataValues = ExcelExtensions.GetValuesAs2DArray(metadataRange.Value2);
+            int availableChunkColumns = Math.Max(0, lastUsedColumn - 4);
+            int maximumChunkCount = 0;
+            for (int offset = 1; offset <= metadataValues.GetLength(0); offset++)
+            {
+                int chunkCount;
+                object chunkCountValue = metadataValues[offset, 4];
+                if (chunkCountValue != null &&
+                    int.TryParse(chunkCountValue.ToString(), out chunkCount) &&
+                    chunkCount > maximumChunkCount &&
+                    chunkCount <= availableChunkColumns)
+                {
+                    maximumChunkCount = chunkCount;
+                }
+            }
+
+            if (maximumChunkCount <= 0)
+            {
+                return result;
+            }
+
+            Excel.Range chunksRange = worksheet.Range[
+                worksheet.Cells[2, 5],
+                worksheet.Cells[lastRow, 4 + maximumChunkCount]];
+            object[,] chunkValues = ExcelExtensions.GetValuesAs2DArray(chunksRange.Value2);
+
+            for (int offset = 1; offset <= metadataValues.GetLength(0); offset++)
+            {
+                object sheetIdValue = metadataValues[offset, 1];
+                string sheetId = sheetIdValue == null ? null : sheetIdValue.ToString();
+                if (string.IsNullOrWhiteSpace(sheetId) || result.ContainsKey(sheetId))
+                {
+                    continue;
+                }
+
+                int chunkCount;
+                object chunkCountValue = metadataValues[offset, 4];
+                if (chunkCountValue == null ||
+                    !int.TryParse(chunkCountValue.ToString(), out chunkCount) ||
+                    chunkCount <= 0 ||
+                    chunkCount > maximumChunkCount)
+                {
+                    continue;
+                }
+
+                var builder = new StringBuilder();
+                for (int chunkOffset = 1; chunkOffset <= chunkCount; chunkOffset++)
+                {
+                    object chunkValue = chunkValues[offset, chunkOffset];
+                    if (chunkValue != null)
+                    {
+                        builder.Append(chunkValue.ToString());
+                    }
+                }
+
+                SharedSheetDocument document = ParseSharedSheetDocument(builder.ToString());
+                if (document == null)
+                {
+                    continue;
+                }
+
+                document.SheetId = string.IsNullOrWhiteSpace(document.SheetId) ? sheetId : document.SheetId;
+                object sheetNameValue = metadataValues[offset, 2];
+                if (string.IsNullOrWhiteSpace(document.SheetName) && sheetNameValue != null)
+                {
+                    document.SheetName = sheetNameValue.ToString();
+                }
+
+                object baseHashValue = metadataValues[offset, 3];
+                if (string.IsNullOrWhiteSpace(document.Hash) && baseHashValue != null)
+                {
+                    document.Hash = baseHashValue.ToString();
+                }
+
+                result.Add(sheetId, document);
+            }
+        }
+        catch (Exception ex)
+        {
+            TryLogSharedDiagnostic(
+                "[SharedBaseBulkReadFallback] error=" + ex.GetType().Name +
+                " message=" + ex.Message);
+        }
+
+        return result;
+    }
+
     private static string GetSharedReceiveDecisionReason(
         bool forceApplySharedValues,
         string baseHash,
@@ -4471,6 +4589,111 @@ public class RibbonController : ExcelRibbon
         return ParseSharedSheetDocument(Encoding.UTF8.GetString(sheetBytes));
     }
 
+    private async Task<Dictionary<string, SharedSheetDocument>> TryDownloadSharedSheetDocumentsArchiveAsync(
+        GitLabShareInfo shareInfo,
+        string projectId,
+        string refName,
+        string token,
+        IEnumerable<SharedProjectManifestEntry> manifestEntries)
+    {
+        var expectedSheetIds = new HashSet<string>(
+            (manifestEntries ?? Enumerable.Empty<SharedProjectManifestEntry>())
+                .Where(x => x != null && !string.IsNullOrWhiteSpace(x.SheetId))
+                .Select(x => x.SheetId),
+            StringComparer.Ordinal);
+        var result = new Dictionary<string, SharedSheetDocument>(StringComparer.Ordinal);
+        if (shareInfo == null || string.IsNullOrWhiteSpace(projectId) || expectedSheetIds.Count == 0)
+        {
+            return result;
+        }
+
+        try
+        {
+            byte[] archiveBytes = await GitLabClient.DownloadArchiveZipAsync(
+                shareInfo.BaseUrl,
+                shareInfo.ProjectId,
+                refName,
+                GitLabPathResolver.NormalizeGitLabRelativePath(projectId),
+                token).ConfigureAwait(false);
+
+            string normalizedProjectPath = GitLabPathResolver.NormalizeGitLabRelativePath(projectId).Trim('/');
+            string projectMarker = "/" + normalizedProjectPath + "/";
+            using (var stream = new MemoryStream(archiveBytes ?? new byte[0]))
+            using (var archive = new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: false))
+            {
+                foreach (ZipArchiveEntry archiveEntry in archive.Entries)
+                {
+                    if (archiveEntry == null || string.IsNullOrEmpty(archiveEntry.Name))
+                    {
+                        continue;
+                    }
+
+                    string normalizedEntryName = (archiveEntry.FullName ?? string.Empty).Replace('\\', '/').TrimStart('/');
+                    int projectMarkerIndex = normalizedEntryName.LastIndexOf(projectMarker, StringComparison.OrdinalIgnoreCase);
+                    string projectRelativePath;
+                    if (projectMarkerIndex >= 0)
+                    {
+                        projectRelativePath = normalizedEntryName.Substring(projectMarkerIndex + projectMarker.Length);
+                    }
+                    else if (normalizedEntryName.StartsWith(normalizedProjectPath + "/", StringComparison.OrdinalIgnoreCase))
+                    {
+                        projectRelativePath = normalizedEntryName.Substring(normalizedProjectPath.Length + 1);
+                    }
+                    else
+                    {
+                        continue;
+                    }
+
+                    if (projectRelativePath.IndexOf('/') >= 0 ||
+                        !projectRelativePath.EndsWith(".json", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(projectRelativePath, "_manifest.json", StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    string sheetId = projectRelativePath.Substring(0, projectRelativePath.Length - ".json".Length);
+                    if (!expectedSheetIds.Contains(sheetId) || result.ContainsKey(sheetId))
+                    {
+                        continue;
+                    }
+
+                    string jsonText;
+                    using (Stream entryStream = archiveEntry.Open())
+                    using (var reader = new StreamReader(entryStream, Encoding.UTF8, true))
+                    {
+                        jsonText = reader.ReadToEnd();
+                    }
+
+                    SharedSheetDocument document = ParseSharedSheetDocument(jsonText);
+                    if (document == null ||
+                        (!string.IsNullOrWhiteSpace(document.SheetId) &&
+                         !string.Equals(document.SheetId, sheetId, StringComparison.Ordinal)))
+                    {
+                        continue;
+                    }
+
+                    document.SheetId = sheetId;
+                    result.Add(sheetId, document);
+                }
+            }
+
+            TryLogSharedDiagnostic(
+                "[SharedArchiveDownload] result=success" +
+                " bytes=" + (archiveBytes == null ? 0 : archiveBytes.Length) +
+                " documents=" + result.Count +
+                " expected=" + expectedSheetIds.Count);
+            return result;
+        }
+        catch (Exception ex)
+        {
+            FileLogger.Warn(
+                "[SharedArchiveDownload] result=fallback" +
+                " error=" + ex.GetType().Name +
+                " message=" + ex.Message);
+            return null;
+        }
+    }
+
     private static void ShowSharedReceiveConflictDialogIfNeeded(SharedReceiveResult result)
     {
         if (result == null || result.ConflictAppliedSheetCount <= 0)
@@ -4650,6 +4873,11 @@ public class RibbonController : ExcelRibbon
 
         EnsureSharedSheetBaseStorePrepared(workbook, progressReporter);
         progressReporter?.Invoke("共有マニフェストを読み込みました: " + manifest.Sheets.Count + " シート");
+        Dictionary<string, SharedSheetDocument> baseDocumentsById =
+            TryLoadSharedSheetBaseDocumentsInBulk(workbook);
+        TryLogSharedDiagnostic(
+            "[SharedBaseBulkRead] documents=" + baseDocumentsById.Count +
+            " manifestSheets=" + manifest.Sheets.Count);
 
         var sheetsById = new Dictionary<string, Excel.Worksheet>(StringComparer.Ordinal);
         var sheetsByName = new Dictionary<string, List<Excel.Worksheet>>(StringComparer.Ordinal);
@@ -4683,6 +4911,8 @@ public class RibbonController : ExcelRibbon
         var pendingReceives = new List<PendingSharedSheetReceive>();
         int totalSheetCount = manifest.Sheets.Count;
         int completedSheetCount = 0;
+        bool sharedArchiveDownloadAttempted = false;
+        Dictionary<string, SharedSheetDocument> sharedArchiveDocumentsById = null;
 
         progressReporter?.Invoke("共有値確認: 0 / " + totalSheetCount);
 
@@ -4723,7 +4953,11 @@ public class RibbonController : ExcelRibbon
                 }
             }
 
-            SharedSheetDocument baseSheetDocument = GetSharedSheetBaseDocument(workbook, entry.SheetId);
+            SharedSheetDocument baseSheetDocument;
+            if (!baseDocumentsById.TryGetValue(entry.SheetId, out baseSheetDocument))
+            {
+                baseSheetDocument = GetSharedSheetBaseDocument(workbook, entry.SheetId);
+            }
             string baseHash = baseSheetDocument == null ? null : baseSheetDocument.Hash;
             if (string.IsNullOrWhiteSpace(baseHash))
             {
@@ -4822,12 +5056,56 @@ public class RibbonController : ExcelRibbon
                     " sheetName=" + sheet.Name +
                     " baseHash=" + FormatSharedHashForLog(baseHash) +
                     " manifestHash=" + FormatSharedHashForLog(entry.Hash));
-                progressReporter?.Invoke("共有値を取得しています: " + sheet.Name);
-                sharedSheetDocument = await TryDownloadSharedSheetDocumentAsync(
-                    shareInfo,
-                    projectId,
-                    entry.SheetId,
-                    token);
+
+                if (!sharedArchiveDownloadAttempted)
+                {
+                    sharedArchiveDownloadAttempted = true;
+                    progressReporter?.Invoke("共有JSONをまとめて取得しています");
+                    sharedArchiveDocumentsById = await TryDownloadSharedSheetDocumentsArchiveAsync(
+                        shareInfo,
+                        projectId,
+                        refName,
+                        token,
+                        manifest.Sheets).ConfigureAwait(false);
+                    progressReporter?.Invoke(
+                        sharedArchiveDocumentsById == null
+                            ? "共有JSONの一括取得に失敗したため個別取得に切り替えます"
+                            : "共有JSONをまとめて取得しました: " + sharedArchiveDocumentsById.Count + " シート");
+                }
+
+                SharedSheetDocument archiveDocument;
+                if (sharedArchiveDocumentsById != null &&
+                    sharedArchiveDocumentsById.TryGetValue(entry.SheetId, out archiveDocument))
+                {
+                    string archiveDocumentHash = ComputeSharedSheetHash(archiveDocument);
+                    if (string.IsNullOrWhiteSpace(entry.Hash) ||
+                        string.Equals(archiveDocument.Hash, entry.Hash, StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(archiveDocumentHash, entry.Hash, StringComparison.OrdinalIgnoreCase))
+                    {
+                        sharedSheetDocument = archiveDocument;
+                        sharedDocumentSource = "gitlabArchive";
+                        progressReporter?.Invoke("一括取得した共有値を確認しています: " + sheet.Name);
+                    }
+                    else
+                    {
+                        TryLogSharedDiagnostic(
+                            "[SharedArchiveDocumentFallback] reason=hashMismatch" +
+                            " sheetId=" + entry.SheetId +
+                            " manifestHash=" + FormatSharedHashForLog(entry.Hash) +
+                            " documentHash=" + FormatSharedHashForLog(archiveDocument.Hash) +
+                            " normalizedHash=" + FormatSharedHashForLog(archiveDocumentHash));
+                    }
+                }
+
+                if (sharedSheetDocument == null)
+                {
+                    progressReporter?.Invoke("共有値を個別取得しています: " + sheet.Name);
+                    sharedSheetDocument = await TryDownloadSharedSheetDocumentAsync(
+                        shareInfo,
+                        projectId,
+                        entry.SheetId,
+                        token);
+                }
             }
 
             if (sharedSheetDocument == null)
@@ -4860,6 +5138,25 @@ public class RibbonController : ExcelRibbon
                 " manifestHash=" + FormatSharedHashForLog(entry.Hash) +
                 " documentHash=" + FormatSharedHashForLog(sharedSheetDocument.Hash) +
                 " normalizedHash=" + FormatSharedHashForLog(sharedSheetNormalizedHash));
+            if (!string.IsNullOrWhiteSpace(entry.Hash) &&
+                !string.Equals(sharedSheetDocument.Hash, entry.Hash, StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(sharedSheetNormalizedHash, entry.Hash, StringComparison.OrdinalIgnoreCase))
+            {
+                missingSharedDocumentCount++;
+                FileLogger.Warn(
+                    "[SharedReceiveDocumentRejected] reason=manifestHashMismatch" +
+                    " sheetId=" + entry.SheetId +
+                    " source=" + sharedDocumentSource +
+                    " manifestHash=" + FormatSharedHashForLog(entry.Hash) +
+                    " documentHash=" + FormatSharedHashForLog(sharedSheetDocument.Hash) +
+                    " normalizedHash=" + FormatSharedHashForLog(sharedSheetNormalizedHash));
+                progressReporter?.Invoke(
+                    "共有マニフェストとJSONのhashが一致しないため取得を保留しました: " + sheet.Name);
+                completedSheetCount++;
+                progressReporter?.Invoke("共有値確認: " + completedSheetCount + " / " + totalSheetCount);
+                continue;
+            }
+
             if (string.IsNullOrWhiteSpace(sharedSheetDocument.Hash))
             {
                 sharedSheetDocument.Hash = sharedSheetNormalizedHash;
