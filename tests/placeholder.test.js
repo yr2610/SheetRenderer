@@ -131,6 +131,45 @@ function testTemplateDefaultPlaceholder() {
     });
 }
 
+function testJavaScriptWithNestedClosingBraces() {
+    assert.deepStrictEqual(expand("{{({ outer: { value: value } }).outer.value}}", {
+        value: "nested"
+    }), {
+        drop: false,
+        text: "nested"
+    });
+    assert.deepStrictEqual(expand("{{/}}/.test(value)}}", {
+        value: "a}}b"
+    }), {
+        drop: false,
+        text: ""
+    });
+    assert.deepStrictEqual(expand("{{'left}}right'}}"), {
+        drop: false,
+        text: "left}}right"
+    });
+}
+
+function testTemplateLiteralInterpolation() {
+    assert.deepStrictEqual(expand("{{`foo${bar}`}}", { bar: "BAR" }), {
+        drop: false,
+        text: "fooBAR"
+    });
+    assert.deepStrictEqual(expand("{{`outer ${enabled ? `inner ${value}` : 'off'}`}}", {
+        enabled: true,
+        value: 3
+    }), {
+        drop: false,
+        text: "outer inner 3"
+    });
+    assert.deepStrictEqual(expand("first={{`a${value}`}}, second={{value + 1}}", {
+        value: 2
+    }), {
+        drop: false,
+        text: "first=a2, second=3"
+    });
+}
+
 testRequiredInterpolation();
 testOptionalNodeInterpolation();
 testOptionalNodeRunsBeforeRequiredInterpolation();
@@ -139,5 +178,7 @@ testDeletedLineIsNotEvaluated();
 testLineGuardPlacement();
 testNegativeOptionalExpressionCompatibility();
 testTemplateDefaultPlaceholder();
+testJavaScriptWithNestedClosingBraces();
+testTemplateLiteralInterpolation();
 
 console.log("placeholder tests passed");

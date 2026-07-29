@@ -1,11 +1,7 @@
 var Placeholder = (function () {
     var MAX_EXPANSION_DEPTH = 20;
     var RE_EMPTY = /\{\{\s*\}\}/g;
-    var RE_EXPR_SOURCE = "\\{\\{\\s*([^\\}]+)\\s*\\}\\}";
-
-    function expressionRegex() {
-        return new RegExp(RE_EXPR_SOURCE, "g");
-    }
+    var expressionSyntaxCache = Object.create(null);
 
     function parseToken(raw) {
         var text = String(raw || "").trim();
@@ -29,6 +25,79 @@ var Placeholder = (function () {
             expression: text,
             source: text
         };
+    }
+
+    function hasValidExpressionSyntax(raw) {
+        var token = parseToken(raw);
+        var expression = token.expression;
+        if (!expression) {
+            return false;
+        }
+        if (Object.prototype.hasOwnProperty.call(expressionSyntaxCache, expression)) {
+            return expressionSyntaxCache[expression];
+        }
+
+        try {
+            // evalExprWithScope と同じ形でコンパイルだけ行う。式そのものは実行しない。
+            new Function("scope", "with(scope){ return (" + expression + "); }");
+            expressionSyntaxCache[expression] = true;
+        } catch (e) {
+            expressionSyntaxCache[expression] = false;
+        }
+        return expressionSyntaxCache[expression];
+    }
+
+    function findPlaceholderAt(text, start) {
+        var close = text.indexOf("}}", start + 2);
+        while (close !== -1) {
+            var raw = text.slice(start + 2, close);
+            if (hasValidExpressionSyntax(raw)) {
+                return {
+                    index: start,
+                    length: close + 2 - start,
+                    whole: text.slice(start, close + 2),
+                    raw: raw
+                };
+            }
+            // "}}}" も調べられるよう、候補は1文字ずつ進める。
+            close = text.indexOf("}}", close + 1);
+        }
+        return null;
+    }
+
+    function findPlaceholders(text) {
+        var matches = [];
+        var searchFrom = 0;
+        var start;
+
+        while ((start = text.indexOf("{{", searchFrom)) !== -1) {
+            var match = findPlaceholderAt(text, start);
+            if (match !== null) {
+                matches.push(match);
+                searchFrom = match.index + match.length;
+            } else {
+                searchFrom = start + 2;
+            }
+        }
+        return matches;
+    }
+
+    function replacePlaceholders(text, replacer) {
+        var matches = findPlaceholders(text);
+        if (matches.length === 0) {
+            return text;
+        }
+
+        var parts = [];
+        var copiedUntil = 0;
+        for (var i = 0; i < matches.length; i++) {
+            var match = matches[i];
+            parts.push(text.slice(copiedUntil, match.index));
+            parts.push(replacer(match.whole, match.raw, match.index));
+            copiedUntil = match.index + match.length;
+        }
+        parts.push(text.slice(copiedUntil));
+        return parts.join("");
     }
 
     function fail(options, message) {
@@ -70,8 +139,7 @@ var Placeholder = (function () {
     function replaceOptionalNodes(text, options) {
         var drop = false;
         var changed = false;
-        var regex = expressionRegex();
-        var output = text.replace(regex, function (whole, raw) {
+        var output = replacePlaceholders(text, function (whole, raw) {
             var token = parseToken(raw);
             var value;
             if (token.mode !== "optionalNode") {
@@ -98,10 +166,9 @@ var Placeholder = (function () {
     }
 
     function containsOptionalNode(text) {
-        var regex = expressionRegex();
-        var match;
-        while ((match = regex.exec(text)) !== null) {
-            if (parseToken(match[1]).mode === "optionalNode") {
+        var matches = findPlaceholders(text);
+        for (var i = 0; i < matches.length; i++) {
+            if (parseToken(matches[i].raw).mode === "optionalNode") {
                 return true;
             }
         }
@@ -109,13 +176,13 @@ var Placeholder = (function () {
     }
 
     function findLineGuard(line, options) {
-        var regex = expressionRegex();
-        var match;
+        var matches = findPlaceholders(line);
         var guard = null;
         var leadingLength = (line.match(/^[ \t]*/) || [""])[0].length;
 
-        while ((match = regex.exec(line)) !== null) {
-            var token = parseToken(match[1]);
+        for (var i = 0; i < matches.length; i++) {
+            var match = matches[i];
+            var token = parseToken(match.raw);
             if (token.mode !== "optionalLine") {
                 continue;
             }
@@ -130,7 +197,7 @@ var Placeholder = (function () {
             }
             guard = {
                 index: match.index,
-                length: match[0].length,
+                length: match.length,
                 token: token
             };
         }
@@ -139,8 +206,7 @@ var Placeholder = (function () {
 
     function replaceRequiredPlaceholders(line, options) {
         var drop = false;
-        var regex = expressionRegex();
-        var output = line.replace(regex, function (whole, raw) {
+        var output = replacePlaceholders(line, function (whole, raw) {
             var token = parseToken(raw);
             var result;
             if (token.mode !== "required") {
