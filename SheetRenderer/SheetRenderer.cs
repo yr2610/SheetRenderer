@@ -4681,11 +4681,17 @@ public class RibbonController : ExcelRibbon
         int fallbackMatchedCount = 0;
         int conflictAppliedCount = 0;
         var pendingReceives = new List<PendingSharedSheetReceive>();
+        int totalSheetCount = manifest.Sheets.Count;
+        int completedSheetCount = 0;
+
+        progressReporter?.Invoke("共有値確認: 0 / " + totalSheetCount);
 
         foreach (SharedProjectManifestEntry entry in manifest.Sheets)
         {
             if (entry == null || string.IsNullOrWhiteSpace(entry.SheetId))
             {
+                completedSheetCount++;
+                progressReporter?.Invoke("共有値確認: " + completedSheetCount + " / " + totalSheetCount);
                 continue;
             }
 
@@ -4711,6 +4717,8 @@ public class RibbonController : ExcelRibbon
                 {
                     missingLocalSheetCount++;
                     progressReporter?.Invoke("ローカルに対象シートがありません: " + entry.SheetId);
+                    completedSheetCount++;
+                    progressReporter?.Invoke("共有値確認: " + completedSheetCount + " / " + totalSheetCount);
                     continue;
                 }
             }
@@ -4738,6 +4746,8 @@ public class RibbonController : ExcelRibbon
                     " manifestHash=" + FormatSharedHashForLog(entry.Hash));
                 skippedLatestCount++;
                 progressReporter?.Invoke("共有値は最新です: " + sheet.Name);
+                completedSheetCount++;
+                progressReporter?.Invoke("共有値確認: " + completedSheetCount + " / " + totalSheetCount);
                 continue;
             }
 
@@ -4824,6 +4834,8 @@ public class RibbonController : ExcelRibbon
             {
                 missingSharedDocumentCount++;
                 progressReporter?.Invoke("共有JSONが見つかりません: " + entry.SheetId);
+                completedSheetCount++;
+                progressReporter?.Invoke("共有値確認: " + completedSheetCount + " / " + totalSheetCount);
                 continue;
             }
 
@@ -4836,6 +4848,8 @@ public class RibbonController : ExcelRibbon
                     " workbookProject=" + projectId);
                 progressReporter?.Invoke(
                     "共有JSONの Project ID がブックと異なるため取得しませんでした: " + sheet.Name);
+                completedSheetCount++;
+                progressReporter?.Invoke("共有値確認: " + completedSheetCount + " / " + totalSheetCount);
                 continue;
             }
 
@@ -4858,6 +4872,8 @@ public class RibbonController : ExcelRibbon
             {
                 skippedLatestCount++;
                 progressReporter?.Invoke("共有値は最新です: " + sheet.Name);
+                completedSheetCount++;
+                progressReporter?.Invoke("共有値確認: " + completedSheetCount + " / " + totalSheetCount);
                 continue;
             }
 
@@ -4934,6 +4950,8 @@ public class RibbonController : ExcelRibbon
                 MergeResult = mergeResult
             });
             progressReporter?.Invoke("共有値の更新候補を準備しました: " + sheet.Name);
+            completedSheetCount++;
+            progressReporter?.Invoke("共有値確認: " + completedSheetCount + " / " + totalSheetCount);
         }
 
         List<SharedSheetConflictResolution> conflicts = pendingReceives
