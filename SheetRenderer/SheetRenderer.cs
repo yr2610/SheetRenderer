@@ -245,6 +245,7 @@ public class PullProgressForm : Form
         }
 
         statusLabel.Text = string.IsNullOrWhiteSpace(statusText) ? string.Empty : statusText;
+        statusLabel.Refresh();
     }
 
     public void ShowContinueButton(string buttonText, string statusText)
@@ -2222,7 +2223,10 @@ public class RibbonController : ExcelRibbon
         }
     }
 
-    private static List<SharedSheetDocument> CollectSharedSheetDocuments(Excel.Workbook workbook)
+    private static List<SharedSheetDocument> CollectSharedSheetDocuments(
+        Excel.Workbook workbook,
+        string targetSheetName = null,
+        Action<string> progressReporter = null)
     {
         var result = new List<SharedSheetDocument>();
         if (workbook == null)
@@ -2230,13 +2234,26 @@ public class RibbonController : ExcelRibbon
             return result;
         }
 
+        int totalSheetCount = workbook.Sheets.Count;
+        int completedSheetCount = 0;
+        progressReporter?.Invoke("共有対象を確認しています（0 / " + totalSheetCount + "）");
+
         foreach (Excel.Worksheet sheet in workbook.Sheets)
         {
-            SharedSheetDocument sheetDocument = CreateSharedSheetDocument(sheet);
-            if (sheetDocument != null)
+            if (string.IsNullOrWhiteSpace(targetSheetName) ||
+                string.Equals(sheet.Name, targetSheetName, StringComparison.CurrentCulture))
             {
-                result.Add(sheetDocument);
+                SharedSheetDocument sheetDocument = CreateSharedSheetDocument(sheet);
+                if (sheetDocument != null)
+                {
+                    result.Add(sheetDocument);
+                }
             }
+
+            completedSheetCount++;
+            progressReporter?.Invoke(
+                "共有対象を確認しています（" + completedSheetCount + " / " + totalSheetCount + "）: " +
+                sheet.Name);
         }
 
         return result;
@@ -2303,6 +2320,19 @@ public class RibbonController : ExcelRibbon
         }
 
         SharedSheetDocument sharedSheetDocument = GetSharedSheetBaseDocument(workbook, sheetId);
+        return GetSharedSheetBaseHash(workbook, sheetId, sharedSheetDocument);
+    }
+
+    private static string GetSharedSheetBaseHash(
+        Excel.Workbook workbook,
+        string sheetId,
+        SharedSheetDocument sharedSheetDocument)
+    {
+        if (string.IsNullOrWhiteSpace(sheetId))
+        {
+            return null;
+        }
+
         if (sharedSheetDocument != null && !string.IsNullOrWhiteSpace(sharedSheetDocument.Hash))
         {
             return sharedSheetDocument.Hash;
@@ -2375,7 +2405,16 @@ public class RibbonController : ExcelRibbon
     private static Dictionary<string, SharedSheetDocument> TryLoadSharedSheetBaseDocumentsInBulk(
         Excel.Workbook workbook)
     {
+        bool bulkReadSucceeded;
+        return TryLoadSharedSheetBaseDocumentsInBulk(workbook, out bulkReadSucceeded);
+    }
+
+    private static Dictionary<string, SharedSheetDocument> TryLoadSharedSheetBaseDocumentsInBulk(
+        Excel.Workbook workbook,
+        out bool bulkReadSucceeded)
+    {
         var result = new Dictionary<string, SharedSheetDocument>(StringComparer.Ordinal);
+        bulkReadSucceeded = true;
         if (workbook == null)
         {
             return result;
@@ -2482,6 +2521,7 @@ public class RibbonController : ExcelRibbon
         }
         catch (Exception ex)
         {
+            bulkReadSucceeded = false;
             TryLogSharedDiagnostic(
                 "[SharedBaseBulkReadFallback] error=" + ex.GetType().Name +
                 " message=" + ex.Message);
@@ -6184,25 +6224,33 @@ public class RibbonController : ExcelRibbon
     private static List<SharedSheetSelectionItem> CollectSharedSheetSelectionItems(
         Excel.Workbook workbook,
         SharedProjectManifest remoteManifest,
-        string targetSheetName = null)
+        Dictionary<string, SharedSheetDocument> baseDocumentsById,
+        bool bulkBaseReadSucceeded,
+        string targetSheetName = null,
+        Action<string> progressReporter = null)
     {
         var items = new List<SharedSheetSelectionItem>();
-        foreach (SharedSheetDocument document in CollectSharedSheetDocuments(workbook))
+        foreach (SharedSheetDocument document in CollectSharedSheetDocuments(
+            workbook,
+            targetSheetName,
+            progressReporter))
         {
-            if (!string.IsNullOrWhiteSpace(targetSheetName) &&
-                !string.Equals(document.SheetName, targetSheetName, StringComparison.CurrentCulture))
+            SharedSheetDocument baseDocument;
+            if (baseDocumentsById == null ||
+                !baseDocumentsById.TryGetValue(document.SheetId, out baseDocument))
             {
-                continue;
+                baseDocument = bulkBaseReadSucceeded
+                    ? null
+                    : GetSharedSheetBaseDocument(workbook, document.SheetId);
             }
 
-            SharedSheetDocument baseDocument = GetSharedSheetBaseDocument(workbook, document.SheetId);
             SharedSheetDocument commitDocument = CreateCommitReadySharedSheetDocument(document, baseDocument, null);
             if (commitDocument == null)
             {
                 continue;
             }
 
-            string baseHash = GetSharedSheetBaseHash(workbook, document.SheetId);
+            string baseHash = GetSharedSheetBaseHash(workbook, document.SheetId, baseDocument);
             string remoteHash = GetRemoteSharedHash(remoteManifest, document.SheetId);
 
             if (string.Equals(commitDocument.Hash, baseHash, StringComparison.OrdinalIgnoreCase))
@@ -6289,18 +6337,39 @@ public class RibbonController : ExcelRibbon
         GitLabShareInfo shareInfo,
         string token,
         IEnumerable<SharedSheetSelectionItem> items,
-        SharedProjectManifest remoteManifest)
+        SharedProjectManifest remoteManifest,
+        Dictionary<string, SharedSheetDocument> baseDocumentsById,
+        bool bulkBaseReadSucceeded,
+        Action<string> progressReporter = null)
     {
         var conflictSheetNames = new List<string>();
+        List<SharedSheetSelectionItem> itemList = (items ?? Enumerable.Empty<SharedSheetSelectionItem>()).ToList();
+        int totalItemCount = itemList.Count;
+        int completedItemCount = 0;
 
-        foreach (SharedSheetSelectionItem item in items ?? Enumerable.Empty<SharedSheetSelectionItem>())
+        progressReporter?.Invoke("共有先との競合を確認しています（0 / " + totalItemCount + "）");
+        foreach (SharedSheetSelectionItem item in itemList)
         {
+            completedItemCount++;
+            progressReporter?.Invoke(
+                "共有先との競合を確認しています（" + completedItemCount + " / " + totalItemCount + "）: " +
+                (item == null ? "" : item.SheetName));
+
             if (item == null || item.Document == null || string.IsNullOrWhiteSpace(item.SheetId))
             {
                 continue;
             }
 
-            string baseHash = GetSharedSheetBaseHash(workbook, item.SheetId);
+            SharedSheetDocument baseDocument;
+            if (baseDocumentsById == null ||
+                !baseDocumentsById.TryGetValue(item.SheetId, out baseDocument))
+            {
+                baseDocument = bulkBaseReadSucceeded
+                    ? null
+                    : GetSharedSheetBaseDocument(workbook, item.SheetId);
+            }
+
+            string baseHash = GetSharedSheetBaseHash(workbook, item.SheetId, baseDocument);
             string remoteHash = GetRemoteSharedHash(remoteManifest, item.SheetId);
 
             if (string.IsNullOrWhiteSpace(remoteHash) ||
@@ -6311,7 +6380,6 @@ public class RibbonController : ExcelRibbon
 
             SharedSheetDocument localDocument = item.Document;
             SharedSheetDocument displayDocument = item.DisplayDocument ?? localDocument;
-            SharedSheetDocument baseDocument = GetSharedSheetBaseDocument(workbook, item.SheetId);
             SharedSheetDocument remoteDocument = await TryDownloadSharedSheetDocumentAsync(
                 shareInfo,
                 workbook.GetCustomProperty(ssProjectIdCustomPropertyName),
@@ -11344,10 +11412,11 @@ public class RibbonController : ExcelRibbon
             GitLabLastInput pullInfo = workbookInfo.PullInfo;
             GitLabShareInfo shareInfo = workbookInfo.ShareInfo;
             bool pullEnabled = IsPullSourceEnabled(pullInfo) && HasPullSourceSettings(pullInfo);
+            string pullToken = null;
 
             if (pullEnabled)
             {
-                string pullToken = GitLabAuth.GetOrPromptToken(
+                pullToken = GitLabAuth.GetOrPromptToken(
                     pullInfo.BaseUrl,
                     pullInfo.ProjectId);
                 if (string.IsNullOrWhiteSpace(pullToken))
@@ -11356,18 +11425,6 @@ public class RibbonController : ExcelRibbon
                     return;
                 }
 
-                string currentCommitId = await GitLabClient.GetCommitIdAsync(
-                    pullInfo.BaseUrl,
-                    pullInfo.ProjectId,
-                    pullInfo.RefName,
-                    pullToken).ConfigureAwait(true);
-
-                if (!string.IsNullOrWhiteSpace(currentCommitId) &&
-                    !string.Equals(workbookInfo.PullCommitId, currentCommitId, StringComparison.OrdinalIgnoreCase))
-                {
-                    MessageBox.Show("取得元が最新ではありません。先に最新版取得を実行してください。", dialogTitle);
-                    return;
-                }
             }
 
             string shareToken = GitLabAuth.GetOrPromptToken(
@@ -11379,6 +11436,37 @@ public class RibbonController : ExcelRibbon
                 return;
             }
 
+            InitializeLoggerForWorkbookSession(workbook, "shared-commit");
+            progressForm = new PullProgressForm(dialogTitle, "共有前の状態を確認しています...");
+            progressForm.Show();
+            progressForm.Refresh();
+            Action<string> shareProgressReporter = message =>
+            {
+                progressForm.SetStatusText(message);
+                progressForm.AppendLine(message);
+            };
+
+            shareProgressReporter("共有前の状態を確認しています");
+
+            if (pullEnabled)
+            {
+                shareProgressReporter("取得元が最新か確認しています");
+                string currentCommitId = await GitLabClient.GetCommitIdAsync(
+                    pullInfo.BaseUrl,
+                    pullInfo.ProjectId,
+                    pullInfo.RefName,
+                    pullToken).ConfigureAwait(true);
+
+                if (!string.IsNullOrWhiteSpace(currentCommitId) &&
+                    !string.Equals(workbookInfo.PullCommitId, currentCommitId, StringComparison.OrdinalIgnoreCase))
+                {
+                    progressForm.Hide();
+                    MessageBox.Show("取得元が最新ではありません。先に最新版取得を実行してください。", dialogTitle);
+                    return;
+                }
+            }
+
+            shareProgressReporter("共有先の状態を確認しています");
             await EnsureValidatedShareRefNameAsync(
                 shareInfo,
                 shareToken,
@@ -11389,9 +11477,24 @@ public class RibbonController : ExcelRibbon
                 workbookInfo.ProjectId,
                 shareToken).ConfigureAwait(true);
 
-            List<SharedSheetSelectionItem> selectionItems = CollectSharedSheetSelectionItems(workbook, remoteManifest, targetSheetName);
+            shareProgressReporter("保存済みの共有状態を読み込んでいます");
+            bool bulkBaseReadSucceeded;
+            Dictionary<string, SharedSheetDocument> baseDocumentsById =
+                TryLoadSharedSheetBaseDocumentsInBulk(workbook, out bulkBaseReadSucceeded);
+            TryLogSharedDiagnostic(
+                "[SharedCommitBaseBulkRead] documents=" + baseDocumentsById.Count +
+                " succeeded=" + bulkBaseReadSucceeded);
+
+            List<SharedSheetSelectionItem> selectionItems = CollectSharedSheetSelectionItems(
+                workbook,
+                remoteManifest,
+                baseDocumentsById,
+                bulkBaseReadSucceeded,
+                targetSheetName,
+                shareProgressReporter);
             if (selectionItems.Count == 0)
             {
+                progressForm.Hide();
                 MessageBox.Show("共有する変更はありません。", dialogTitle);
                 return;
             }
@@ -11401,21 +11504,27 @@ public class RibbonController : ExcelRibbon
                 workbookInfo.ShareInfo,
                 shareToken,
                 selectionItems,
-                remoteManifest).ConfigureAwait(true);
+                remoteManifest,
+                baseDocumentsById,
+                bulkBaseReadSucceeded,
+                shareProgressReporter).ConfigureAwait(true);
 
             if (conflictSheetNames.Count > 0)
             {
+                progressForm.Hide();
                 SharedSheetSelectionDialog.ShowConflictReview(GetExcelOwnerWindow(), selectionItems);
                 return;
             }
 
             if (!selectionItems.Any(x => x != null && x.Document != null))
             {
+                progressForm.Hide();
                 MessageBox.Show("共有する変更はありません。", dialogTitle);
                 return;
             }
 
             List<SharedSheetSelectionItem> selectedItems;
+            progressForm.Hide();
             if (!SharedSheetSelectionDialog.TryShow(GetExcelOwnerWindow(), selectionItems, out selectedItems))
             {
                 return;
@@ -11427,15 +11536,8 @@ public class RibbonController : ExcelRibbon
                 return;
             }
 
-            InitializeLoggerForWorkbookSession(workbook, "shared-commit");
-
-            progressForm = new PullProgressForm(dialogTitle, "共有中...");
             progressForm.Show();
-            Action<string> shareProgressReporter = message =>
-            {
-                progressForm.SetStatusText(message);
-                progressForm.AppendLine(message);
-            };
+            progressForm.Refresh();
 
             shareProgressReporter("変更共有を開始します");
 
