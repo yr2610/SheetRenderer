@@ -3439,6 +3439,12 @@ function evaluateInScope(expr, scope) {
                 return {};
             }
 
+            // 入れ子の匿名テンプレート本体は、
+            // その匿名テンプレート自身が展開されるまで処理しない
+            if (node !== tplRoot && matchAnonymousTemplateCallText(node.text)) {
+                return;
+            }
+
             var baseLayer = node.params || {};
             var localScope = extendScope(parentScope || {}, baseLayer);
             var scopeSnapshot = extractOwnScopeLayer(localScope);
