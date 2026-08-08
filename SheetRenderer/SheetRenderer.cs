@@ -4056,9 +4056,9 @@ public class RibbonController : ExcelRibbon
                 "id=" + (entry.RowId ?? "") +
                 "\taddr=" + entry.CellAddressText +
                 "\tstate=" + entry.StateLabel +
-                "\tbase=" + (entry.IsRowDeletion ? entry.BaseText : FormatSharedCellValueForDiff(entry.BaseValue)) +
-                "\tlocal=" + (entry.IsRowDeletion ? entry.LocalText : FormatSharedCellValueForDiff(entry.LocalValue)) +
-                "\tremote=" + (entry.IsRowDeletion ? entry.RemoteText : FormatSharedCellValueForDiff(entry.RemoteValue)));
+                "\tbase=" + (entry.IsRowLevelChange ? entry.BaseText : FormatSharedCellValueForDiff(entry.BaseValue)) +
+                "\tlocal=" + (entry.IsRowLevelChange ? entry.LocalText : FormatSharedCellValueForDiff(entry.LocalValue)) +
+                "\tremote=" + (entry.IsRowLevelChange ? entry.RemoteText : FormatSharedCellValueForDiff(entry.RemoteValue)));
         }
 
         return string.Join(Environment.NewLine, lines);

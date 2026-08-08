@@ -55,6 +55,49 @@ internal static class SharedSheetDocumentOperationsTests
             "deleting the final row must still produce one row deletion entry");
         AssertRowDeletion(finalRowDeletedEntries[0], "A");
 
+        SharedSheetDocument rowPresenceBase = CreateDocument(
+            ("A", "base-A", "ignored-A"),
+            ("B", "base-B", "ignored-B"));
+        SharedSheetDocument localDeletedA = CreateDocument(
+            ("B", "base-B", "ignored-B"));
+        SharedSheetDocument remoteEditedA = CreateDocument(
+            ("A", "remote-edit-A", "ignored-A"),
+            ("B", "base-B", "ignored-B"));
+        List<SharedSheetDiffEntry> localDeleteRemoteEditEntries = BuildDiff(
+            rowPresenceBase,
+            localDeletedA,
+            remoteEditedA);
+        AssertRowPresenceDiff(
+            localDeleteRemoteEditEntries,
+            "競合（行削除 vs 編集）",
+            "削除",
+            "存在（編集あり）");
+
+        SharedSheetDocument localEditedA = CreateDocument(
+            ("A", "local-edit-A", "ignored-A"),
+            ("B", "base-B", "ignored-B"));
+        SharedSheetDocument remoteDeletedA = CreateDocument(
+            ("B", "base-B", "ignored-B"));
+        List<SharedSheetDiffEntry> localEditRemoteDeleteEntries = BuildDiff(
+            rowPresenceBase,
+            localEditedA,
+            remoteDeletedA);
+        AssertRowPresenceDiff(
+            localEditRemoteDeleteEntries,
+            "競合（編集 vs 行削除）",
+            "存在（編集あり）",
+            "削除");
+
+        List<SharedSheetDiffEntry> remoteDeleteEntries = BuildDiff(
+            rowPresenceBase,
+            CloneDocument(rowPresenceBase),
+            remoteDeletedA);
+        AssertRowPresenceDiff(
+            remoteDeleteEntries,
+            "共有先で行削除",
+            "存在",
+            "削除");
+
         SharedSheetDocument rowAdded = CreateDocument(
             ("A", "value-A", "ignored-A"),
             ("B", "value-B", "ignored-B"),
@@ -228,10 +271,18 @@ internal static class SharedSheetDocumentOperationsTests
         SharedSheetDocument baseDocument,
         SharedSheetDocument localDocument)
     {
+        return BuildDiff(baseDocument, localDocument, baseDocument);
+    }
+
+    private static List<SharedSheetDiffEntry> BuildDiff(
+        SharedSheetDocument baseDocument,
+        SharedSheetDocument localDocument,
+        SharedSheetDocument remoteDocument)
+    {
         return SharedSheetDiffBuilder.BuildEntries(
             baseDocument,
             localDocument,
-            baseDocument,
+            remoteDocument,
             localDocument,
             ValuesEqual,
             NormalizeValue);
@@ -251,12 +302,37 @@ internal static class SharedSheetDocumentOperationsTests
 
     private static void AssertRowDeletion(SharedSheetDiffEntry entry, string expectedRowId)
     {
-        Assert(entry.IsRowDeletion, "deleted row entry must be row-level");
+        Assert(entry.IsRowDeletion && entry.IsRowLevelChange,
+            "deleted row entry must be row-level");
         Assert(entry.RowId == expectedRowId, "deleted row entry must expose its row ID");
         Assert(entry.StateLabel == "行削除", "deleted row entry must use the row deletion state");
+        Assert(entry.BaseText == "存在" && entry.LocalText == "削除",
+            "deleted row entry must expose Base and Local row presence");
         Assert(string.IsNullOrWhiteSpace(entry.CellAddress),
             "deleted row entry must not contain a cell address");
         Assert(entry.CellAddressText == "-", "deleted row entry must display a dash for its address");
+    }
+
+    private static void AssertRowPresenceDiff(
+        List<SharedSheetDiffEntry> entries,
+        string expectedState,
+        string expectedLocalText,
+        string expectedRemoteText)
+    {
+        Assert(entries.Count == 1,
+            expectedState + ": row presence change must produce exactly one entry");
+        SharedSheetDiffEntry entry = entries[0];
+        Assert(entry.IsRowLevelChange, expectedState + ": entry must be row-level");
+        Assert(entry.RowId == "A", expectedState + ": entry must expose row ID A");
+        Assert(entry.StateLabel == expectedState,
+            expectedState + ": unexpected state label " + entry.StateLabel);
+        Assert(entry.BaseText == "存在", expectedState + ": Base row state must be visible");
+        Assert(entry.LocalText == expectedLocalText,
+            expectedState + ": unexpected Local row state " + entry.LocalText);
+        Assert(entry.HasRemoteValue && entry.RemoteText == expectedRemoteText,
+            expectedState + ": unexpected Remote row state " + entry.RemoteText);
+        Assert(string.IsNullOrWhiteSpace(entry.CellAddress),
+            expectedState + ": row-level entry must not contain a cell address");
     }
 
     private static SharedSheetDocument CreateDocument(

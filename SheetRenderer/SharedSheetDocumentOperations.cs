@@ -40,6 +40,8 @@ internal static class SharedSheetDiffBuilder
         SharedSheetDocument displaySource = displayDocument ?? localDocument;
         Dictionary<string, int> displayRows = CreateDisplayRowMap(displaySource);
         int? startColumn = TryGetStartColumn(displaySource == null ? null : displaySource.RangeAddress);
+        bool hasExplicitRemote = remoteDocument != null &&
+            !ReferenceEquals(remoteDocument, baseDocument);
 
         foreach (string rowId in rowOrder)
         {
@@ -47,27 +49,62 @@ internal static class SharedSheetDiffBuilder
             bool hasLocalRow = localRows.TryGetValue(rowId, out localRow);
             object[] baseRow;
             bool hasBaseRow = baseRows.TryGetValue(rowId, out baseRow);
+            object[] remoteRow;
+            bool hasRemoteRow = remoteRows.TryGetValue(rowId, out remoteRow);
 
-            if (!hasLocalRow)
+            bool localRowDeleted = hasBaseRow && !hasLocalRow;
+            bool remoteRowDeleted = hasBaseRow && hasExplicitRemote && !hasRemoteRow;
+            if (localRowDeleted || remoteRowDeleted)
             {
-                if (hasBaseRow)
+                bool localRowChanged = hasLocalRow &&
+                    !RowsEqual(baseRow, localRow, columnCount, ignoredColumns, valuesEqual);
+                bool remoteRowChanged = hasRemoteRow &&
+                    !RowsEqual(baseRow, remoteRow, columnCount, ignoredColumns, valuesEqual);
+
+                string stateLabel;
+                if (localRowDeleted && remoteRowDeleted)
                 {
-                    entries.Add(new SharedSheetDiffEntry
-                    {
-                        SheetId = localDocument.SheetId,
-                        SheetName = localDocument.SheetName,
-                        RowId = rowId,
-                        CellAddress = null,
-                        StateLabel = "行削除",
-                        IsRowDeletion = true
-                    });
+                    stateLabel = "双方で行削除";
+                }
+                else if (localRowDeleted && remoteRowChanged)
+                {
+                    stateLabel = "競合（行削除 vs 編集）";
+                }
+                else if (localRowDeleted)
+                {
+                    stateLabel = "行削除";
+                }
+                else if (localRowChanged)
+                {
+                    stateLabel = "競合（編集 vs 行削除）";
+                }
+                else
+                {
+                    stateLabel = "共有先で行削除";
                 }
 
+                entries.Add(new SharedSheetDiffEntry
+                {
+                    SheetId = localDocument.SheetId,
+                    SheetName = localDocument.SheetName,
+                    RowId = rowId,
+                    CellAddress = null,
+                    StateLabel = stateLabel,
+                    IsRowDeletion = localRowDeleted,
+                    IsRowLevelChange = true,
+                    BaseRowState = "存在",
+                    LocalRowState = hasLocalRow
+                        ? (localRowChanged ? "存在（編集あり）" : "存在")
+                        : "削除",
+                    RemoteRowState = hasExplicitRemote
+                        ? (hasRemoteRow
+                            ? (remoteRowChanged ? "存在（編集あり）" : "存在")
+                            : "削除")
+                        : null,
+                    HasRemoteValue = hasExplicitRemote
+                });
                 continue;
             }
-
-            object[] remoteRow;
-            remoteRows.TryGetValue(rowId, out remoteRow);
 
             for (int column = 0; column < columnCount; column++)
             {
@@ -111,6 +148,32 @@ internal static class SharedSheetDiffBuilder
         }
 
         return entries;
+    }
+
+    private static bool RowsEqual(
+        object[] left,
+        object[] right,
+        int columnCount,
+        HashSet<int> ignoredColumns,
+        Func<object, object, bool> valuesEqual)
+    {
+        if (left == null || right == null)
+        {
+            return left == null && right == null;
+        }
+
+        for (int column = 0; column < columnCount; column++)
+        {
+            if (!ignoredColumns.Contains(column) &&
+                !valuesEqual(
+                    SharedSheetRowOperations.GetCellValue(left, column),
+                    SharedSheetRowOperations.GetCellValue(right, column)))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static string BuildCellStateLabel(

@@ -25,6 +25,10 @@ internal sealed class SharedSheetDiffEntry
     public object RemoteValue { get; set; }
     public bool HasRemoteValue { get; set; }
     public bool IsRowDeletion { get; set; }
+    public bool IsRowLevelChange { get; set; }
+    public string BaseRowState { get; set; }
+    public string LocalRowState { get; set; }
+    public string RemoteRowState { get; set; }
 
     public string CellAddressText
     {
@@ -33,17 +37,25 @@ internal sealed class SharedSheetDiffEntry
 
     public string BaseText
     {
-        get { return IsRowDeletion ? "存在" : FormatValue(BaseValue); }
+        get { return IsRowLevelChange ? (BaseRowState ?? string.Empty) : FormatValue(BaseValue); }
     }
 
     public string LocalText
     {
-        get { return IsRowDeletion ? "削除" : FormatValue(LocalValue); }
+        get { return IsRowLevelChange ? (LocalRowState ?? string.Empty) : FormatValue(LocalValue); }
     }
 
     public string RemoteText
     {
-        get { return HasRemoteValue ? FormatValue(RemoteValue) : string.Empty; }
+        get
+        {
+            if (!HasRemoteValue)
+            {
+                return string.Empty;
+            }
+
+            return IsRowLevelChange ? (RemoteRowState ?? string.Empty) : FormatValue(RemoteValue);
+        }
     }
 
     private static string FormatValue(object value)

@@ -152,7 +152,7 @@ internal sealed class SharedSheetDiffDialog : Form
 
         result.Columns.Add(CreateTextColumn("RowId", "ID", 140));
         result.Columns.Add(CreateTextColumn("CellAddressText", "セル", 80));
-        result.Columns.Add(CreateTextColumn("StateLabel", "状態", 92));
+        result.Columns.Add(CreateTextColumn("StateLabel", "状態", 180));
         result.Columns.Add(CreateTextColumn("BaseText", "Base", 240));
         result.Columns.Add(CreateTextColumn("LocalText", "Local", 240, showRemote
             ? DataGridViewAutoSizeColumnMode.None
@@ -200,7 +200,8 @@ internal sealed class SharedSheetDiffDialog : Form
 
     private static Color GetStateBackColor(string stateLabel)
     {
-        if (string.Equals(stateLabel, "競合", StringComparison.Ordinal))
+        if (!string.IsNullOrWhiteSpace(stateLabel) &&
+            stateLabel.StartsWith("競合", StringComparison.Ordinal))
         {
             return Color.MistyRose;
         }
