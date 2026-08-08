@@ -150,7 +150,8 @@ internal sealed class SharedSheetDiffDialog : Form
             SelectionMode = DataGridViewSelectionMode.FullRowSelect
         };
 
-        result.Columns.Add(CreateTextColumn("CellAddress", "セル", 80));
+        result.Columns.Add(CreateTextColumn("RowId", "ID", 140));
+        result.Columns.Add(CreateTextColumn("CellAddressText", "セル", 80));
         result.Columns.Add(CreateTextColumn("StateLabel", "状態", 92));
         result.Columns.Add(CreateTextColumn("BaseText", "Base", 240));
         result.Columns.Add(CreateTextColumn("LocalText", "Local", 240, showRemote

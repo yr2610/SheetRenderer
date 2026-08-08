@@ -24,15 +24,21 @@ internal sealed class SharedSheetDiffEntry
     public object LocalValue { get; set; }
     public object RemoteValue { get; set; }
     public bool HasRemoteValue { get; set; }
+    public bool IsRowDeletion { get; set; }
+
+    public string CellAddressText
+    {
+        get { return string.IsNullOrWhiteSpace(CellAddress) ? "-" : CellAddress; }
+    }
 
     public string BaseText
     {
-        get { return FormatValue(BaseValue); }
+        get { return IsRowDeletion ? "存在" : FormatValue(BaseValue); }
     }
 
     public string LocalText
     {
-        get { return FormatValue(LocalValue); }
+        get { return IsRowDeletion ? "削除" : FormatValue(LocalValue); }
     }
 
     public string RemoteText

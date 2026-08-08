@@ -57,6 +57,8 @@ internal static class SharedSheetCandidateComparerTests
         settingsChanged.RangeInfo.IgnoreColumnOffsets = new HashSet<int> { 0, 1 };
         AssertEquivalent("range settings change", settingsChanged, CreateDocument(), false);
 
+        SharedSheetDocumentOperationsTests.Run();
+
         Console.WriteLine("shared sheet candidate comparer tests passed");
         return 0;
     }

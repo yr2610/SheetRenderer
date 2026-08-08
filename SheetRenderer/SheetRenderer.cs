@@ -4008,84 +4008,13 @@ public class RibbonController : ExcelRibbon
         SharedSheetDocument remoteDocument,
         SharedSheetDocument displayDocument = null)
     {
-        var entries = new List<SharedSheetDiffEntry>();
-        if (localDocument == null || !CanMergeSharedSheetByRowIds(localDocument))
-        {
-            return entries;
-        }
-
-        int columnCount = Math.Max(
-            GetSharedSheetColumnCount(localDocument),
-            Math.Max(GetSharedSheetColumnCount(baseDocument), GetSharedSheetColumnCount(remoteDocument)));
-
-        var ignoreColumnOffsets = localDocument.RangeInfo == null || localDocument.RangeInfo.IgnoreColumnOffsets == null
-            ? new HashSet<int>()
-            : new HashSet<int>(localDocument.RangeInfo.IgnoreColumnOffsets);
-
-        Dictionary<string, object[]> localRows = CreateSharedSheetRowMap(localDocument);
-        Dictionary<string, object[]> remoteRows = CreateSharedSheetRowMap(remoteDocument);
-        Dictionary<string, object[]> baseRows = CreateSharedSheetRowMap(baseDocument);
-        List<string> rowOrder = BuildSharedSheetRowOrder(localDocument, remoteDocument, baseDocument);
-        SharedSheetDocument displaySourceDocument = displayDocument ?? localDocument;
-        Dictionary<string, int> displayRows = CreateSharedSheetDisplayRowMap(displaySourceDocument);
-        int? startColumn = TryGetSharedSheetStartColumn(displaySourceDocument.RangeAddress);
-
-        foreach (string rowId in rowOrder)
-        {
-            object[] localRow;
-            localRows.TryGetValue(rowId, out localRow);
-            if (localRow == null)
-            {
-                continue;
-            }
-
-            object[] remoteRow;
-            remoteRows.TryGetValue(rowId, out remoteRow);
-
-            object[] baseRow;
-            baseRows.TryGetValue(rowId, out baseRow);
-
-            for (int col = 0; col < columnCount; col++)
-            {
-                if (ignoreColumnOffsets.Contains(col))
-                {
-                    continue;
-                }
-
-                object baseValue = GetSharedSheetCellValue(baseRow, col);
-                object localValue = GetSharedSheetCellValue(localRow, col);
-                object remoteValue = remoteRow == null ? baseValue : GetSharedSheetCellValue(remoteRow, col);
-
-                if (AreSharedCellValuesEqual(baseValue, localValue) &&
-                    AreSharedCellValuesEqual(localValue, remoteValue))
-                {
-                    continue;
-                }
-
-                int displayRow;
-                bool hasDisplayRow = displayRows.TryGetValue(rowId, out displayRow);
-                string displayAddress = hasDisplayRow && startColumn.HasValue
-                    ? GetExcelColumnLetter(startColumn.Value + col) + displayRow
-                    : "?";
-
-                entries.Add(new SharedSheetDiffEntry
-                {
-                    SheetId = localDocument.SheetId,
-                    SheetName = localDocument.SheetName,
-                    RowId = rowId,
-                    CellAddress = displayAddress,
-                    StateLabel = BuildSharedDiffStateLabel(baseValue, localValue, remoteValue),
-                    BaseValue = NormalizeSharedCellValue(baseValue),
-                    LocalValue = NormalizeSharedCellValue(localValue),
-                    RemoteValue = NormalizeSharedCellValue(remoteValue),
-                    HasRemoteValue = remoteDocument != null &&
-                        !ReferenceEquals(remoteDocument, baseDocument) &&
-                        !AreSharedCellValuesEqual(remoteValue, baseValue)
-                });
-            }
-        }
-
-        return entries;
+        return SharedSheetDiffBuilder.BuildEntries(
+            baseDocument,
+            localDocument,
+            remoteDocument,
+            displayDocument,
+            AreSharedCellValuesEqual,
+            NormalizeSharedCellValue);
     }
 
     private static string BuildSharedSheetDiffText(
@@ -4124,11 +4053,12 @@ public class RibbonController : ExcelRibbon
         foreach (SharedSheetDiffEntry entry in entries)
         {
             lines.Add(
-                "addr=" + entry.CellAddress +
+                "id=" + (entry.RowId ?? "") +
+                "\taddr=" + entry.CellAddressText +
                 "\tstate=" + entry.StateLabel +
-                "\tbase=" + FormatSharedCellValueForDiff(entry.BaseValue) +
-                "\tlocal=" + FormatSharedCellValueForDiff(entry.LocalValue) +
-                "\tremote=" + FormatSharedCellValueForDiff(entry.RemoteValue));
+                "\tbase=" + (entry.IsRowDeletion ? entry.BaseText : FormatSharedCellValueForDiff(entry.BaseValue)) +
+                "\tlocal=" + (entry.IsRowDeletion ? entry.LocalText : FormatSharedCellValueForDiff(entry.LocalValue)) +
+                "\tremote=" + (entry.IsRowDeletion ? entry.RemoteText : FormatSharedCellValueForDiff(entry.RemoteValue)));
         }
 
         return string.Join(Environment.NewLine, lines);
@@ -5887,122 +5817,26 @@ public class RibbonController : ExcelRibbon
         SharedSheetDocument localDocument,
         SharedSheetDocument remoteDocument)
     {
-        if (localDocument == null)
+        SharedSheetUploadMergeResult mergeResult = SharedSheetUploadMergeEngine.Merge(
+            baseDocument,
+            localDocument,
+            remoteDocument,
+            AreSharedCellValuesEqual,
+            NormalizeSharedCellValue);
+        if (mergeResult == null)
         {
             return null;
         }
 
-        int columnCount = Math.Max(
-            GetSharedSheetColumnCount(localDocument),
-            Math.Max(GetSharedSheetColumnCount(baseDocument), GetSharedSheetColumnCount(remoteDocument)));
-
-        var ignoreColumnOffsets = localDocument.RangeInfo == null || localDocument.RangeInfo.IgnoreColumnOffsets == null
-            ? new HashSet<int>()
-            : new HashSet<int>(localDocument.RangeInfo.IgnoreColumnOffsets);
-
-        bool useRowIdMerge =
-            CanMergeSharedSheetByRowIds(localDocument) &&
-            (baseDocument == null || CanMergeSharedSheetByRowIds(baseDocument)) &&
-            (remoteDocument == null || CanMergeSharedSheetByRowIds(remoteDocument));
-
-        if (!useRowIdMerge)
+        if (mergeResult.MergedDocument != null)
         {
-            return new SharedSheetMergeResult
-            {
-                MergedDocument = localDocument,
-                ConflictCount = 1
-            };
+            mergeResult.MergedDocument.Hash = ComputeSharedSheetHash(mergeResult.MergedDocument);
         }
-
-        var mergedRows = new List<object[]>();
-        var mergedRowIds = new List<object>();
-        int conflictCount = 0;
-
-        Dictionary<string, object[]> localRows = CreateSharedSheetRowMap(localDocument);
-        Dictionary<string, object[]> remoteRows = CreateSharedSheetRowMap(remoteDocument);
-        Dictionary<string, object[]> baseRows = CreateSharedSheetRowMap(baseDocument);
-        List<string> rowOrder = BuildSharedSheetRowOrder(localDocument, remoteDocument, baseDocument);
-
-        foreach (string rowId in rowOrder)
-        {
-            object[] localRow;
-            localRows.TryGetValue(rowId, out localRow);
-
-            object[] remoteRow;
-            remoteRows.TryGetValue(rowId, out remoteRow);
-
-            object[] baseRow;
-            baseRows.TryGetValue(rowId, out baseRow);
-
-            var mergedRow = new object[columnCount];
-            for (int col = 0; col < columnCount; col++)
-            {
-                object baseValue = GetSharedSheetCellValue(baseRow, col);
-                object localValue = localRow == null ? baseValue : GetSharedSheetCellValue(localRow, col);
-                object remoteValue = remoteRow == null ? baseValue : GetSharedSheetCellValue(remoteRow, col);
-
-                if (ignoreColumnOffsets.Contains(col))
-                {
-                    mergedRow[col] = NormalizeSharedCellValue(localValue);
-                    continue;
-                }
-
-                if (AreSharedCellValuesEqual(localValue, baseValue))
-                {
-                    mergedRow[col] = NormalizeSharedCellValue(remoteValue);
-                }
-                else if (AreSharedCellValuesEqual(remoteValue, baseValue))
-                {
-                    mergedRow[col] = NormalizeSharedCellValue(localValue);
-                }
-                else if (AreSharedCellValuesEqual(localValue, remoteValue))
-                {
-                    mergedRow[col] = NormalizeSharedCellValue(localValue);
-                }
-                else
-                {
-                    mergedRow[col] = NormalizeSharedCellValue(localValue);
-                    conflictCount++;
-                }
-            }
-
-            mergedRows.Add(mergedRow);
-            mergedRowIds.Add(rowId);
-        }
-
-        if (mergedRows.Count == 0 && localDocument.Values != null && localDocument.Values.Length > 0)
-        {
-            return new SharedSheetMergeResult
-            {
-                MergedDocument = localDocument,
-                ConflictCount = 1
-            };
-        }
-
-        var mergedDocument = new SharedSheetDocument
-        {
-            Project = localDocument.Project,
-            SheetId = localDocument.SheetId,
-            SheetName = localDocument.SheetName,
-            RangeAddress = localDocument.RangeAddress,
-            RangeInfo = localDocument.RangeInfo == null ? null : new SharedRangeInfo
-            {
-                IdColumnOffset = localDocument.RangeInfo.IdColumnOffset,
-                IgnoreColumnOffsets = localDocument.RangeInfo.IgnoreColumnOffsets == null
-                    ? new HashSet<int>()
-                    : new HashSet<int>(localDocument.RangeInfo.IgnoreColumnOffsets)
-            },
-            RowIds = mergedRowIds.Count == 0
-                ? (localDocument.RowIds ?? new object[0])
-                : mergedRowIds.Cast<object>().ToArray(),
-            Values = mergedRows.ToArray()
-        };
-        mergedDocument.Hash = ComputeSharedSheetHash(mergedDocument);
 
         return new SharedSheetMergeResult
         {
-            MergedDocument = mergedDocument,
-            ConflictCount = conflictCount
+            MergedDocument = mergeResult.MergedDocument,
+            ConflictCount = mergeResult.ConflictCount
         };
     }
 

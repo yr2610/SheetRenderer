@@ -180,6 +180,7 @@
     <Compile Include="ShellBridge.cs" />
     <Compile Include="SharedSheetConflictResolutionDialog.cs" />
     <Compile Include="SharedSheetCandidateComparer.cs" />
+    <Compile Include="SharedSheetDocumentOperations.cs" />
     <Compile Include="SharedSheetDiffDialog.cs">
       <SubType>Form</SubType>
     </Compile>
