@@ -179,6 +179,7 @@
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="ShellBridge.cs" />
     <Compile Include="SharedSheetConflictResolutionDialog.cs" />
+    <Compile Include="SharedSheetCandidateComparer.cs" />
     <Compile Include="SharedSheetDiffDialog.cs">
       <SubType>Form</SubType>
     </Compile>

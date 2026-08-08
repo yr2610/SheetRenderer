@@ -6415,6 +6415,20 @@ public class RibbonController : ExcelRibbon
                 continue;
             }
 
+            if (SharedSheetCandidateComparer.AreEquivalentIgnoringExcludedColumnValues(
+                commitDocument,
+                baseDocument,
+                NormalizeSharedCellValue))
+            {
+                TryLogSharedDiagnostic(
+                    "[SharedCommitCandidateIgnored] reason=excludedColumnValuesOnly" +
+                    " sheetId=" + (commitDocument.SheetId ?? "") +
+                    " sheetName=" + (commitDocument.SheetName ?? "") +
+                    " currentHash=" + (commitDocument.Hash ?? "") +
+                    " baseHash=" + (baseHash ?? ""));
+                continue;
+            }
+
             if (string.IsNullOrWhiteSpace(remoteHash) &&
                 string.IsNullOrWhiteSpace(baseHash) &&
                 IsSharedSheetEmpty(commitDocument))
