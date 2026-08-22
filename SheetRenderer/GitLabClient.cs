@@ -115,33 +115,15 @@ public static class GitLabClient
         string privateToken,
         CancellationToken cancellationToken = default(CancellationToken))
     {
-        try
-        {
-            return await DownloadFileViaTreeAsync(
+        return await GitLabTreePaging.TryDownloadAsync(
+            () => DownloadFileViaTreeAsync(
                 baseUrl,
                 projectId,
                 folderPath,
                 fileName,
                 refName,
                 privateToken,
-                cancellationToken).ConfigureAwait(false);
-        }
-        catch (InvalidOperationException ex)
-        {
-            if (ex.Message != null &&
-                ex.Message.IndexOf("GitLab resource not found.", StringComparison.Ordinal) >= 0)
-            {
-                return null;
-            }
-
-            if (ex.Message != null &&
-                ex.Message.StartsWith("File not found in tree.", StringComparison.Ordinal))
-            {
-                return null;
-            }
-
-            throw;
-        }
+                cancellationToken)).ConfigureAwait(false);
     }
 
     internal static async Task<List<GitLabTreeItem>> ListTreeItemsAsync(
@@ -211,7 +193,10 @@ public static class GitLabClient
                     ThrowGitLabApiException(res, treeUrl, bodyBytes);
                 }
 
-                return DeserializeJson<List<GitLabTreeItem>>(bodyBytes) ?? new List<GitLabTreeItem>();
+                return GitLabResponseValidation.ReadTreePage(
+                    (int)res.StatusCode,
+                    bodyBytes,
+                    treeUrl);
             }
         }
     }
@@ -367,7 +352,10 @@ public static class GitLabClient
 
                 if (res.StatusCode == HttpStatusCode.NotFound)
                 {
-                    return null;
+                    return GitLabResponseValidation.ReadRepositoryFileInfo(
+                        (int)res.StatusCode,
+                        bytes,
+                        url);
                 }
 
                 if (!res.IsSuccessStatusCode)
@@ -375,7 +363,10 @@ public static class GitLabClient
                     ThrowGitLabApiException(res, url, bytes);
                 }
 
-                return DeserializeJson<GitLabRepositoryFileInfo>(bytes);
+                return GitLabResponseValidation.ReadRepositoryFileInfo(
+                    (int)res.StatusCode,
+                    bytes,
+                    url);
             }
         }
     }
@@ -552,9 +543,10 @@ public static class GitLabClient
                     ThrowGitLabApiException(res, url, bytes);
                 }
 
-                var commits = DeserializeJson<List<GitLabCommitInfo>>(bytes);
-                GitLabCommitInfo commit = commits == null ? null : commits.FirstOrDefault();
-                return commit == null ? null : commit.Id;
+                return GitLabResponseValidation.ReadPathLastCommitId(
+                    (int)res.StatusCode,
+                    bytes,
+                    url);
             }
         }
     }

@@ -59,6 +59,7 @@ internal static class SharedSheetCandidateComparerTests
 
         SharedSheetDocumentOperationsTests.Run();
         SharedManifestSafetyTests.Run();
+        GitLabClientSafetyTests.Run();
 
         Console.WriteLine("shared sheet candidate comparer tests passed");
         return 0;

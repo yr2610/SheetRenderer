@@ -377,21 +377,6 @@ internal static class SharedManifestSafety
             };
         }
 
-        InvalidOperationException invalidOperationException = exception as InvalidOperationException;
-        if (invalidOperationException != null &&
-            invalidOperationException.Message != null &&
-            invalidOperationException.Message.StartsWith(
-                "File not found in tree.",
-                StringComparison.Ordinal))
-        {
-            return new SharedManifestContentProbe
-            {
-                State = SharedManifestEndpointState.NotFound,
-                StatusCode = 404,
-                ContentRoute = "tree-blob"
-            };
-        }
-
         GitLabTreeBlobDownloadException blobFailure = exception as GitLabTreeBlobDownloadException;
         SharedManifestEndpointClassification classification = ClassifyEndpointException(
             blobFailure == null ? exception : blobFailure.InnerException);
@@ -408,6 +393,18 @@ internal static class SharedManifestSafety
 
     public static SharedManifestEndpointClassification ClassifyEndpointException(Exception exception)
     {
+        GitLabResponseFormatException responseFormatException =
+            FindGitLabResponseFormatException(exception);
+        if (responseFormatException != null)
+        {
+            return new SharedManifestEndpointClassification
+            {
+                State = SharedManifestEndpointState.Failed,
+                StatusCode = responseFormatException.StatusCode,
+                Error = exception
+            };
+        }
+
         GitLabApiException apiException = FindGitLabApiException(exception);
         if (apiException != null)
         {
@@ -662,6 +659,15 @@ internal static class SharedManifestSafety
                 " url=" + apiError.Url +
                 " body=" + NormalizeForLog(apiError.ResponseBody, 1000);
         }
+        else if (FindGitLabResponseFormatException(error) != null)
+        {
+            GitLabResponseFormatException formatError = FindGitLabResponseFormatException(error);
+            detail =
+                " status=" + formatError.StatusCode +
+                " url=" + formatError.Url +
+                " expected=" + NormalizeForLog(formatError.ExpectedFormat, 300) +
+                " body=" + NormalizeForLog(formatError.ResponseBody, 1000);
+        }
         else if (error != null)
         {
             detail = " error=" + error.GetType().Name +
@@ -723,6 +729,25 @@ internal static class SharedManifestSafety
             if (apiException != null)
             {
                 return apiException;
+            }
+
+            current = current.InnerException;
+        }
+
+        return null;
+    }
+
+    private static GitLabResponseFormatException FindGitLabResponseFormatException(
+        Exception exception)
+    {
+        Exception current = exception;
+        while (current != null)
+        {
+            GitLabResponseFormatException formatException =
+                current as GitLabResponseFormatException;
+            if (formatException != null)
+            {
+                return formatException;
             }
 
             current = current.InnerException;

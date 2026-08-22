@@ -163,6 +163,7 @@
     <Compile Include="GitLabProjectInfo.cs" />
     <Compile Include="GitLabRepoDialog.cs" />
     <Compile Include="GitLabRepositoryFileInfo.cs" />
+    <Compile Include="GitLabResponseValidation.cs" />
     <Compile Include="GitLabShareInfo.cs" />
     <Compile Include="GitLabShareSettingsDialog.cs" />
     <Compile Include="GitLabShareInfoStore.cs" />

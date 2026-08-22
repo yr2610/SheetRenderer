@@ -46,6 +46,20 @@ internal sealed class GitLabTreeBlobDownloadException : InvalidOperationExceptio
 
 internal static class GitLabTreePaging
 {
+    public static async Task<byte[]> TryDownloadAsync(Func<Task<byte[]>> download)
+    {
+        if (download == null) throw new ArgumentNullException(nameof(download));
+
+        try
+        {
+            return await download().ConfigureAwait(false);
+        }
+        catch (GitLabTreeFileNotFoundException)
+        {
+            return null;
+        }
+    }
+
     public static async Task<GitLabTreeSearchResult> FindBlobAsync(
         string fileName,
         int pageSize,
@@ -58,8 +72,12 @@ internal static class GitLabTreePaging
         int page = 1;
         while (true)
         {
-            List<GitLabTreeItem> items = await pageLoader(page).ConfigureAwait(false) ??
-                new List<GitLabTreeItem>();
+            List<GitLabTreeItem> items = await pageLoader(page).ConfigureAwait(false);
+            if (items == null)
+            {
+                throw new InvalidOperationException(
+                    "GitLab repository tree page loader returned null for page " + page + ".");
+            }
 
             foreach (GitLabTreeItem item in items)
             {

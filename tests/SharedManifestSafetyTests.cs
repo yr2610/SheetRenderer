@@ -213,7 +213,9 @@ internal static class SharedManifestSafetyTests
         AssertIndeterminateAndCreateRejected(result, nameof(TreeBlobReadFailureIsIndeterminateAndNotCreate));
 
         SharedManifestContentProbe absentFromTree = SharedManifestSafety.ClassifyTreeBlobException(
-            new InvalidOperationException("File not found in tree. folder=project file=_manifest.json ref=main"));
+            new GitLabTreeFileNotFoundException(
+                "File not found in tree. folder=project file=_manifest.json ref=main",
+                2));
         Assert(absentFromTree.State == SharedManifestEndpointState.NotFound,
             nameof(TreeBlobReadFailureIsIndeterminateAndNotCreate) + ": absent tree entry is a confirmed route miss");
     }
@@ -543,6 +545,11 @@ internal static class SharedManifestSafetyTests
             ApiError(408, "request timeout"),
             ApiError(429, "rate limited"),
             ApiError(500, "server error"),
+            new GitLabResponseFormatException(
+                200,
+                "https://gitlab.example/api/v4/projects/1/repository/files/manifest?ref=main",
+                "a non-null repository file metadata object",
+                Encoding.UTF8.GetBytes("null")),
             new IOException("network failed")
         };
 
