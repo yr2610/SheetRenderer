@@ -12,6 +12,7 @@ internal enum SharedManifestEndpointState
 {
     Found,
     NotFound,
+    Unsupported,
     Failed
 }
 
@@ -30,6 +31,26 @@ internal sealed class SharedManifestContentProbe
     public SharedManifestEndpointState State { get; set; }
     public int? StatusCode { get; set; }
     public byte[] Content { get; set; }
+    public string LastCommitId { get; set; }
+    public string ContentRoute { get; set; }
+    public string ContentRef { get; set; }
+    public int? PagesChecked { get; set; }
+    public int? FoundPage { get; set; }
+    public Exception Error { get; set; }
+}
+
+internal sealed class SharedManifestCommitProbe
+{
+    public SharedManifestEndpointState State { get; set; }
+    public int? StatusCode { get; set; }
+    public string LastCommitId { get; set; }
+    public Exception Error { get; set; }
+}
+
+internal sealed class SharedManifestEndpointClassification
+{
+    public SharedManifestEndpointState State { get; set; }
+    public int? StatusCode { get; set; }
     public Exception Error { get; set; }
 }
 
@@ -39,6 +60,8 @@ internal sealed class SharedManifestProbeResult
     public SharedProjectManifest Manifest { get; set; }
     public string LastCommitId { get; set; }
     public string ContentRoute { get; set; }
+    public string ContentRef { get; set; }
+    public string DecisionReason { get; set; }
     public Exception Error { get; set; }
 }
 
@@ -79,104 +102,188 @@ internal static class SharedManifestSafety
 {
     public static async Task<SharedManifestProbeResult> ProbeAsync(
         bool projectAndRefValidated,
+        string branchRef,
         Func<Task<SharedManifestMetadataProbe>> metadataProbe,
-        Func<Task<SharedManifestContentProbe>> rawProbe,
-        Func<Task<SharedManifestContentProbe>> treeBlobProbe,
-        Func<Task<string>> lastCommitIdProbe,
+        Func<Task<SharedManifestCommitProbe>> lastCommitIdProbe,
+        Func<string, Task<SharedManifestContentProbe>> rawProbe,
+        Func<string, Task<SharedManifestContentProbe>> treeBlobProbe,
         Func<byte[], SharedProjectManifest> manifestParser,
         Action<string> log)
     {
+        if (string.IsNullOrWhiteSpace(branchRef)) throw new ArgumentException("Branch ref is required.", nameof(branchRef));
         if (metadataProbe == null) throw new ArgumentNullException(nameof(metadataProbe));
+        if (lastCommitIdProbe == null) throw new ArgumentNullException(nameof(lastCommitIdProbe));
         if (rawProbe == null) throw new ArgumentNullException(nameof(rawProbe));
         if (treeBlobProbe == null) throw new ArgumentNullException(nameof(treeBlobProbe));
-        if (lastCommitIdProbe == null) throw new ArgumentNullException(nameof(lastCommitIdProbe));
         if (manifestParser == null) throw new ArgumentNullException(nameof(manifestParser));
 
         SharedManifestMetadataProbe metadata = await InvokeMetadataProbeAsync(metadataProbe).ConfigureAwait(false);
         LogEndpoint(log, "metadata", metadata.State, metadata.StatusCode, metadata.Error);
         if (metadata.State == SharedManifestEndpointState.Failed)
         {
-            return Indeterminate(metadata.Error, log);
+            return Indeterminate(metadata.Error, "metadata-failed", log);
         }
 
         bool metadataContentWasUnusable = false;
         if (metadata.State == SharedManifestEndpointState.Found)
         {
             byte[] metadataBytes;
-            if (TryDecodeMetadataContent(metadata, out metadataBytes))
+            if (TryDecodeMetadataContent(metadata, out metadataBytes) &&
+                !string.IsNullOrWhiteSpace(metadata.LastCommitId))
             {
                 LogSkipped(log, "raw");
                 LogSkipped(log, "tree-blob");
-                return await BuildFoundResultAsync(
+                LogSkipped(log, "path-commits");
+                return BuildFoundResult(
                     metadataBytes,
                     metadata.LastCommitId,
                     "metadata",
-                    lastCommitIdProbe,
+                    metadata.LastCommitId,
                     manifestParser,
-                    log).ConfigureAwait(false);
+                    log);
             }
 
             metadataContentWasUnusable = true;
-            Log(log, "[SharedManifestProbe] route=metadata content=unusable fallback=true");
+            Log(log,
+                "[SharedManifestProbe] route=metadata snapshot=unusable fallback=true" +
+                " hasContent=" + (metadataBytes != null && metadataBytes.Length > 0) +
+                " hasLastCommitId=" + (!string.IsNullOrWhiteSpace(metadata.LastCommitId)));
         }
 
-        SharedManifestContentProbe raw = await InvokeContentProbeAsync(rawProbe).ConfigureAwait(false);
-        LogEndpoint(log, "raw", raw.State, raw.StatusCode, raw.Error);
-        if (raw.State == SharedManifestEndpointState.Failed)
+        string pinnedCommitId = metadata.State == SharedManifestEndpointState.Found
+            ? metadata.LastCommitId
+            : null;
+        SharedManifestCommitProbe commitProbe = null;
+        if (string.IsNullOrWhiteSpace(pinnedCommitId))
         {
-            return Indeterminate(raw.Error, log);
-        }
+            commitProbe = await InvokeCommitProbeAsync(lastCommitIdProbe).ConfigureAwait(false);
+            LogCommitEndpoint(log, commitProbe);
+            if (commitProbe.State == SharedManifestEndpointState.Failed)
+            {
+                return Indeterminate(commitProbe.Error, "path-commits-failed", log);
+            }
 
-        bool rawContentWasUnusable = raw.State == SharedManifestEndpointState.Found &&
-            (raw.Content == null || raw.Content.Length == 0);
-        if (raw.State == SharedManifestEndpointState.Found && !rawContentWasUnusable)
+            if (commitProbe.State == SharedManifestEndpointState.Found &&
+                !string.IsNullOrWhiteSpace(commitProbe.LastCommitId))
+            {
+                pinnedCommitId = commitProbe.LastCommitId;
+            }
+        }
+        else
         {
-            LogSkipped(log, "tree-blob");
-            return await BuildFoundResultAsync(
-                raw.Content,
-                metadata == null ? null : metadata.LastCommitId,
-                "raw",
-                lastCommitIdProbe,
-                manifestParser,
-                log).ConfigureAwait(false);
+            LogSkipped(log, "path-commits");
         }
 
-        if (rawContentWasUnusable)
+        if (!string.IsNullOrWhiteSpace(pinnedCommitId))
         {
-            Log(log, "[SharedManifestProbe] route=raw content=unusable fallback=true");
+            Log(log,
+                "[SharedManifestProbe] pinnedCommitId=" + pinnedCommitId +
+                " contentRefType=commit");
+
+            SharedManifestContentProbe pinnedRaw = await InvokeContentProbeAsync(
+                rawProbe,
+                pinnedCommitId).ConfigureAwait(false);
+            LogContentEndpoint(log, "raw", pinnedRaw);
+            if (pinnedRaw.State == SharedManifestEndpointState.Failed)
+            {
+                return Indeterminate(pinnedRaw.Error, "pinned-raw-failed", log);
+            }
+
+            if (pinnedRaw.State == SharedManifestEndpointState.Found)
+            {
+                return BuildPinnedFoundResult(
+                    pinnedRaw,
+                    pinnedCommitId,
+                    manifestParser,
+                    log);
+            }
+
+            SharedManifestContentProbe pinnedTree = await InvokeContentProbeAsync(
+                treeBlobProbe,
+                pinnedCommitId).ConfigureAwait(false);
+            LogContentEndpoint(log, "tree-blob", pinnedTree);
+            if (pinnedTree.State == SharedManifestEndpointState.Failed)
+            {
+                return Indeterminate(pinnedTree.Error, "pinned-tree-blob-failed", log);
+            }
+
+            if (pinnedTree.State == SharedManifestEndpointState.Found)
+            {
+                return BuildPinnedFoundResult(
+                    pinnedTree,
+                    pinnedCommitId,
+                    manifestParser,
+                    log);
+            }
+
+            return Indeterminate(
+                new InvalidOperationException(
+                    "共有マニフェストのコミットIDは取得できましたが、同じコミット時点の内容を取得できませんでした。"),
+                "pinned-content-unavailable",
+                log);
         }
 
-        SharedManifestContentProbe treeBlob = await InvokeContentProbeAsync(treeBlobProbe).ConfigureAwait(false);
-        LogEndpoint(log, "tree-blob", treeBlob.State, treeBlob.StatusCode, treeBlob.Error);
-        if (treeBlob.State == SharedManifestEndpointState.Failed)
+        Log(log,
+            "[SharedManifestProbe] pinnedCommitId=none contentRef=" + branchRef +
+            " contentRefType=branch existenceCheck=true");
+
+        SharedManifestContentProbe branchRaw = await InvokeContentProbeAsync(
+            rawProbe,
+            branchRef).ConfigureAwait(false);
+        LogContentEndpoint(log, "raw", branchRaw);
+        if (branchRaw.State == SharedManifestEndpointState.Failed)
         {
-            return Indeterminate(treeBlob.Error, log);
+            return Indeterminate(branchRaw.Error, "branch-raw-failed", log);
         }
 
-        bool treeContentWasUnusable = treeBlob.State == SharedManifestEndpointState.Found &&
-            (treeBlob.Content == null || treeBlob.Content.Length == 0);
-        if (treeBlob.State == SharedManifestEndpointState.Found && !treeContentWasUnusable)
+        if (branchRaw.State == SharedManifestEndpointState.Found)
         {
-            return await BuildFoundResultAsync(
-                treeBlob.Content,
-                metadata == null ? null : metadata.LastCommitId,
-                "tree-blob",
-                lastCommitIdProbe,
-                manifestParser,
-                log).ConfigureAwait(false);
+            return Indeterminate(
+                new InvalidOperationException(
+                    "共有マニフェストの内容は存在しますが、ファイル固有のコミットIDを取得できませんでした。"),
+                "content-found-without-pinned-commit",
+                log);
         }
 
-        if (!metadataContentWasUnusable &&
-            !rawContentWasUnusable &&
-            !treeContentWasUnusable &&
-            metadata.State == SharedManifestEndpointState.NotFound &&
-            raw.State == SharedManifestEndpointState.NotFound &&
-            treeBlob.State == SharedManifestEndpointState.NotFound &&
-            projectAndRefValidated)
+        SharedManifestContentProbe branchTree = await InvokeContentProbeAsync(
+            treeBlobProbe,
+            branchRef).ConfigureAwait(false);
+        LogContentEndpoint(log, "tree-blob", branchTree);
+        if (branchTree.State == SharedManifestEndpointState.Failed)
+        {
+            return Indeterminate(branchTree.Error, "branch-tree-blob-failed", log);
+        }
+
+        if (branchTree.State == SharedManifestEndpointState.Found)
+        {
+            return Indeterminate(
+                new InvalidOperationException(
+                    "共有マニフェストの内容は存在しますが、ファイル固有のコミットIDを取得できませんでした。"),
+                "content-found-without-pinned-commit",
+                log);
+        }
+
+        bool commitHistoryUnavailableOrEmpty = commitProbe != null &&
+            (commitProbe.State == SharedManifestEndpointState.NotFound ||
+             commitProbe.State == SharedManifestEndpointState.Unsupported);
+        bool metadataAllowsAbsenceCheck = !metadataContentWasUnusable &&
+            (metadata.State == SharedManifestEndpointState.NotFound ||
+             metadata.State == SharedManifestEndpointState.Unsupported);
+        bool rawAllowsAbsenceCheck =
+            branchRaw.State == SharedManifestEndpointState.NotFound ||
+            branchRaw.State == SharedManifestEndpointState.Unsupported;
+        bool completeTreeConfirmedNotFound = branchTree.State == SharedManifestEndpointState.NotFound;
+
+        if (projectAndRefValidated &&
+            commitHistoryUnavailableOrEmpty &&
+            metadataAllowsAbsenceCheck &&
+            rawAllowsAbsenceCheck &&
+            completeTreeConfirmedNotFound)
         {
             var notFound = new SharedManifestProbeResult
             {
-                State = SharedManifestProbeState.ConfirmedNotFound
+                State = SharedManifestProbeState.ConfirmedNotFound,
+                DecisionReason = "validated-project-ref; commit-history-empty-or-unsupported; complete-tree-not-found"
             };
             LogFinal(log, notFound);
             return notFound;
@@ -184,6 +291,7 @@ internal static class SharedManifestSafety
 
         return Indeterminate(
             new InvalidOperationException("共有マニフェストの存在または内容を安全に確認できませんでした。"),
+            "absence-not-confirmed",
             log);
     }
 
@@ -244,6 +352,18 @@ internal static class SharedManifestSafety
 
     public static SharedManifestContentProbe ClassifyTreeBlobException(Exception exception)
     {
+        GitLabTreeFileNotFoundException treeNotFound = exception as GitLabTreeFileNotFoundException;
+        if (treeNotFound != null)
+        {
+            return new SharedManifestContentProbe
+            {
+                State = SharedManifestEndpointState.NotFound,
+                StatusCode = 404,
+                ContentRoute = "tree-blob",
+                PagesChecked = treeNotFound.PagesChecked
+            };
+        }
+
         GitLabApiException apiException = exception as GitLabApiException;
         if (apiException != null &&
             apiException.StatusCode == 404 &&
@@ -252,7 +372,8 @@ internal static class SharedManifestSafety
             return new SharedManifestContentProbe
             {
                 State = SharedManifestEndpointState.NotFound,
-                StatusCode = 404
+                StatusCode = 404,
+                ContentRoute = "tree-blob"
             };
         }
 
@@ -266,22 +387,113 @@ internal static class SharedManifestSafety
             return new SharedManifestContentProbe
             {
                 State = SharedManifestEndpointState.NotFound,
-                StatusCode = 404
+                StatusCode = 404,
+                ContentRoute = "tree-blob"
             };
         }
 
+        GitLabTreeBlobDownloadException blobFailure = exception as GitLabTreeBlobDownloadException;
+        SharedManifestEndpointClassification classification = ClassifyEndpointException(
+            blobFailure == null ? exception : blobFailure.InnerException);
         return new SharedManifestContentProbe
+        {
+            State = classification.State,
+            StatusCode = classification.StatusCode,
+            ContentRoute = "tree-blob",
+            PagesChecked = blobFailure == null ? (int?)null : blobFailure.PagesChecked,
+            FoundPage = blobFailure == null ? (int?)null : blobFailure.FoundPage,
+            Error = exception
+        };
+    }
+
+    public static SharedManifestEndpointClassification ClassifyEndpointException(Exception exception)
+    {
+        GitLabApiException apiException = FindGitLabApiException(exception);
+        if (apiException != null)
+        {
+            if (apiException.StatusCode == 405 || apiException.StatusCode == 501)
+            {
+                return new SharedManifestEndpointClassification
+                {
+                    State = SharedManifestEndpointState.Unsupported,
+                    StatusCode = apiException.StatusCode,
+                    Error = exception
+                };
+            }
+
+            if (apiException.StatusCode == 400 &&
+                IsExplicitUnsupportedResponse(apiException.ResponseBody))
+            {
+                return new SharedManifestEndpointClassification
+                {
+                    State = SharedManifestEndpointState.Unsupported,
+                    StatusCode = apiException.StatusCode,
+                    Error = exception
+                };
+            }
+
+            return new SharedManifestEndpointClassification
+            {
+                State = SharedManifestEndpointState.Failed,
+                StatusCode = apiException.StatusCode,
+                Error = exception
+            };
+        }
+
+        return new SharedManifestEndpointClassification
         {
             State = SharedManifestEndpointState.Failed,
             Error = exception
         };
     }
 
-    private static async Task<SharedManifestProbeResult> BuildFoundResultAsync(
+    private static bool IsExplicitUnsupportedResponse(string responseBody)
+    {
+        string body = responseBody ?? string.Empty;
+        return Contains(body, "unsupported parameter") ||
+            Contains(body, "unknown parameter") ||
+            Contains(body, "parameter is not supported") ||
+            Contains(body, "parameter is unsupported") ||
+            Contains(body, "endpoint is not supported") ||
+            Contains(body, "unsupported endpoint") ||
+            Contains(body, "feature is not supported") ||
+            Contains(body, "unsupported feature") ||
+            Contains(body, "not implemented");
+    }
+
+    private static SharedManifestProbeResult BuildPinnedFoundResult(
+        SharedManifestContentProbe contentProbe,
+        string pinnedCommitId,
+        Func<byte[], SharedProjectManifest> manifestParser,
+        Action<string> log)
+    {
+        if (contentProbe == null ||
+            contentProbe.Content == null ||
+            contentProbe.Content.Length == 0 ||
+            !string.Equals(contentProbe.LastCommitId, pinnedCommitId, StringComparison.Ordinal) ||
+            !string.Equals(contentProbe.ContentRef, pinnedCommitId, StringComparison.Ordinal))
+        {
+            return Indeterminate(
+                new InvalidOperationException(
+                    "共有マニフェストの内容とファイル固有コミットIDが同じスナップショットではありません。"),
+                "pinned-snapshot-mismatch",
+                log);
+        }
+
+        return BuildFoundResult(
+            contentProbe.Content,
+            pinnedCommitId,
+            contentProbe.ContentRoute,
+            contentProbe.ContentRef,
+            manifestParser,
+            log);
+    }
+
+    private static SharedManifestProbeResult BuildFoundResult(
         byte[] content,
         string lastCommitId,
         string contentRoute,
-        Func<Task<string>> lastCommitIdProbe,
+        string contentRef,
         Func<byte[], SharedProjectManifest> manifestParser,
         Action<string> log)
     {
@@ -292,37 +504,22 @@ internal static class SharedManifestSafety
         }
         catch (Exception ex)
         {
-            return Indeterminate(ex, log);
+            return Indeterminate(ex, "manifest-json-invalid", log);
         }
 
         if (manifest == null)
         {
             return Indeterminate(
                 new InvalidOperationException("共有マニフェストのJSON形式が正しくありません。"),
+                "manifest-json-invalid",
                 log);
-        }
-
-        if (string.IsNullOrWhiteSpace(lastCommitId))
-        {
-            try
-            {
-                lastCommitId = await lastCommitIdProbe().ConfigureAwait(false);
-                Log(log,
-                    "[SharedManifestProbe] route=path-commits result=" +
-                    (string.IsNullOrWhiteSpace(lastCommitId) ? "Empty" : "Found") +
-                    " status=200");
-            }
-            catch (Exception ex)
-            {
-                LogEndpoint(log, "path-commits", SharedManifestEndpointState.Failed, null, ex);
-                return Indeterminate(ex, log);
-            }
         }
 
         if (string.IsNullOrWhiteSpace(lastCommitId))
         {
             return Indeterminate(
                 new InvalidOperationException("共有マニフェストのファイル固有の最終コミットIDを取得できませんでした。"),
+                "last-commit-id-missing",
                 log);
         }
 
@@ -331,7 +528,9 @@ internal static class SharedManifestSafety
             State = SharedManifestProbeState.Found,
             Manifest = manifest,
             LastCommitId = lastCommitId,
-            ContentRoute = contentRoute
+            ContentRoute = contentRoute,
+            ContentRef = contentRef,
+            DecisionReason = "content-and-last-commit-from-same-snapshot"
         };
         LogFinal(log, found);
         return found;
@@ -373,40 +572,74 @@ internal static class SharedManifestSafety
         }
         catch (Exception ex)
         {
+            SharedManifestEndpointClassification classification = ClassifyEndpointException(ex);
             return new SharedManifestMetadataProbe
             {
+                State = classification.State,
+                StatusCode = classification.StatusCode,
+                Error = ex
+            };
+        }
+    }
+
+    private static async Task<SharedManifestCommitProbe> InvokeCommitProbeAsync(
+        Func<Task<SharedManifestCommitProbe>> probe)
+    {
+        try
+        {
+            return await probe().ConfigureAwait(false) ?? new SharedManifestCommitProbe
+            {
                 State = SharedManifestEndpointState.Failed,
+                Error = new InvalidOperationException("Commit probe returned no result.")
+            };
+        }
+        catch (Exception ex)
+        {
+            SharedManifestEndpointClassification classification = ClassifyEndpointException(ex);
+            return new SharedManifestCommitProbe
+            {
+                State = classification.State,
+                StatusCode = classification.StatusCode,
                 Error = ex
             };
         }
     }
 
     private static async Task<SharedManifestContentProbe> InvokeContentProbeAsync(
-        Func<Task<SharedManifestContentProbe>> probe)
+        Func<string, Task<SharedManifestContentProbe>> probe,
+        string contentRef)
     {
         try
         {
-            return await probe().ConfigureAwait(false) ?? new SharedManifestContentProbe
+            return await probe(contentRef).ConfigureAwait(false) ?? new SharedManifestContentProbe
             {
                 State = SharedManifestEndpointState.Failed,
+                ContentRef = contentRef,
                 Error = new InvalidOperationException("Content probe returned no result.")
             };
         }
         catch (Exception ex)
         {
+            SharedManifestEndpointClassification classification = ClassifyEndpointException(ex);
             return new SharedManifestContentProbe
             {
-                State = SharedManifestEndpointState.Failed,
+                State = classification.State,
+                StatusCode = classification.StatusCode,
+                ContentRef = contentRef,
                 Error = ex
             };
         }
     }
 
-    private static SharedManifestProbeResult Indeterminate(Exception error, Action<string> log)
+    private static SharedManifestProbeResult Indeterminate(
+        Exception error,
+        string reason,
+        Action<string> log)
     {
         var result = new SharedManifestProbeResult
         {
             State = SharedManifestProbeState.Indeterminate,
+            DecisionReason = reason,
             Error = error
         };
         LogFinal(log, result);
@@ -421,7 +654,7 @@ internal static class SharedManifestSafety
         Exception error)
     {
         string detail = string.Empty;
-        GitLabApiException apiError = error as GitLabApiException;
+        GitLabApiException apiError = FindGitLabApiException(error);
         if (apiError != null)
         {
             detail =
@@ -442,6 +675,29 @@ internal static class SharedManifestSafety
         Log(log, "[SharedManifestProbe] route=" + route + " result=" + state + detail);
     }
 
+    private static void LogCommitEndpoint(Action<string> log, SharedManifestCommitProbe probe)
+    {
+        LogEndpoint(log, "path-commits", probe.State, probe.StatusCode, probe.Error);
+        Log(log,
+            "[SharedManifestProbe] route=path-commits hasPinnedCommitId=" +
+            (!string.IsNullOrWhiteSpace(probe.LastCommitId)) +
+            " pinnedCommitId=" + (probe.LastCommitId ?? "none"));
+    }
+
+    private static void LogContentEndpoint(
+        Action<string> log,
+        string route,
+        SharedManifestContentProbe probe)
+    {
+        LogEndpoint(log, route, probe.State, probe.StatusCode, probe.Error);
+        Log(log,
+            "[SharedManifestProbe] route=" + route +
+            " contentRef=" + (probe.ContentRef ?? "none") +
+            " snapshotLastCommitId=" + (probe.LastCommitId ?? "none") +
+            " pagesChecked=" + (probe.PagesChecked.HasValue ? probe.PagesChecked.Value.ToString() : "n/a") +
+            " foundPage=" + (probe.FoundPage.HasValue ? probe.FoundPage.Value.ToString() : "n/a"));
+    }
+
     private static void LogSkipped(Action<string> log, string route)
     {
         Log(log, "[SharedManifestProbe] route=" + route + " result=Skipped");
@@ -452,7 +708,27 @@ internal static class SharedManifestSafety
         Log(log,
             "[SharedManifestSnapshot] state=" + result.State +
             " contentRoute=" + (result.ContentRoute ?? "none") +
-            " hasLastCommitId=" + (!string.IsNullOrWhiteSpace(result.LastCommitId)));
+            " contentRef=" + (result.ContentRef ?? "none") +
+            " hasLastCommitId=" + (!string.IsNullOrWhiteSpace(result.LastCommitId)) +
+            " lastCommitId=" + (result.LastCommitId ?? "none") +
+            " reason=" + (result.DecisionReason ?? "none"));
+    }
+
+    private static GitLabApiException FindGitLabApiException(Exception exception)
+    {
+        Exception current = exception;
+        while (current != null)
+        {
+            GitLabApiException apiException = current as GitLabApiException;
+            if (apiException != null)
+            {
+                return apiException;
+            }
+
+            current = current.InnerException;
+        }
+
+        return null;
     }
 
     internal static string NormalizeForLog(string value, int maxLength)

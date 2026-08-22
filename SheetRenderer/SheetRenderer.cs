@@ -4577,6 +4577,7 @@ public class RibbonController : ExcelRibbon
 
         SharedManifestProbeResult result = await SharedManifestSafety.ProbeAsync(
             projectAndRefValidated: true,
+            branchRef: refName,
             metadataProbe: async () =>
             {
                 GitLabRepositoryFileInfo fileInfo = await GitLabClient.TryGetRepositoryFileInfoAsync(
@@ -4603,13 +4604,30 @@ public class RibbonController : ExcelRibbon
                     LastCommitId = fileInfo.LastCommitId
                 };
             },
-            rawProbe: async () =>
+            lastCommitIdProbe: async () =>
+            {
+                string lastCommitId = await GitLabClient.GetLastCommitIdForPathAsync(
+                    shareInfo.BaseUrl,
+                    shareInfo.ProjectId,
+                    refName,
+                    manifestPath,
+                    token).ConfigureAwait(false);
+                return new SharedManifestCommitProbe
+                {
+                    State = string.IsNullOrWhiteSpace(lastCommitId)
+                        ? SharedManifestEndpointState.NotFound
+                        : SharedManifestEndpointState.Found,
+                    StatusCode = 200,
+                    LastCommitId = lastCommitId
+                };
+            },
+            rawProbe: async contentRef =>
             {
                 byte[] bytes = await GitLabClient.TryDownloadFileRawByPathAsync(
                     shareInfo.BaseUrl,
                     shareInfo.ProjectId,
                     manifestPath,
-                    refName,
+                    contentRef,
                     token).ConfigureAwait(false);
                 return new SharedManifestContentProbe
                 {
@@ -4617,38 +4635,46 @@ public class RibbonController : ExcelRibbon
                         ? SharedManifestEndpointState.NotFound
                         : SharedManifestEndpointState.Found,
                     StatusCode = bytes == null ? 404 : 200,
-                    Content = bytes
+                    Content = bytes,
+                    LastCommitId = contentRef,
+                    ContentRoute = "raw",
+                    ContentRef = contentRef
                 };
             },
-            treeBlobProbe: async () =>
+            treeBlobProbe: async contentRef =>
             {
                 try
                 {
-                    byte[] bytes = await GitLabClient.DownloadFileViaTreeAsync(
+                    GitLabTreeBlobDownloadResult treeResult =
+                        await GitLabClient.DownloadFileViaTreeWithDiagnosticsAsync(
                         shareInfo.BaseUrl,
                         shareInfo.ProjectId,
                         projectId,
                         "_manifest.json",
-                        refName,
+                        contentRef,
                         token).ConfigureAwait(false);
                     return new SharedManifestContentProbe
                     {
                         State = SharedManifestEndpointState.Found,
                         StatusCode = 200,
-                        Content = bytes
+                        Content = treeResult.Content,
+                        LastCommitId = contentRef,
+                        ContentRoute = "tree-blob",
+                        ContentRef = contentRef,
+                        PagesChecked = treeResult.PagesChecked,
+                        FoundPage = treeResult.FoundPage
                     };
                 }
                 catch (Exception ex)
                 {
-                    return SharedManifestSafety.ClassifyTreeBlobException(ex);
+                    SharedManifestContentProbe failure =
+                        SharedManifestSafety.ClassifyTreeBlobException(ex);
+                    failure.LastCommitId = contentRef;
+                    failure.ContentRoute = "tree-blob";
+                    failure.ContentRef = contentRef;
+                    return failure;
                 }
             },
-            lastCommitIdProbe: () => GitLabClient.GetLastCommitIdForPathAsync(
-                shareInfo.BaseUrl,
-                shareInfo.ProjectId,
-                refName,
-                manifestPath,
-                token),
             manifestParser: bytes => ParseSharedProjectManifest(Encoding.UTF8.GetString(bytes)),
             log: TryLogSharedDiagnostic).ConfigureAwait(false);
 

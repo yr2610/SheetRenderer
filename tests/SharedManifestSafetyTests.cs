@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using System.Threading.Tasks;
@@ -22,6 +23,18 @@ internal static class SharedManifestSafetyTests
         UnrelatedHttp400IsNotClassifiedAsConflict();
         ExistingManifestCommitPlanUsesUpdateAndExactLastCommitId();
         ConfirmedMissingManifestCommitPlanUsesCreateWithoutLastCommitId();
+        MetadataInvalidContentUsesMetadataCommitAsPinnedRef().GetAwaiter().GetResult();
+        MetadataNotFoundPinsCommitBeforeContent().GetAwaiter().GetResult();
+        BranchAdvanceAfterPinKeepsContentAndLastCommitAtPinnedCommit().GetAwaiter().GetResult();
+        MismatchedContentAndCommitSnapshotIsRejected().GetAwaiter().GetResult();
+        PinnedCommitWithoutPinnedContentIsIndeterminate().GetAwaiter().GetResult();
+        EmptyCommitHistoryWithBranchContentIsIndeterminate().GetAwaiter().GetResult();
+        TreePagingFindsManifestOnSecondPage().GetAwaiter().GetResult();
+        TreePagingChecksEmptySecondPageBeforeNotFound().GetAwaiter().GetResult();
+        UnsupportedEndpointClassificationAndFallbacks().GetAwaiter().GetResult();
+        UnsupportedRoutesDoNotCountAsNotFound().GetAwaiter().GetResult();
+        UnsupportedMetadataWithReliableNotFoundRoutesIsConfirmedNotFound().GetAwaiter().GetResult();
+        FatalEndpointFailuresStopImmediately().GetAwaiter().GetResult();
         Console.WriteLine("shared manifest safety tests passed");
     }
 
@@ -180,9 +193,16 @@ internal static class SharedManifestSafetyTests
             404,
             "https://gitlab.example/api/v4/projects/1/repository/blobs/blob-id/raw",
             "not found");
+        var pagedBlobFailure = new GitLabTreeBlobDownloadException(
+            blobFailure.Message,
+            2,
+            2,
+            blobFailure);
         SharedManifestContentProbe classified =
-            SharedManifestSafety.ClassifyTreeBlobException(blobFailure);
-        Assert(classified.State == SharedManifestEndpointState.Failed,
+            SharedManifestSafety.ClassifyTreeBlobException(pagedBlobFailure);
+        Assert(classified.State == SharedManifestEndpointState.Failed &&
+            classified.PagesChecked == 2 &&
+            classified.FoundPage == 2,
             nameof(TreeBlobReadFailureIsIndeterminateAndNotCreate) + ": blob 404 must remain a failure");
 
         SharedManifestProbeResult result = await Probe(
@@ -196,6 +216,362 @@ internal static class SharedManifestSafetyTests
             new InvalidOperationException("File not found in tree. folder=project file=_manifest.json ref=main"));
         Assert(absentFromTree.State == SharedManifestEndpointState.NotFound,
             nameof(TreeBlobReadFailureIsIndeterminateAndNotCreate) + ": absent tree entry is a confirmed route miss");
+    }
+
+    private static async Task MetadataInvalidContentUsesMetadataCommitAsPinnedRef()
+    {
+        SharedManifestMetadataProbe metadata = MetadataFound("valid", "commit-C");
+        metadata.Content = "invalid-base64";
+        var refs = new List<string>();
+        int commitCalls = 0;
+
+        SharedManifestProbeResult result = await SharedManifestSafety.ProbeAsync(
+            true,
+            "main",
+            () => Task.FromResult(metadata),
+            () =>
+            {
+                commitCalls++;
+                return Task.FromResult(CommitFound("unexpected"));
+            },
+            contentRef =>
+            {
+                refs.Add(contentRef);
+                return Task.FromResult(PinnedContentFound("valid", contentRef, "raw"));
+            },
+            contentRef => Task.FromResult(PinnedContentNotFound(contentRef, "tree-blob")),
+            ParseManifest,
+            null);
+
+        Assert(result.State == SharedManifestProbeState.Found &&
+            result.LastCommitId == "commit-C" &&
+            result.ContentRef == "commit-C",
+            nameof(MetadataInvalidContentUsesMetadataCommitAsPinnedRef));
+        Assert(refs.Count == 1 && refs[0] == "commit-C" && commitCalls == 0,
+            nameof(MetadataInvalidContentUsesMetadataCommitAsPinnedRef) +
+            ": fallback must use metadata commit C, never the branch ref");
+    }
+
+    private static async Task MetadataNotFoundPinsCommitBeforeContent()
+    {
+        var sequence = new List<string>();
+        SharedManifestProbeResult result = await SharedManifestSafety.ProbeAsync(
+            true,
+            "main",
+            () => Task.FromResult(MetadataNotFound()),
+            () =>
+            {
+                sequence.Add("commit:commit-C");
+                return Task.FromResult(CommitFound("commit-C"));
+            },
+            contentRef =>
+            {
+                sequence.Add("raw:" + contentRef);
+                return Task.FromResult(PinnedContentFound("valid", contentRef, "raw"));
+            },
+            contentRef => Task.FromResult(PinnedContentNotFound(contentRef, "tree-blob")),
+            ParseManifest,
+            null);
+
+        Assert(result.State == SharedManifestProbeState.Found && result.LastCommitId == "commit-C",
+            nameof(MetadataNotFoundPinsCommitBeforeContent));
+        Assert(sequence.Count == 2 &&
+            sequence[0] == "commit:commit-C" &&
+            sequence[1] == "raw:commit-C",
+            nameof(MetadataNotFoundPinsCommitBeforeContent) +
+            ": commit C must be resolved before content is read at ref C");
+    }
+
+    private static async Task BranchAdvanceAfterPinKeepsContentAndLastCommitAtPinnedCommit()
+    {
+        string branchTip = "commit-C";
+        string contentRefUsed = null;
+        SharedManifestProbeResult result = await SharedManifestSafety.ProbeAsync(
+            true,
+            "main",
+            () => Task.FromResult(MetadataNotFound()),
+            () =>
+            {
+                string pinned = branchTip;
+                branchTip = "commit-D";
+                return Task.FromResult(CommitFound(pinned));
+            },
+            contentRef =>
+            {
+                contentRefUsed = contentRef;
+                return Task.FromResult(PinnedContentFound("valid", contentRef, "raw"));
+            },
+            contentRef => Task.FromResult(PinnedContentNotFound(contentRef, "tree-blob")),
+            ParseManifest,
+            null);
+
+        SharedManifestCommitPlan plan = SharedManifestSafety.CreateCommitPlan(result);
+        Assert(branchTip == "commit-D" && contentRefUsed == "commit-C",
+            nameof(BranchAdvanceAfterPinKeepsContentAndLastCommitAtPinnedCommit));
+        Assert(result.LastCommitId == "commit-C" && plan.LastCommitId == "commit-C",
+            nameof(BranchAdvanceAfterPinKeepsContentAndLastCommitAtPinnedCommit) +
+            ": later update against D can be rejected by last_commit_id C");
+    }
+
+    private static async Task MismatchedContentAndCommitSnapshotIsRejected()
+    {
+        SharedManifestProbeResult result = await SharedManifestSafety.ProbeAsync(
+            true,
+            "main",
+            () => Task.FromResult(MetadataNotFound()),
+            () => Task.FromResult(CommitFound("commit-C")),
+            contentRef => Task.FromResult(new SharedManifestContentProbe
+            {
+                State = SharedManifestEndpointState.Found,
+                Content = Encoding.UTF8.GetBytes("valid"),
+                ContentRef = contentRef,
+                LastCommitId = "commit-B",
+                ContentRoute = "raw"
+            }),
+            contentRef => Task.FromResult(PinnedContentNotFound(contentRef, "tree-blob")),
+            ParseManifest,
+            null);
+
+        AssertIndeterminateAndCreateRejected(result, nameof(MismatchedContentAndCommitSnapshotIsRejected));
+        Assert(result.DecisionReason == "pinned-snapshot-mismatch",
+            nameof(MismatchedContentAndCommitSnapshotIsRejected) +
+            ": old content A plus newer commit B must be structurally rejected");
+    }
+
+    private static async Task PinnedCommitWithoutPinnedContentIsIndeterminate()
+    {
+        SharedManifestProbeResult result = await SharedManifestSafety.ProbeAsync(
+            true,
+            "main",
+            () => Task.FromResult(MetadataNotFound()),
+            () => Task.FromResult(CommitFound("commit-C")),
+            contentRef => Task.FromResult(PinnedContentNotFound(contentRef, "raw")),
+            contentRef => Task.FromResult(PinnedContentNotFound(contentRef, "tree-blob")),
+            ParseManifest,
+            null);
+
+        AssertIndeterminateAndCreateRejected(result, nameof(PinnedCommitWithoutPinnedContentIsIndeterminate));
+        Assert(result.DecisionReason == "pinned-content-unavailable",
+            nameof(PinnedCommitWithoutPinnedContentIsIndeterminate));
+    }
+
+    private static async Task EmptyCommitHistoryWithBranchContentIsIndeterminate()
+    {
+        string contentRefUsed = null;
+        SharedManifestProbeResult result = await SharedManifestSafety.ProbeAsync(
+            true,
+            "main",
+            () => Task.FromResult(MetadataNotFound()),
+            () => Task.FromResult(CommitNotFound()),
+            contentRef =>
+            {
+                contentRefUsed = contentRef;
+                return Task.FromResult(PinnedContentFound("valid", contentRef, "raw"));
+            },
+            contentRef => Task.FromResult(PinnedContentNotFound(contentRef, "tree-blob")),
+            ParseManifest,
+            null);
+
+        Assert(contentRefUsed == "main", nameof(EmptyCommitHistoryWithBranchContentIsIndeterminate));
+        AssertIndeterminateAndCreateRejected(result, nameof(EmptyCommitHistoryWithBranchContentIsIndeterminate));
+        Assert(result.State != SharedManifestProbeState.ConfirmedNotFound,
+            nameof(EmptyCommitHistoryWithBranchContentIsIndeterminate));
+    }
+
+    private static async Task TreePagingFindsManifestOnSecondPage()
+    {
+        var requestedPages = new List<int>();
+        GitLabTreeSearchResult result = await GitLabTreePaging.FindBlobAsync(
+            "_manifest.json",
+            100,
+            page =>
+            {
+                requestedPages.Add(page);
+                if (page == 1)
+                {
+                    return Task.FromResult(CreateTreeItems(100, "other-"));
+                }
+
+                return Task.FromResult(new List<GitLabTreeItem>
+                {
+                    new GitLabTreeItem { Id = "manifest-blob", Name = "_manifest.json", Type = "blob" }
+                });
+            });
+
+        Assert(result.Target != null && result.Target.Id == "manifest-blob",
+            nameof(TreePagingFindsManifestOnSecondPage));
+        Assert(result.PagesChecked == 2 && result.FoundPage == 2 &&
+            requestedPages.Count == 2 && requestedPages[0] == 1 && requestedPages[1] == 2,
+            nameof(TreePagingFindsManifestOnSecondPage) + ": page one alone must not produce NotFound");
+    }
+
+    private static async Task TreePagingChecksEmptySecondPageBeforeNotFound()
+    {
+        var requestedPages = new List<int>();
+        GitLabTreeSearchResult result = await GitLabTreePaging.FindBlobAsync(
+            "_manifest.json",
+            100,
+            page =>
+            {
+                requestedPages.Add(page);
+                return Task.FromResult(page == 1
+                    ? CreateTreeItems(100, "other-")
+                    : new List<GitLabTreeItem>());
+            });
+
+        Assert(result.Target == null && result.PagesChecked == 2,
+            nameof(TreePagingChecksEmptySecondPageBeforeNotFound));
+        Assert(requestedPages.Count == 2,
+            nameof(TreePagingChecksEmptySecondPageBeforeNotFound) +
+            ": a full first page requires checking page two");
+    }
+
+    private static async Task UnsupportedEndpointClassificationAndFallbacks()
+    {
+        int[] unsupportedStatuses = { 405, 501 };
+        foreach (int status in unsupportedStatuses)
+        {
+            int rawCalls = 0;
+            SharedManifestProbeResult result = await ProbeWithMetadataException(
+                ApiError(status, "unsupported"),
+                CommitFound("commit-C"),
+                contentRef =>
+                {
+                    rawCalls++;
+                    return Task.FromResult(PinnedContentFound("valid", contentRef, "raw"));
+                },
+                contentRef => Task.FromResult(PinnedContentNotFound(contentRef, "tree-blob")));
+            Assert(result.State == SharedManifestProbeState.Found && rawCalls == 1,
+                nameof(UnsupportedEndpointClassificationAndFallbacks) + ": status " + status);
+        }
+
+        SharedManifestProbeResult explicit400 = await ProbeWithMetadataException(
+            ApiError(400, "unknown parameter: ref"),
+            CommitFound("commit-C"),
+            contentRef => Task.FromResult(PinnedContentFound("valid", contentRef, "raw")),
+            contentRef => Task.FromResult(PinnedContentNotFound(contentRef, "tree-blob")));
+        Assert(explicit400.State == SharedManifestProbeState.Found,
+            nameof(UnsupportedEndpointClassificationAndFallbacks) + ": explicit unsupported 400");
+
+        int unrelatedRawCalls = 0;
+        SharedManifestProbeResult unrelated400 = await ProbeWithMetadataException(
+            ApiError(400, "branch is protected"),
+            CommitFound("commit-C"),
+            contentRef =>
+            {
+                unrelatedRawCalls++;
+                return Task.FromResult(PinnedContentFound("valid", contentRef, "raw"));
+            },
+            contentRef => Task.FromResult(PinnedContentNotFound(contentRef, "tree-blob")));
+        AssertIndeterminateAndCreateRejected(unrelated400,
+            nameof(UnsupportedEndpointClassificationAndFallbacks) + ": unrelated 400");
+        Assert(unrelatedRawCalls == 0,
+            nameof(UnsupportedEndpointClassificationAndFallbacks) + ": unrelated 400 must stop immediately");
+
+        SharedManifestProbeResult raw405 = await SharedManifestSafety.ProbeAsync(
+            true,
+            "main",
+            () => Task.FromResult(MetadataNotFound()),
+            () => Task.FromResult(CommitFound("commit-C")),
+            contentRef => throw ApiError(405, "raw unsupported"),
+            contentRef => Task.FromResult(PinnedContentFound("valid", contentRef, "tree-blob")),
+            ParseManifest,
+            null);
+        Assert(raw405.State == SharedManifestProbeState.Found && raw405.ContentRoute == "tree-blob",
+            nameof(UnsupportedEndpointClassificationAndFallbacks) + ": raw 405 must continue to tree");
+
+        SharedManifestProbeResult metadataAndRawUnsupported = await SharedManifestSafety.ProbeAsync(
+            true,
+            "main",
+            () => throw ApiError(501, "metadata unsupported"),
+            () => Task.FromResult(CommitFound("commit-C")),
+            contentRef => throw ApiError(405, "raw unsupported"),
+            contentRef => Task.FromResult(PinnedContentFound("valid", contentRef, "tree-blob")),
+            ParseManifest,
+            null);
+        Assert(metadataAndRawUnsupported.State == SharedManifestProbeState.Found,
+            nameof(UnsupportedEndpointClassificationAndFallbacks) +
+            ": metadata and raw unsupported must allow pinned tree success");
+    }
+
+    private static async Task UnsupportedRoutesDoNotCountAsNotFound()
+    {
+        SharedManifestProbeResult result = await SharedManifestSafety.ProbeAsync(
+            true,
+            "main",
+            () => throw ApiError(405, "metadata unsupported"),
+            () => throw ApiError(501, "commits not implemented"),
+            contentRef => throw ApiError(405, "raw unsupported"),
+            contentRef => throw ApiError(501, "tree not implemented"),
+            ParseManifest,
+            null);
+
+        AssertIndeterminateAndCreateRejected(result, nameof(UnsupportedRoutesDoNotCountAsNotFound));
+        Assert(result.State != SharedManifestProbeState.ConfirmedNotFound,
+            nameof(UnsupportedRoutesDoNotCountAsNotFound));
+    }
+
+    private static async Task UnsupportedMetadataWithReliableNotFoundRoutesIsConfirmedNotFound()
+    {
+        SharedManifestProbeResult result = await SharedManifestSafety.ProbeAsync(
+            true,
+            "main",
+            () => throw ApiError(405, "metadata unsupported"),
+            () => Task.FromResult(CommitNotFound()),
+            contentRef => Task.FromResult(PinnedContentNotFound(contentRef, "raw")),
+            contentRef =>
+            {
+                SharedManifestContentProbe missing = PinnedContentNotFound(contentRef, "tree-blob");
+                missing.PagesChecked = 2;
+                return Task.FromResult(missing);
+            },
+            ParseManifest,
+            null);
+
+        Assert(result.State == SharedManifestProbeState.ConfirmedNotFound,
+            nameof(UnsupportedMetadataWithReliableNotFoundRoutesIsConfirmedNotFound));
+        Assert(SharedManifestSafety.CreateCommitPlan(result).Action == "create",
+            nameof(UnsupportedMetadataWithReliableNotFoundRoutesIsConfirmedNotFound));
+    }
+
+    private static async Task FatalEndpointFailuresStopImmediately()
+    {
+        Exception[] errors =
+        {
+            ApiError(401, "unauthorized"),
+            ApiError(403, "forbidden"),
+            ApiError(408, "request timeout"),
+            ApiError(429, "rate limited"),
+            ApiError(500, "server error"),
+            new IOException("network failed")
+        };
+
+        foreach (Exception error in errors)
+        {
+            int commitCalls = 0;
+            int rawCalls = 0;
+            SharedManifestProbeResult result = await SharedManifestSafety.ProbeAsync(
+                true,
+                "main",
+                () => throw error,
+                () =>
+                {
+                    commitCalls++;
+                    return Task.FromResult(CommitFound("unexpected"));
+                },
+                contentRef =>
+                {
+                    rawCalls++;
+                    return Task.FromResult(PinnedContentFound("valid", contentRef, "raw"));
+                },
+                contentRef => Task.FromResult(PinnedContentNotFound(contentRef, "tree-blob")),
+                ParseManifest,
+                null);
+            AssertIndeterminateAndCreateRejected(result,
+                nameof(FatalEndpointFailuresStopImmediately) + ": " + error.Message);
+            Assert(commitCalls == 0 && rawCalls == 0,
+                nameof(FatalEndpointFailuresStopImmediately) + ": fatal errors must not fall back");
+        }
     }
 
     private static void UpdateLastCommitMismatchIsClassifiedAsConcurrentUpdate()
@@ -255,12 +631,128 @@ internal static class SharedManifestSafetyTests
     {
         return SharedManifestSafety.ProbeAsync(
             validated,
+            "main",
             () => Task.FromResult(metadata),
-            raw,
-            tree,
-            commit,
+            async () =>
+            {
+                string lastCommitId = await commit().ConfigureAwait(false);
+                return new SharedManifestCommitProbe
+                {
+                    State = string.IsNullOrWhiteSpace(lastCommitId)
+                        ? SharedManifestEndpointState.NotFound
+                        : SharedManifestEndpointState.Found,
+                    StatusCode = 200,
+                    LastCommitId = lastCommitId
+                };
+            },
+            async contentRef => AttachSnapshot(
+                await raw().ConfigureAwait(false),
+                contentRef,
+                "raw"),
+            async contentRef => AttachSnapshot(
+                await tree().ConfigureAwait(false),
+                contentRef,
+                "tree-blob"),
             ParseManifest,
             null);
+    }
+
+    private static SharedManifestContentProbe AttachSnapshot(
+        SharedManifestContentProbe probe,
+        string contentRef,
+        string route)
+    {
+        if (probe == null)
+        {
+            return null;
+        }
+
+        probe.ContentRef = contentRef;
+        probe.LastCommitId = contentRef;
+        probe.ContentRoute = route;
+        return probe;
+    }
+
+    private static Task<SharedManifestProbeResult> ProbeWithMetadataException(
+        Exception metadataError,
+        SharedManifestCommitProbe commitProbe,
+        Func<string, Task<SharedManifestContentProbe>> raw,
+        Func<string, Task<SharedManifestContentProbe>> tree)
+    {
+        return SharedManifestSafety.ProbeAsync(
+            true,
+            "main",
+            () => throw metadataError,
+            () => Task.FromResult(commitProbe),
+            raw,
+            tree,
+            ParseManifest,
+            null);
+    }
+
+    private static SharedManifestCommitProbe CommitFound(string lastCommitId)
+    {
+        return new SharedManifestCommitProbe
+        {
+            State = SharedManifestEndpointState.Found,
+            StatusCode = 200,
+            LastCommitId = lastCommitId
+        };
+    }
+
+    private static SharedManifestCommitProbe CommitNotFound()
+    {
+        return new SharedManifestCommitProbe
+        {
+            State = SharedManifestEndpointState.NotFound,
+            StatusCode = 200
+        };
+    }
+
+    private static SharedManifestContentProbe PinnedContentFound(
+        string content,
+        string contentRef,
+        string route)
+    {
+        return new SharedManifestContentProbe
+        {
+            State = SharedManifestEndpointState.Found,
+            StatusCode = 200,
+            Content = Encoding.UTF8.GetBytes(content),
+            LastCommitId = contentRef,
+            ContentRoute = route,
+            ContentRef = contentRef
+        };
+    }
+
+    private static SharedManifestContentProbe PinnedContentNotFound(
+        string contentRef,
+        string route)
+    {
+        return new SharedManifestContentProbe
+        {
+            State = SharedManifestEndpointState.NotFound,
+            StatusCode = 404,
+            LastCommitId = contentRef,
+            ContentRoute = route,
+            ContentRef = contentRef
+        };
+    }
+
+    private static List<GitLabTreeItem> CreateTreeItems(int count, string prefix)
+    {
+        var items = new List<GitLabTreeItem>();
+        for (int index = 0; index < count; index++)
+        {
+            items.Add(new GitLabTreeItem
+            {
+                Id = prefix + index,
+                Name = prefix + index + ".json",
+                Type = "blob"
+            });
+        }
+
+        return items;
     }
 
     private static SharedProjectManifest ParseManifest(byte[] bytes)

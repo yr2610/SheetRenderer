@@ -9,6 +9,8 @@
     <Compile Include="SharedSheetDocumentOperationsTests.cs" />
     <Compile Include="SharedManifestSafetyTests.cs" />
     <Compile Include="..\SheetRenderer\GitLabApiException.cs" Link="GitLabApiException.cs" />
+    <Compile Include="..\SheetRenderer\GitLabTreeItem.cs" Link="GitLabTreeItem.cs" />
+    <Compile Include="..\SheetRenderer\GitLabTreePaging.cs" Link="GitLabTreePaging.cs" />
     <Compile Include="..\SheetRenderer\SharedManifestSafety.cs" Link="SharedManifestSafety.cs" />
     <Compile Include="..\SheetRenderer\SharedSheetCandidateComparer.cs" Link="SharedSheetCandidateComparer.cs" />
     <Compile Include="..\SheetRenderer\SharedSheetDocumentOperations.cs" Link="SharedSheetDocumentOperations.cs" />

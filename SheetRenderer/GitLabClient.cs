@@ -38,67 +38,71 @@ public static class GitLabClient
         string privateToken,
         CancellationToken cancellationToken = default(CancellationToken))
     {
+        GitLabTreeBlobDownloadResult result = await DownloadFileViaTreeWithDiagnosticsAsync(
+            baseUrl,
+            projectId,
+            folderPath,
+            fileName,
+            refName,
+            privateToken,
+            cancellationToken).ConfigureAwait(false);
+        return result.Content;
+    }
+
+    internal static async Task<GitLabTreeBlobDownloadResult> DownloadFileViaTreeWithDiagnosticsAsync(
+        string baseUrl,
+        string projectId,
+        string folderPath,
+        string fileName,
+        string refName,
+        string privateToken,
+        CancellationToken cancellationToken = default(CancellationToken))
+    {
         EnsureTls12();
+        const int perPage = 100;
 
-        // 1) tree 一覧
-        string encodedFolder = Uri.EscapeDataString(folderPath);
-        string encodedRef = Uri.EscapeDataString(refName);
+        GitLabTreeSearchResult search = await GitLabTreePaging.FindBlobAsync(
+            fileName,
+            perPage,
+            page => DownloadTreePageAsync(
+                baseUrl,
+                projectId,
+                folderPath,
+                refName,
+                page,
+                perPage,
+                privateToken,
+                cancellationToken)).ConfigureAwait(false);
 
-        string treeUrl =
-            $"{baseUrl.TrimEnd('/')}/api/v4/projects/{Uri.EscapeDataString(projectId)}/repository/tree?path={encodedFolder}&ref={encodedRef}&per_page=100";
-
-        GitLabTreeItem target = null;
-
-        using (var req = new HttpRequestMessage(HttpMethod.Get, treeUrl))
+        if (search.Target == null || string.IsNullOrEmpty(search.Target.Id))
         {
-            req.Headers.Add("PRIVATE-TOKEN", privateToken);
-
-            using (var res = await _httpClient.SendAsync(req, HttpCompletionOption.ResponseContentRead, cancellationToken).ConfigureAwait(false))
-            {
-                byte[] bodyBytes = await res.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
-
-                if (!res.IsSuccessStatusCode)
-                {
-                    ThrowGitLabApiException(res, treeUrl, bodyBytes);
-                }
-
-                var items = DeserializeJson<List<GitLabTreeItem>>(bodyBytes);
-                foreach (var it in items)
-                {
-                    if (string.Equals(it.Type, "blob", StringComparison.OrdinalIgnoreCase) &&
-                        string.Equals(it.Name, fileName, StringComparison.Ordinal))
-                    {
-                        target = it;
-                        break;
-                    }
-                }
-            }
+            throw new GitLabTreeFileNotFoundException(
+                $"File not found in tree. folder={folderPath} file={fileName} ref={refName} pages={search.PagesChecked}",
+                search.PagesChecked);
         }
 
-        if (target == null || string.IsNullOrEmpty(target.Id))
+        try
         {
-            throw new InvalidOperationException($"File not found in tree. folder={folderPath} file={fileName} ref={refName}");
-        }
-
-        // 2) blob raw
-        string blobUrl =
-            $"{baseUrl.TrimEnd('/')}/api/v4/projects/{Uri.EscapeDataString(projectId)}/repository/blobs/{Uri.EscapeDataString(target.Id)}/raw";
-
-        using (var req2 = new HttpRequestMessage(HttpMethod.Get, blobUrl))
-        {
-            req2.Headers.Add("PRIVATE-TOKEN", privateToken);
-
-            using (var res2 = await _httpClient.SendAsync(req2, HttpCompletionOption.ResponseContentRead, cancellationToken).ConfigureAwait(false))
+            byte[] content = await DownloadBlobRawAsync(
+                baseUrl,
+                projectId,
+                search.Target.Id,
+                privateToken,
+                cancellationToken).ConfigureAwait(false);
+            return new GitLabTreeBlobDownloadResult
             {
-                byte[] bytes = await res2.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
-
-                if (!res2.IsSuccessStatusCode)
-                {
-                    ThrowGitLabApiException(res2, blobUrl, bytes);
-                }
-
-                return bytes; // バイナリOK（画像もOK）
-            }
+                Content = content,
+                PagesChecked = search.PagesChecked,
+                FoundPage = search.FoundPage.Value
+            };
+        }
+        catch (GitLabApiException ex)
+        {
+            throw new GitLabTreeBlobDownloadException(
+                ex.Message,
+                search.PagesChecked,
+                search.FoundPage.Value,
+                ex);
         }
     }
 
@@ -153,43 +157,63 @@ public static class GitLabClient
         const int perPage = 100;
         int page = 1;
 
-        string encodedFolder = Uri.EscapeDataString(folderPath ?? string.Empty);
-        string encodedRef = Uri.EscapeDataString(refName);
-
         var allItems = new List<GitLabTreeItem>();
 
         while (true)
         {
-            string treeUrl =
-                $"{baseUrl.TrimEnd('/')}/api/v4/projects/{Uri.EscapeDataString(projectId)}/repository/tree?path={encodedFolder}&ref={encodedRef}&per_page={perPage}&page={page}";
+            List<GitLabTreeItem> pageItems = await DownloadTreePageAsync(
+                baseUrl,
+                projectId,
+                folderPath,
+                refName,
+                page,
+                perPage,
+                privateToken,
+                cancellationToken).ConfigureAwait(false);
+            allItems.AddRange(pageItems);
 
-            using (var req = new HttpRequestMessage(HttpMethod.Get, treeUrl))
+            if (pageItems.Count < perPage)
             {
-                req.Headers.Add("PRIVATE-TOKEN", privateToken);
-
-                using (var res = await _httpClient.SendAsync(req, HttpCompletionOption.ResponseContentRead, cancellationToken).ConfigureAwait(false))
-                {
-                    byte[] bodyBytes = await res.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
-
-                    if (!res.IsSuccessStatusCode)
-                    {
-                        ThrowGitLabApiException(res, treeUrl, bodyBytes);
-                    }
-
-                    var pageItems = DeserializeJson<List<GitLabTreeItem>>(bodyBytes) ?? new List<GitLabTreeItem>();
-                    allItems.AddRange(pageItems);
-
-                    if (pageItems.Count < perPage)
-                    {
-                        break;
-                    }
-
-                    page++;
-                }
+                break;
             }
+
+            page++;
         }
 
         return allItems;
+    }
+
+    private static async Task<List<GitLabTreeItem>> DownloadTreePageAsync(
+        string baseUrl,
+        string projectId,
+        string folderPath,
+        string refName,
+        int page,
+        int perPage,
+        string privateToken,
+        CancellationToken cancellationToken)
+    {
+        string encodedFolder = Uri.EscapeDataString(folderPath ?? string.Empty);
+        string encodedRef = Uri.EscapeDataString(refName);
+        string treeUrl =
+            $"{baseUrl.TrimEnd('/')}/api/v4/projects/{Uri.EscapeDataString(projectId)}/repository/tree" +
+            $"?path={encodedFolder}&ref={encodedRef}&per_page={perPage}&page={page}";
+
+        using (var req = new HttpRequestMessage(HttpMethod.Get, treeUrl))
+        {
+            req.Headers.Add("PRIVATE-TOKEN", privateToken);
+
+            using (var res = await _httpClient.SendAsync(req, HttpCompletionOption.ResponseContentRead, cancellationToken).ConfigureAwait(false))
+            {
+                byte[] bodyBytes = await res.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
+                if (!res.IsSuccessStatusCode)
+                {
+                    ThrowGitLabApiException(res, treeUrl, bodyBytes);
+                }
+
+                return DeserializeJson<List<GitLabTreeItem>>(bodyBytes) ?? new List<GitLabTreeItem>();
+            }
+        }
     }
 
     public static async Task<byte[]> DownloadBlobRawAsync(

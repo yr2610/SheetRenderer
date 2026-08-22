@@ -181,6 +181,7 @@
     <Compile Include="ShellBridge.cs" />
     <Compile Include="SharedSheetConflictResolutionDialog.cs" />
     <Compile Include="SharedManifestSafety.cs" />
+    <Compile Include="GitLabTreePaging.cs" />
     <Compile Include="SharedSheetCandidateComparer.cs" />
     <Compile Include="SharedSheetDocumentOperations.cs" />
     <Compile Include="SharedSheetDiffDialog.cs">
