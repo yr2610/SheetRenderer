@@ -501,6 +501,40 @@ public static class GitLabClient
         }
     }
 
+    internal static async Task<string> GetLastCommitIdForPathAsync(
+        string baseUrl,
+        string projectId,
+        string refName,
+        string filePath,
+        string privateToken,
+        CancellationToken cancellationToken = default(CancellationToken))
+    {
+        EnsureTls12();
+
+        string url =
+            $"{baseUrl.TrimEnd('/')}/api/v4/projects/{Uri.EscapeDataString(projectId)}/repository/commits" +
+            $"?ref_name={Uri.EscapeDataString(refName)}&path={Uri.EscapeDataString(filePath)}&per_page=1";
+
+        using (var req = new HttpRequestMessage(HttpMethod.Get, url))
+        {
+            req.Headers.Add("PRIVATE-TOKEN", privateToken);
+
+            using (var res = await _httpClient.SendAsync(req, HttpCompletionOption.ResponseContentRead, cancellationToken).ConfigureAwait(false))
+            {
+                byte[] bytes = await res.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
+
+                if (!res.IsSuccessStatusCode)
+                {
+                    ThrowGitLabApiException(res, url, bytes);
+                }
+
+                var commits = DeserializeJson<List<GitLabCommitInfo>>(bytes);
+                GitLabCommitInfo commit = commits == null ? null : commits.FirstOrDefault();
+                return commit == null ? null : commit.Id;
+            }
+        }
+    }
+
     internal static async Task<GitLabProjectInfo> GetProjectInfoAsync(
         string baseUrl,
         string projectId,
@@ -537,10 +571,14 @@ public static class GitLabClient
 
     private static void ThrowGitLabApiException(HttpResponseMessage res, string url, byte[] bodyBytes)
     {
+        string bodyText = SafeUtf8(bodyBytes);
         if (res.StatusCode == HttpStatusCode.Unauthorized)
         {
-            throw new InvalidOperationException(
-                "GitLab authentication failed.\n\nThe access token is missing, invalid, or expired.\nPlease check the configured GitLab access token.");
+            throw new GitLabApiException(
+                "GitLab authentication failed.\n\nThe access token is missing, invalid, or expired.\nPlease check the configured GitLab access token.",
+                (int)res.StatusCode,
+                url,
+                bodyText);
         }
 
         if (res.StatusCode == HttpStatusCode.Forbidden)
@@ -554,8 +592,11 @@ public static class GitLabClient
                     "For shared-sheet upload, verify that the token has GitLab write access and that the target branch allows commits.";
             }
 
-            throw new InvalidOperationException(
-                "GitLab access forbidden.\n\n" + forbiddenHint + "\nEndpoint: " + url);
+            throw new GitLabApiException(
+                "GitLab access forbidden.\n\n" + forbiddenHint + "\nEndpoint: " + url,
+                (int)res.StatusCode,
+                url,
+                bodyText);
         }
 
         if (res.StatusCode == HttpStatusCode.NotFound)
@@ -582,12 +623,17 @@ public static class GitLabClient
                 notFoundHint = "The requested GitLab API endpoint or resource could not be found.";
             }
 
-            throw new InvalidOperationException(
-                $"GitLab resource not found.\n\n{notFoundHint}\nEndpoint: {url}");
+            throw new GitLabApiException(
+                $"GitLab resource not found.\n\n{notFoundHint}\nEndpoint: {url}",
+                (int)res.StatusCode,
+                url,
+                bodyText);
         }
 
-        string bodyText = SafeUtf8(bodyBytes);
-        throw new InvalidOperationException(
-            $"GitLab API error {(int)res.StatusCode} {res.ReasonPhrase}\nURL: {url}\nBody: {bodyText}");
+        throw new GitLabApiException(
+            $"GitLab API error {(int)res.StatusCode} {res.ReasonPhrase}\nURL: {url}\nBody: {bodyText}",
+            (int)res.StatusCode,
+            url,
+            bodyText);
     }
 }

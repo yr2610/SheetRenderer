@@ -4563,59 +4563,109 @@ public class RibbonController : ExcelRibbon
         return manifestBytes;
     }
 
-    private async Task<SharedProjectManifestSnapshot> TryDownloadSharedProjectManifestSnapshotAsync(
+    private async Task<SharedManifestProbeResult> ProbeSharedProjectManifestAsync(
         GitLabShareInfo shareInfo,
         string projectId,
         string token)
     {
         string refName = GetNormalizedShareRefName(shareInfo);
         string manifestPath = BuildSharedProjectManifestPath(projectId);
-        GitLabRepositoryFileInfo fileInfo = await GitLabClient.TryGetRepositoryFileInfoAsync(
-            shareInfo.BaseUrl,
-            shareInfo.ProjectId,
-            manifestPath,
-            refName,
-            token).ConfigureAwait(false);
+        TryLogSharedDiagnostic(
+            "[SharedManifestProbe] start path=" + manifestPath +
+            " projectId=" + shareInfo.ProjectId +
+            " ref=" + refName);
 
-        if (fileInfo == null)
-        {
-            return null;
-        }
+        SharedManifestProbeResult result = await SharedManifestSafety.ProbeAsync(
+            projectAndRefValidated: true,
+            metadataProbe: async () =>
+            {
+                GitLabRepositoryFileInfo fileInfo = await GitLabClient.TryGetRepositoryFileInfoAsync(
+                    shareInfo.BaseUrl,
+                    shareInfo.ProjectId,
+                    manifestPath,
+                    refName,
+                    token).ConfigureAwait(false);
+                if (fileInfo == null)
+                {
+                    return new SharedManifestMetadataProbe
+                    {
+                        State = SharedManifestEndpointState.NotFound,
+                        StatusCode = 404
+                    };
+                }
 
-        if (!string.Equals(fileInfo.Encoding, "base64", StringComparison.OrdinalIgnoreCase) ||
-            string.IsNullOrWhiteSpace(fileInfo.Content))
-        {
-            throw new InvalidOperationException("共有マニフェストをGitLabから読み込めませんでした。");
-        }
+                return new SharedManifestMetadataProbe
+                {
+                    State = SharedManifestEndpointState.Found,
+                    StatusCode = 200,
+                    Content = fileInfo.Content,
+                    Encoding = fileInfo.Encoding,
+                    LastCommitId = fileInfo.LastCommitId
+                };
+            },
+            rawProbe: async () =>
+            {
+                byte[] bytes = await GitLabClient.TryDownloadFileRawByPathAsync(
+                    shareInfo.BaseUrl,
+                    shareInfo.ProjectId,
+                    manifestPath,
+                    refName,
+                    token).ConfigureAwait(false);
+                return new SharedManifestContentProbe
+                {
+                    State = bytes == null
+                        ? SharedManifestEndpointState.NotFound
+                        : SharedManifestEndpointState.Found,
+                    StatusCode = bytes == null ? 404 : 200,
+                    Content = bytes
+                };
+            },
+            treeBlobProbe: async () =>
+            {
+                try
+                {
+                    byte[] bytes = await GitLabClient.DownloadFileViaTreeAsync(
+                        shareInfo.BaseUrl,
+                        shareInfo.ProjectId,
+                        projectId,
+                        "_manifest.json",
+                        refName,
+                        token).ConfigureAwait(false);
+                    return new SharedManifestContentProbe
+                    {
+                        State = SharedManifestEndpointState.Found,
+                        StatusCode = 200,
+                        Content = bytes
+                    };
+                }
+                catch (Exception ex)
+                {
+                    return SharedManifestSafety.ClassifyTreeBlobException(ex);
+                }
+            },
+            lastCommitIdProbe: () => GitLabClient.GetLastCommitIdForPathAsync(
+                shareInfo.BaseUrl,
+                shareInfo.ProjectId,
+                refName,
+                manifestPath,
+                token),
+            manifestParser: bytes => ParseSharedProjectManifest(Encoding.UTF8.GetString(bytes)),
+            log: TryLogSharedDiagnostic).ConfigureAwait(false);
 
-        if (string.IsNullOrWhiteSpace(fileInfo.LastCommitId))
+        TryLogSharedDiagnostic(
+            "[SharedManifestSnapshot] path=" + manifestPath +
+            " projectId=" + shareInfo.ProjectId +
+            " ref=" + refName +
+            " final=" + result.State);
+
+        if (result.State == SharedManifestProbeState.Indeterminate)
         {
             throw new InvalidOperationException(
-                "共有マニフェストの競合検知情報をGitLabから取得できませんでした。");
+                "共有マニフェストの状態を安全に確認できないため、共有処理を中止しました。",
+                result.Error);
         }
 
-        byte[] manifestBytes;
-        try
-        {
-            manifestBytes = Convert.FromBase64String(fileInfo.Content);
-        }
-        catch (FormatException ex)
-        {
-            throw new InvalidOperationException("共有マニフェストの内容をデコードできませんでした。", ex);
-        }
-
-        SharedProjectManifest manifest = ParseSharedProjectManifest(
-            Encoding.UTF8.GetString(manifestBytes));
-        if (manifest == null)
-        {
-            throw new InvalidOperationException("共有マニフェストの形式が正しくありません。");
-        }
-
-        return new SharedProjectManifestSnapshot
-        {
-            Manifest = manifest,
-            LastCommitId = fileInfo.LastCommitId
-        };
+        return result;
     }
 
     private async Task<SharedSheetDocument> TryDownloadSharedSheetDocumentAsync(
@@ -6489,8 +6539,7 @@ public class RibbonController : ExcelRibbon
         Excel.Workbook workbook,
         GitLabShareInfo shareInfo,
         string token,
-        SharedProjectManifest remoteManifest,
-        string remoteManifestLastCommitId,
+        SharedManifestProbeResult remoteManifestProbe,
         IEnumerable<SharedSheetSelectionItem> selectedItems,
         Action<string> progressReporter = null)
     {
@@ -6524,6 +6573,9 @@ public class RibbonController : ExcelRibbon
             return;
         }
         string refName = GetNormalizedShareRefName(shareInfo);
+        SharedManifestCommitPlan manifestCommitPlan =
+            SharedManifestSafety.CreateCommitPlan(remoteManifestProbe);
+        SharedProjectManifest remoteManifest = remoteManifestProbe.Manifest;
 
         var actions = new List<object>();
 
@@ -6553,31 +6605,54 @@ public class RibbonController : ExcelRibbon
         progressReporter?.Invoke("共有マニフェストを更新しています");
         var manifestAction = new Dictionary<string, object>
         {
-            { "action", remoteManifest == null ? "create" : "update" },
+            { "action", manifestCommitPlan.Action },
             { "file_path", BuildSharedProjectManifestPath(projectId) },
             { "content", CreateSharedProjectManifestJsonText(updatedManifest) },
             { "encoding", "text" }
         };
-        if (remoteManifest != null)
+        if (string.Equals(manifestCommitPlan.Action, "update", StringComparison.Ordinal))
         {
-            if (string.IsNullOrWhiteSpace(remoteManifestLastCommitId))
-            {
-                throw new InvalidOperationException(
-                    "共有マニフェストの競合検知情報がありません。最新版を取得してから再実行してください。");
-            }
-
-            manifestAction["last_commit_id"] = remoteManifestLastCommitId;
+            manifestAction["last_commit_id"] = manifestCommitPlan.LastCommitId;
         }
         actions.Add(manifestAction);
 
+        TryLogSharedDiagnostic(
+            "[SharedManifestSnapshot] path=" + BuildSharedProjectManifestPath(projectId) +
+            " projectId=" + shareInfo.ProjectId +
+            " ref=" + refName +
+            " commitAction=" + manifestCommitPlan.Action +
+            " hasLastCommitId=" + (!string.IsNullOrWhiteSpace(manifestCommitPlan.LastCommitId)));
+
         progressReporter?.Invoke("GitLab の応答を待っています（数秒かかることがあります）");
-        await GitLabClient.CreateCommitAsync(
-            shareInfo.BaseUrl,
-            shareInfo.ProjectId,
-            refName,
-            token,
-            "Update shared sheets: " + projectId,
-            actions).ConfigureAwait(true);
+        try
+        {
+            await GitLabClient.CreateCommitAsync(
+                shareInfo.BaseUrl,
+                shareInfo.ProjectId,
+                refName,
+                token,
+                "Update shared sheets: " + projectId,
+                actions).ConfigureAwait(true);
+        }
+        catch (GitLabApiException ex)
+        {
+            SharedManifestCommitConflictKind conflictKind =
+                SharedManifestSafety.ClassifyCommitConflict(ex, manifestCommitPlan.Action);
+            TryLogSharedDiagnostic(
+                "[SharedManifestCommitConflict] classified=" +
+                (conflictKind != SharedManifestCommitConflictKind.None) +
+                " kind=" + conflictKind +
+                " action=" + manifestCommitPlan.Action +
+                " status=" + ex.StatusCode +
+                " url=" + ex.Url +
+                " body=" + SharedManifestSafety.NormalizeForLog(ex.ResponseBody, 1000));
+            if (conflictKind != SharedManifestCommitConflictKind.None)
+            {
+                throw new SharedManifestCommitConflictException(conflictKind, ex);
+            }
+
+            throw;
+        }
 
         progressReporter?.Invoke("ローカル base を更新しています");
         EnsureSharedSheetBaseStorePrepared(workbook, progressReporter);
@@ -11482,17 +11557,12 @@ public class RibbonController : ExcelRibbon
                 shareToken,
                 workbook).ConfigureAwait(true);
 
-            SharedProjectManifestSnapshot remoteManifestSnapshot =
-                await TryDownloadSharedProjectManifestSnapshotAsync(
+            SharedManifestProbeResult remoteManifestProbe =
+                await ProbeSharedProjectManifestAsync(
                     shareInfo,
                     workbookInfo.ProjectId,
                     shareToken).ConfigureAwait(true);
-            SharedProjectManifest remoteManifest = remoteManifestSnapshot == null
-                ? null
-                : remoteManifestSnapshot.Manifest;
-            string remoteManifestLastCommitId = remoteManifestSnapshot == null
-                ? null
-                : remoteManifestSnapshot.LastCommitId;
+            SharedProjectManifest remoteManifest = remoteManifestProbe.Manifest;
 
             shareProgressReporter("保存済みの共有状態を読み込んでいます");
             bool bulkBaseReadSucceeded;
@@ -11562,8 +11632,7 @@ public class RibbonController : ExcelRibbon
                 workbook,
                 shareInfo,
                 shareToken,
-                remoteManifest,
-                remoteManifestLastCommitId,
+                remoteManifestProbe,
                 selectedItems,
                 shareProgressReporter).ConfigureAwait(true);
 
@@ -11574,6 +11643,15 @@ public class RibbonController : ExcelRibbon
             progressForm.CloseForm();
             progressForm = null;
             return;
+        }
+        catch (SharedManifestCommitConflictException ex)
+        {
+            if (progressForm != null)
+            {
+                progressForm.CloseForm();
+                progressForm = null;
+            }
+            ShowUserFacingError(dialogTitle, ex);
         }
         catch (Exception ex)
         {

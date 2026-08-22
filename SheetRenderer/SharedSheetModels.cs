@@ -94,12 +94,6 @@ internal sealed class SharedProjectManifestEntry
     public string Hash { get; set; }
 }
 
-internal sealed class SharedProjectManifestSnapshot
-{
-    public SharedProjectManifest Manifest { get; set; }
-    public string LastCommitId { get; set; }
-}
-
 internal sealed class SharedSheetSyncState
 {
     public List<SharedSheetSyncStateEntry> Sheets { get; set; }

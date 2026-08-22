@@ -58,6 +58,7 @@ internal static class SharedSheetCandidateComparerTests
         AssertEquivalent("range settings change", settingsChanged, CreateDocument(), false);
 
         SharedSheetDocumentOperationsTests.Run();
+        SharedManifestSafetyTests.Run();
 
         Console.WriteLine("shared sheet candidate comparer tests passed");
         return 0;
