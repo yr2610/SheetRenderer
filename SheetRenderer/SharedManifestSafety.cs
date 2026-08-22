@@ -36,6 +36,7 @@ internal sealed class SharedManifestContentProbe
     public string ContentRef { get; set; }
     public int? PagesChecked { get; set; }
     public int? FoundPage { get; set; }
+    public string TreeNotFoundReason { get; set; }
     public Exception Error { get; set; }
 }
 
@@ -360,20 +361,8 @@ internal static class SharedManifestSafety
                 State = SharedManifestEndpointState.NotFound,
                 StatusCode = 404,
                 ContentRoute = "tree-blob",
-                PagesChecked = treeNotFound.PagesChecked
-            };
-        }
-
-        GitLabApiException apiException = exception as GitLabApiException;
-        if (apiException != null &&
-            apiException.StatusCode == 404 &&
-            Contains(apiException.Url ?? string.Empty, "/repository/tree"))
-        {
-            return new SharedManifestContentProbe
-            {
-                State = SharedManifestEndpointState.NotFound,
-                StatusCode = 404,
-                ContentRoute = "tree-blob"
+                PagesChecked = treeNotFound.PagesChecked,
+                TreeNotFoundReason = treeNotFound.Reason.ToString()
             };
         }
 
@@ -701,7 +690,8 @@ internal static class SharedManifestSafety
             " contentRef=" + (probe.ContentRef ?? "none") +
             " snapshotLastCommitId=" + (probe.LastCommitId ?? "none") +
             " pagesChecked=" + (probe.PagesChecked.HasValue ? probe.PagesChecked.Value.ToString() : "n/a") +
-            " foundPage=" + (probe.FoundPage.HasValue ? probe.FoundPage.Value.ToString() : "n/a"));
+            " foundPage=" + (probe.FoundPage.HasValue ? probe.FoundPage.Value.ToString() : "n/a") +
+            " treeNotFoundReason=" + (probe.TreeNotFoundReason ?? "n/a"));
     }
 
     private static void LogSkipped(Action<string> log, string route)

@@ -18,6 +18,7 @@ internal static class SharedManifestSafetyTests
         InvalidManifestJsonIsIndeterminateAndNotCreate().GetAwaiter().GetResult();
         AuthenticationServerAndNetworkFailuresAreIndeterminate().GetAwaiter().GetResult();
         TreeBlobReadFailureIsIndeterminateAndNotCreate().GetAwaiter().GetResult();
+        Tree404ClassificationRequiresTypedValidation();
         UpdateLastCommitMismatchIsClassifiedAsConcurrentUpdate();
         InitialCreateExistingFileIsClassifiedAsConcurrentCreate();
         UnrelatedHttp400IsNotClassifiedAsConflict();
@@ -218,6 +219,41 @@ internal static class SharedManifestSafetyTests
                 2));
         Assert(absentFromTree.State == SharedManifestEndpointState.NotFound,
             nameof(TreeBlobReadFailureIsIndeterminateAndNotCreate) + ": absent tree entry is a confirmed route miss");
+    }
+
+    private static void Tree404ClassificationRequiresTypedValidation()
+    {
+        var rawTree404 = new GitLabApiException(
+            "tree path missing",
+            404,
+            "https://gitlab.example/api/v4/projects/1/repository/tree?path=project&ref=main",
+            "not found");
+        SharedManifestContentProbe rawClassification =
+            SharedManifestSafety.ClassifyTreeBlobException(rawTree404);
+        Assert(rawClassification.State == SharedManifestEndpointState.Failed,
+            nameof(Tree404ClassificationRequiresTypedValidation) + ": raw tree 404");
+
+        var validatedPathMiss = new GitLabTreeFileNotFoundException(
+            "validated tree path missing",
+            1,
+            GitLabTreeNotFoundReason.PathNotFoundAfterValidated404,
+            rawTree404);
+        SharedManifestContentProbe validatedClassification =
+            SharedManifestSafety.ClassifyTreeBlobException(validatedPathMiss);
+        Assert(validatedClassification.State == SharedManifestEndpointState.NotFound &&
+            validatedClassification.TreeNotFoundReason ==
+                GitLabTreeNotFoundReason.PathNotFoundAfterValidated404.ToString(),
+            nameof(Tree404ClassificationRequiresTypedValidation) + ": validated path miss");
+
+        var pagedFileMiss = new GitLabTreeFileNotFoundException(
+            "file missing after paging",
+            2);
+        SharedManifestContentProbe pagedClassification =
+            SharedManifestSafety.ClassifyTreeBlobException(pagedFileMiss);
+        Assert(pagedClassification.State == SharedManifestEndpointState.NotFound &&
+            pagedClassification.TreeNotFoundReason ==
+                GitLabTreeNotFoundReason.FileNotFoundAfterPaging.ToString(),
+            nameof(Tree404ClassificationRequiresTypedValidation) + ": paged file miss");
     }
 
     private static async Task MetadataInvalidContentUsesMetadataCommitAsPinnedRef()

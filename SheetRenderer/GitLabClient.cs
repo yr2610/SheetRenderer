@@ -56,12 +56,47 @@ public static class GitLabClient
         string fileName,
         string refName,
         string privateToken,
-        CancellationToken cancellationToken = default(CancellationToken))
+        CancellationToken cancellationToken = default(CancellationToken),
+        Action<string> log = null)
     {
         EnsureTls12();
         const int perPage = 100;
 
-        GitLabTreeSearchResult search = await GitLabTreePaging.FindBlobAsync(
+        var path404Validation = new GitLabTreePath404Validation
+        {
+            ProjectId = projectId,
+            RefName = refName,
+            RequestedPath = folderPath,
+            ValidateProjectAsync = async () =>
+            {
+                GitLabProjectInfo project = await GetProjectInfoAsync(
+                    baseUrl,
+                    projectId,
+                    privateToken,
+                    cancellationToken).ConfigureAwait(false);
+                if (project == null || string.IsNullOrWhiteSpace(project.Name))
+                {
+                    throw new InvalidOperationException(
+                        "GitLab project validation returned an invalid project response.");
+                }
+            },
+            ValidateRefAsync = async () =>
+            {
+                string commitId = await GetCommitIdAsync(
+                    baseUrl,
+                    projectId,
+                    refName,
+                    privateToken,
+                    cancellationToken).ConfigureAwait(false);
+                if (string.IsNullOrWhiteSpace(commitId))
+                {
+                    throw new InvalidOperationException(
+                        "GitLab ref validation returned no commit ID.");
+                }
+            },
+            Log = log
+        };
+        GitLabTreeSearchResult search = await GitLabTreePaging.FindBlobOrThrowAsync(
             fileName,
             perPage,
             page => DownloadTreePageAsync(
@@ -72,14 +107,9 @@ public static class GitLabClient
                 page,
                 perPage,
                 privateToken,
-                cancellationToken)).ConfigureAwait(false);
-
-        if (search.Target == null || string.IsNullOrEmpty(search.Target.Id))
-        {
-            throw new GitLabTreeFileNotFoundException(
-                $"File not found in tree. folder={folderPath} file={fileName} ref={refName} pages={search.PagesChecked}",
-                search.PagesChecked);
-        }
+                cancellationToken),
+            path404Validation,
+            $"File not found in tree. folder={folderPath} file={fileName} ref={refName}").ConfigureAwait(false);
 
         try
         {
@@ -115,15 +145,43 @@ public static class GitLabClient
         string privateToken,
         CancellationToken cancellationToken = default(CancellationToken))
     {
+        return await TryDownloadFileViaTreeWithDiagnosticsAsync(
+            baseUrl,
+            projectId,
+            folderPath,
+            fileName,
+            refName,
+            privateToken,
+            null,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    internal static async Task<byte[]> TryDownloadFileViaTreeWithDiagnosticsAsync(
+        string baseUrl,
+        string projectId,
+        string folderPath,
+        string fileName,
+        string refName,
+        string privateToken,
+        Action<string> log,
+        CancellationToken cancellationToken = default(CancellationToken))
+    {
         return await GitLabTreePaging.TryDownloadAsync(
-            () => DownloadFileViaTreeAsync(
-                baseUrl,
-                projectId,
-                folderPath,
-                fileName,
-                refName,
-                privateToken,
-                cancellationToken)).ConfigureAwait(false);
+            async () =>
+            {
+                GitLabTreeBlobDownloadResult result =
+                    await DownloadFileViaTreeWithDiagnosticsAsync(
+                        baseUrl,
+                        projectId,
+                        folderPath,
+                        fileName,
+                        refName,
+                        privateToken,
+                        cancellationToken,
+                        log).ConfigureAwait(false);
+                return result.Content;
+            },
+            log).ConfigureAwait(false);
     }
 
     internal static async Task<List<GitLabTreeItem>> ListTreeItemsAsync(

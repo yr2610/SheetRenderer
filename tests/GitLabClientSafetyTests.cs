@@ -18,6 +18,11 @@ internal static class GitLabClientSafetyTests
         TryTreeDownloadReturnsNullOnlyForTypedTreeMiss().GetAwaiter().GetResult();
         TryTreeDownloadRethrowsBlobFailures().GetAwaiter().GetResult();
         TryTreeDownloadDoesNotTrustExceptionMessages().GetAwaiter().GetResult();
+        OldGitLabMissingTreePathReturnsNullAfterPaging().GetAwaiter().GetResult();
+        ValidatedTreePath404ReturnsTypedNotFoundAndNull().GetAwaiter().GetResult();
+        TreePath404WithoutValidationRethrows().GetAwaiter().GetResult();
+        TreePath404ValidationFailuresRethrow().GetAwaiter().GetResult();
+        OnlyDirectTreePage404UsesValidation().GetAwaiter().GetResult();
         RepositoryFileResponseDistinguishesNotFoundAndMalformedSuccess();
         PathCommitResponseValidatesNullAndEntries();
         TreeResponseValidatesNullAndEntries();
@@ -48,6 +53,7 @@ internal static class GitLabClientSafetyTests
         int[] statusCodes = { 404, 403, 500 };
         foreach (int statusCode in statusCodes)
         {
+            int validationCalls = 0;
             var apiFailure = new GitLabApiException(
                 "GitLab resource not found.",
                 statusCode,
@@ -63,12 +69,250 @@ internal static class GitLabClientSafetyTests
                 await AssertThrowsAsync<GitLabTreeBlobDownloadException>(
                     async () =>
                     {
-                        await GitLabTreePaging.TryDownloadAsync(() => throw blobFailure);
+                        await GitLabTreePaging.TryDownloadAsync(async () =>
+                        {
+                            await GitLabTreePaging.FindBlobOrThrowAsync(
+                                "_manifest.json",
+                                100,
+                                page => Task.FromResult(new List<GitLabTreeItem>
+                                {
+                                    new GitLabTreeItem
+                                    {
+                                        Id = "blob-id",
+                                        Name = "_manifest.json",
+                                        Type = "blob"
+                                    }
+                                }),
+                                Validation(
+                                    () => { validationCalls++; return Task.CompletedTask; },
+                                    () => { validationCalls++; return Task.CompletedTask; }),
+                                "missing");
+                            throw blobFailure;
+                        });
                     },
                     nameof(TryTreeDownloadRethrowsBlobFailures) + ": " + statusCode);
             Assert(object.ReferenceEquals(blobFailure, actual),
                 nameof(TryTreeDownloadRethrowsBlobFailures) + ": " + statusCode);
+            Assert(validationCalls == 0,
+                nameof(TryTreeDownloadRethrowsBlobFailures) + ": validation " + statusCode);
         }
+    }
+
+    private static async Task OldGitLabMissingTreePathReturnsNullAfterPaging()
+    {
+        int validationCalls = 0;
+        GitLabTreeFileNotFoundException firstMiss = null;
+        byte[] firstResult = await GitLabTreePaging.TryDownloadAsync(async () =>
+        {
+            try
+            {
+                await GitLabTreePaging.FindBlobOrThrowAsync(
+                    "_manifest.json",
+                    100,
+                    page => Task.FromResult(new List<GitLabTreeItem>()),
+                    Validation(
+                        () => { validationCalls++; return Task.CompletedTask; },
+                        () => { validationCalls++; return Task.CompletedTask; }),
+                    "missing after paging");
+            }
+            catch (GitLabTreeFileNotFoundException ex)
+            {
+                firstMiss = ex;
+                throw;
+            }
+
+            return new byte[0];
+        });
+        Assert(firstResult == null &&
+            firstMiss != null &&
+            firstMiss.Reason == GitLabTreeNotFoundReason.FileNotFoundAfterPaging &&
+            firstMiss.PagesChecked == 1 &&
+            validationCalls == 0,
+            nameof(OldGitLabMissingTreePathReturnsNullAfterPaging) + ": first empty page");
+
+        int pages = 0;
+        GitLabTreeFileNotFoundException secondMiss = null;
+        byte[] secondResult = await GitLabTreePaging.TryDownloadAsync(async () =>
+        {
+            try
+            {
+                await GitLabTreePaging.FindBlobOrThrowAsync(
+                    "_manifest.json",
+                    100,
+                    page =>
+                    {
+                        pages++;
+                        return Task.FromResult(page == 1
+                            ? CreateTreeItems(100)
+                            : new List<GitLabTreeItem>());
+                    },
+                    null,
+                    "missing after two pages");
+            }
+            catch (GitLabTreeFileNotFoundException ex)
+            {
+                secondMiss = ex;
+                throw;
+            }
+
+            return new byte[0];
+        });
+        Assert(secondResult == null &&
+            secondMiss != null &&
+            secondMiss.PagesChecked == 2 &&
+            pages == 2,
+            nameof(OldGitLabMissingTreePathReturnsNullAfterPaging) + ": full page then empty page");
+    }
+
+    private static async Task ValidatedTreePath404ReturnsTypedNotFoundAndNull()
+    {
+        int projectValidationCalls = 0;
+        int refValidationCalls = 0;
+        int pageCalls = 0;
+        var logs = new List<string>();
+        GitLabTreeFileNotFoundException observed = null;
+        GitLabTreePath404Validation validation = Validation(
+            () => { projectValidationCalls++; return Task.CompletedTask; },
+            () => { refValidationCalls++; return Task.CompletedTask; },
+            logs.Add);
+
+        byte[] result = await GitLabTreePaging.TryDownloadAsync(
+            async () =>
+            {
+                try
+                {
+                    await GitLabTreePaging.FindBlobOrThrowAsync(
+                        "_manifest.json",
+                        100,
+                        page =>
+                        {
+                            pageCalls++;
+                            throw Tree404();
+                        },
+                        validation,
+                        "missing");
+                }
+                catch (GitLabTreeFileNotFoundException ex)
+                {
+                    observed = ex;
+                    throw;
+                }
+
+                return new byte[0];
+            },
+            logs.Add);
+
+        Assert(result == null &&
+            observed != null &&
+            observed.Reason == GitLabTreeNotFoundReason.PathNotFoundAfterValidated404 &&
+            observed.PagesChecked == 1,
+            nameof(ValidatedTreePath404ReturnsTypedNotFoundAndNull) + ": typed path miss");
+        Assert(pageCalls == 1 && projectValidationCalls == 1 && refValidationCalls == 1,
+            nameof(ValidatedTreePath404ReturnsTypedNotFoundAndNull) + ": validate once");
+        Assert(ContainsLog(logs, "validationAttempted=True") &&
+            ContainsLog(logs, "projectValidated=True") &&
+            ContainsLog(logs, "refValidated=True") &&
+            ContainsLog(logs, "convertedToTypedNotFound=True") &&
+            ContainsLog(logs, "finalAction=null") &&
+            ContainsLog(logs, "projectId=1") &&
+            ContainsLog(logs, "ref=main") &&
+            ContainsLog(logs, "requestedPath=project"),
+            nameof(ValidatedTreePath404ReturnsTypedNotFoundAndNull) + ": diagnostics");
+    }
+
+    private static async Task TreePath404WithoutValidationRethrows()
+    {
+        GitLabApiException expected = Tree404();
+        GitLabApiException actual = await AssertThrowsAsync<GitLabApiException>(
+            async () =>
+            {
+                await GitLabTreePaging.FindBlobOrThrowAsync(
+                    "_manifest.json",
+                    100,
+                    page => throw expected,
+                    null,
+                    "missing");
+            },
+            nameof(TreePath404WithoutValidationRethrows));
+        Assert(object.ReferenceEquals(expected, actual),
+            nameof(TreePath404WithoutValidationRethrows));
+    }
+
+    private static async Task TreePath404ValidationFailuresRethrow()
+    {
+        int refCalls = 0;
+        var projectMissing = new GitLabApiException(
+            "project missing",
+            404,
+            "https://gitlab.example/api/v4/projects/1",
+            "not found");
+        Exception projectResult = await RunValidationFailure(
+            () => throw projectMissing,
+            () => { refCalls++; return Task.CompletedTask; },
+            nameof(TreePath404ValidationFailuresRethrow) + ": project missing");
+        Assert(object.ReferenceEquals(projectMissing, projectResult) && refCalls == 0,
+            nameof(TreePath404ValidationFailuresRethrow) + ": project missing");
+
+        var refMissing = new GitLabApiException(
+            "ref missing",
+            404,
+            CommitsUrl,
+            "not found");
+        Exception refResult = await RunValidationFailure(
+            () => Task.CompletedTask,
+            () => throw refMissing,
+            nameof(TreePath404ValidationFailuresRethrow) + ": ref missing");
+        Assert(object.ReferenceEquals(refMissing, refResult),
+            nameof(TreePath404ValidationFailuresRethrow) + ": ref missing");
+
+        Exception[] failures =
+        {
+            new GitLabApiException("unauthorized", 401, MetadataUrl, "unauthorized"),
+            new GitLabApiException("forbidden", 403, MetadataUrl, "forbidden"),
+            new GitLabApiException("rate limited", 429, MetadataUrl, "rate limited"),
+            new GitLabApiException("server error", 500, MetadataUrl, "server error"),
+            new GitLabResponseFormatException(
+                200,
+                MetadataUrl,
+                "a non-null project object",
+                Json("null")),
+            new System.IO.IOException("network failed")
+        };
+        foreach (Exception failure in failures)
+        {
+            Exception actual = await RunValidationFailure(
+                () => throw failure,
+                () => Task.CompletedTask,
+                nameof(TreePath404ValidationFailuresRethrow) + ": " + failure.GetType().Name);
+            Assert(object.ReferenceEquals(failure, actual),
+                nameof(TreePath404ValidationFailuresRethrow) + ": " + failure.Message);
+        }
+    }
+
+    private static async Task OnlyDirectTreePage404UsesValidation()
+    {
+        int validationCalls = 0;
+        GitLabTreePath404Validation validation = Validation(
+            () => { validationCalls++; return Task.CompletedTask; },
+            () => { validationCalls++; return Task.CompletedTask; });
+        var raw404 = new GitLabApiException(
+            "raw missing",
+            404,
+            MetadataUrl + "/raw",
+            "not found");
+        GitLabApiException rawResult = await AssertThrowsAsync<GitLabApiException>(
+            async () =>
+            {
+                await GitLabTreePaging.FindBlobOrThrowAsync(
+                    "_manifest.json",
+                    100,
+                    page => throw raw404,
+                    validation,
+                    "missing");
+            },
+            nameof(OnlyDirectTreePage404UsesValidation));
+        Assert(object.ReferenceEquals(raw404, rawResult) && validationCalls == 0,
+            nameof(OnlyDirectTreePage404UsesValidation));
     }
 
     private static async Task TryTreeDownloadDoesNotTrustExceptionMessages()
@@ -279,6 +523,84 @@ internal static class GitLabClientSafetyTests
 
         throw new InvalidOperationException(
             scenario + ": expected " + typeof(TException).Name);
+    }
+
+    private static async Task<Exception> RunValidationFailure(
+        Func<Task> validateProjectAsync,
+        Func<Task> validateRefAsync,
+        string scenario)
+    {
+        var logs = new List<string>();
+        Exception actual = await AssertThrowsAsync<Exception>(
+            async () =>
+            {
+                await GitLabTreePaging.FindBlobOrThrowAsync(
+                    "_manifest.json",
+                    100,
+                    page => throw Tree404(),
+                    Validation(validateProjectAsync, validateRefAsync, logs.Add),
+                    "missing");
+            },
+            scenario);
+        Assert(ContainsLog(logs, "validationAttempted=True") &&
+            ContainsLog(logs, "finalAction=rethrow") &&
+            !ContainsLog(logs, "convertedToTypedNotFound=True"),
+            scenario + ": validation diagnostics");
+        return actual;
+    }
+
+    private static GitLabTreePath404Validation Validation(
+        Func<Task> validateProjectAsync,
+        Func<Task> validateRefAsync,
+        Action<string> log = null)
+    {
+        return new GitLabTreePath404Validation
+        {
+            ProjectId = "1",
+            RefName = "main",
+            RequestedPath = "project",
+            ValidateProjectAsync = validateProjectAsync,
+            ValidateRefAsync = validateRefAsync,
+            Log = log
+        };
+    }
+
+    private static GitLabApiException Tree404()
+    {
+        return new GitLabApiException(
+            "tree path missing",
+            404,
+            TreeUrl,
+            "not found");
+    }
+
+    private static List<GitLabTreeItem> CreateTreeItems(int count)
+    {
+        var items = new List<GitLabTreeItem>();
+        for (int index = 0; index < count; index++)
+        {
+            items.Add(new GitLabTreeItem
+            {
+                Id = "blob-" + index,
+                Name = "other-" + index + ".json",
+                Type = "blob"
+            });
+        }
+
+        return items;
+    }
+
+    private static bool ContainsLog(List<string> logs, string value)
+    {
+        foreach (string log in logs)
+        {
+            if (log != null && log.IndexOf(value, StringComparison.Ordinal) >= 0)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static byte[] Json(string value)

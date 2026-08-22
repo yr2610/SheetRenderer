@@ -4546,13 +4546,14 @@ public class RibbonController : ExcelRibbon
 
         if (manifestBytes == null)
         {
-            manifestBytes = await GitLabClient.TryDownloadFileViaTreeAsync(
+            manifestBytes = await GitLabClient.TryDownloadFileViaTreeWithDiagnosticsAsync(
                 shareInfo.BaseUrl,
                 shareInfo.ProjectId,
                 projectId,
                 "_manifest.json",
                 refName,
-                token).ConfigureAwait(false);
+                token,
+                TryLogSharedDiagnostic).ConfigureAwait(false);
         }
 
         if (manifestBytes == null || manifestBytes.Length == 0)
@@ -4652,7 +4653,8 @@ public class RibbonController : ExcelRibbon
                         projectId,
                         "_manifest.json",
                         contentRef,
-                        token).ConfigureAwait(false);
+                        token,
+                        log: TryLogSharedDiagnostic).ConfigureAwait(false);
                     return new SharedManifestContentProbe
                     {
                         State = SharedManifestEndpointState.Found,
@@ -4711,13 +4713,14 @@ public class RibbonController : ExcelRibbon
 
         if (sheetBytes == null)
         {
-            sheetBytes = await GitLabClient.TryDownloadFileViaTreeAsync(
+            sheetBytes = await GitLabClient.TryDownloadFileViaTreeWithDiagnosticsAsync(
                 shareInfo.BaseUrl,
                 shareInfo.ProjectId,
                 projectId,
                 sheetId + ".json",
                 refName,
-                token).ConfigureAwait(false);
+                token,
+                TryLogSharedDiagnostic).ConfigureAwait(false);
         }
 
         if (sheetBytes == null || sheetBytes.Length == 0)
